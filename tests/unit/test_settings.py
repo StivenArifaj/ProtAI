@@ -1,15 +1,35 @@
-"""Settings validation tests (blueprint sections 5.1, 5.4, 18.2)."""
+"""Settings validation tests (blueprint sections 5.1, 5.4, 9.2, 9.3, 18.2)."""
 
 from __future__ import annotations
 
+import base64
+import json
 from collections.abc import Callable
 
 import pytest
 from pydantic import ValidationError
 
-from ai_security.settings import SAMPLE_DATABASE_PASSWORD, Settings
+from ai_security.settings import (
+    SAMPLE_DATABASE_PASSWORD,
+    SAMPLE_HOST_AUTH_SECRET_B64,
+    Settings,
+    parse_host_auth_keys,
+)
 
 REAL_LOOKING_URL = "postgresql+asyncpg://firewall:correct-horse-battery@db:5432/firewall"
+
+# Public deterministic test key material (not the all-zero sample secret).
+VALID_SECRET_B64 = base64.b64encode(b"\x07" * 32).decode()
+VALID_KEYS_JSON = json.dumps(
+    {
+        "test-key": {
+            "secret_b64": VALID_SECRET_B64,
+            "host_id": "test-host",
+            "audience": "ai-agent-security-gateway",
+            "allowed_tenants": ["demo"],
+        }
+    }
+)
 
 
 def make_settings(**overrides: object) -> Settings:
@@ -17,9 +37,24 @@ def make_settings(**overrides: object) -> Settings:
         "app_env": "development",
         "log_level": "INFO",
         "database_url": REAL_LOOKING_URL,
+        "principal_resolver": "dev",
+        "host_auth_keys_json": VALID_KEYS_JSON,
     }
     values.update(overrides)
+    if values["app_env"] not in ("development", "test") and "principal_resolver" not in overrides:
+        values["principal_resolver"] = "host"
     return Settings(_env_file=None, **values)
+
+
+def make_keys_json(**record_overrides: object) -> str:
+    record: dict[str, object] = {
+        "secret_b64": VALID_SECRET_B64,
+        "host_id": "test-host",
+        "audience": "ai-agent-security-gateway",
+        "allowed_tenants": ["demo"],
+    }
+    record.update(record_overrides)
+    return json.dumps({"test-key": record})
 
 
 def test_valid_development_settings_construct() -> None:
@@ -30,7 +65,12 @@ def test_valid_development_settings_construct() -> None:
 
 def test_log_level_defaults_to_info(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("LOG_LEVEL", raising=False)
-    settings = Settings(_env_file=None, app_env="development", database_url=REAL_LOOKING_URL)
+    settings = Settings(
+        _env_file=None,
+        app_env="development",
+        database_url=REAL_LOOKING_URL,
+        host_auth_keys_json=VALID_KEYS_JSON,
+    )
     assert settings.log_level.value == "INFO"
 
 
@@ -44,6 +84,12 @@ def test_database_url_is_required(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("DATABASE_URL", raising=False)
     with pytest.raises(ValidationError):
         Settings(_env_file=None, app_env="development")
+
+
+def test_host_auth_keys_json_is_required(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("HOST_AUTH_KEYS_JSON", raising=False)
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None, app_env="development", database_url=REAL_LOOKING_URL)
 
 
 def test_unknown_app_env_fails_startup() -> None:
@@ -93,7 +139,15 @@ def test_credentials_do_not_appear_in_repr_or_str() -> None:
     for rendered in (repr(settings), str(settings)):
         assert "correct-horse-battery" not in rendered
         assert "correct-horse" not in rendered
+        assert VALID_SECRET_B64 not in rendered
     assert "correct-horse-battery" not in str(settings.database_url)
+
+
+def test_host_auth_keys_do_not_render_secrets() -> None:
+    settings = make_settings()
+    record = settings.host_auth_keys["test-key"]
+    assert VALID_SECRET_B64 not in repr(record)
+    assert len(record.secret_bytes) == 32
 
 
 def test_documentation_flag_matches_environment() -> None:
@@ -109,3 +163,176 @@ def test_documentation_flag_matches_environment() -> None:
 def test_settings_factory_fixture_is_valid(settings_factory: Callable[..., Settings]) -> None:
     settings = settings_factory()
     assert settings.app_env.value == "test"
+
+
+# --- Host-auth key configuration (blueprint sections 5.4, 9.2) ---
+
+
+def test_host_auth_keys_parse_into_records() -> None:
+    settings = make_settings()
+    record = settings.host_auth_keys["test-key"]
+    assert record.host_id == "test-host"
+    assert record.audience == "ai-agent-security-gateway"
+    assert record.allowed_tenants == ["demo"]
+    assert record.secret_bytes == b"\x07" * 32
+
+
+def test_host_auth_keys_accept_empty_tenant_list() -> None:
+    json_text = make_keys_json(allowed_tenants=[])
+    settings = make_settings(host_auth_keys_json=json_text)
+    assert settings.host_auth_keys["test-key"].allowed_tenants == []
+
+
+def test_host_auth_keys_reject_empty_object() -> None:
+    with pytest.raises(ValidationError, match="at least one key id"):
+        make_settings(host_auth_keys_json="{}")
+
+
+def test_host_auth_keys_reject_non_json() -> None:
+    with pytest.raises(ValidationError, match="not valid JSON"):
+        make_settings(host_auth_keys_json="{not json")
+
+
+def test_host_auth_keys_reject_duplicate_key_ids() -> None:
+    duplicated = (
+        '{"a": {"secret_b64": "'
+        + VALID_SECRET_B64
+        + '", "host_id": "h", "audience": "a", "allowed_tenants": []},'
+        + ' "a": {"secret_b64": "'
+        + VALID_SECRET_B64
+        + '", "host_id": "h2", "audience": "a", "allowed_tenants": []}}'
+    )
+    with pytest.raises(ValidationError, match="duplicate key id"):
+        make_settings(host_auth_keys_json=duplicated)
+
+
+def test_host_auth_keys_reject_missing_field() -> None:
+    bad = json.dumps({"test-key": {"secret_b64": VALID_SECRET_B64, "host_id": "h"}})
+    with pytest.raises(ValidationError, match="audience"):
+        make_settings(host_auth_keys_json=bad)
+
+
+def test_host_auth_keys_reject_extra_field() -> None:
+    bad = make_keys_json(role="admin")
+    with pytest.raises(ValidationError, match="extra_forbidden|Extra inputs"):
+        make_settings(host_auth_keys_json=bad)
+
+
+def test_host_auth_keys_reject_non_base64_secret() -> None:
+    with pytest.raises(ValidationError, match="strict Base64"):
+        make_settings(host_auth_keys_json=make_keys_json(secret_b64="not base64 !!!"))
+
+
+def test_host_auth_keys_reject_short_secret() -> None:
+    short = base64.b64encode(b"\x01" * 16).decode()
+    with pytest.raises(ValidationError, match="at least 32 bytes"):
+        make_settings(host_auth_keys_json=make_keys_json(secret_b64=short))
+
+
+def test_host_auth_keys_reject_control_characters_in_host_id() -> None:
+    with pytest.raises(ValidationError, match="control characters"):
+        make_settings(host_auth_keys_json=make_keys_json(host_id="bad\nhost"))
+
+
+def test_host_auth_keys_reject_malformed_key_id() -> None:
+    bad = json.dumps(
+        {
+            "bad key id!": {
+                "secret_b64": VALID_SECRET_B64,
+                "host_id": "h",
+                "audience": "a",
+                "allowed_tenants": [],
+            }
+        }
+    )
+    with pytest.raises(ValidationError, match="malformed"):
+        make_settings(host_auth_keys_json=bad)
+
+
+@pytest.mark.parametrize("env", ["staging", "production"])
+def test_sample_host_auth_secret_refused_outside_dev_test(env: str) -> None:
+    sample = json.dumps(
+        {
+            "sample-key": {
+                "secret_b64": SAMPLE_HOST_AUTH_SECRET_B64,
+                "host_id": "h",
+                "audience": "a",
+                "allowed_tenants": [],
+            }
+        }
+    )
+    with pytest.raises(ValidationError, match="all-zero host-auth secret"):
+        make_settings(app_env=env, host_auth_keys_json=sample, principal_resolver="host")
+
+
+@pytest.mark.parametrize("env", ["development", "test"])
+def test_sample_host_auth_secret_allowed_in_dev_test(env: str) -> None:
+    sample = json.dumps(
+        {
+            "sample-key": {
+                "secret_b64": SAMPLE_HOST_AUTH_SECRET_B64,
+                "host_id": "h",
+                "audience": "a",
+                "allowed_tenants": [],
+            }
+        }
+    )
+    settings = make_settings(app_env=env, host_auth_keys_json=sample)
+    assert settings.app_env.value == env
+
+
+# --- Principal resolver guard (blueprint section 9.3, ADR-001) ---
+
+
+@pytest.mark.parametrize("env", ["staging", "production"])
+def test_dev_resolver_refused_outside_dev_test(env: str) -> None:
+    with pytest.raises(ValidationError, match="PRINCIPAL_RESOLVER=dev is refused"):
+        make_settings(app_env=env, principal_resolver="dev")
+
+
+@pytest.mark.parametrize("env", ["development", "test"])
+def test_dev_resolver_allowed_in_dev_test(env: str) -> None:
+    assert make_settings(app_env=env).principal_resolver.value == "dev"
+
+
+@pytest.mark.parametrize("env", ["development", "test", "staging", "production"])
+def test_host_resolver_allowed_everywhere(env: str) -> None:
+    settings = make_settings(app_env=env, principal_resolver="host")
+    assert settings.principal_resolver.value == "host"
+
+
+# --- Timestamp tolerance / nonce TTL / request bound (blueprint section 9.2) ---
+
+
+def test_nonce_ttl_must_cover_acceptance_window() -> None:
+    with pytest.raises(ValidationError, match="twice"):
+        make_settings(host_auth_timestamp_tolerance_seconds=60, host_auth_nonce_ttl_seconds=119)
+
+
+def test_nonce_ttl_equal_to_twice_tolerance_is_accepted() -> None:
+    settings = make_settings(
+        host_auth_timestamp_tolerance_seconds=60, host_auth_nonce_ttl_seconds=120
+    )
+    assert settings.host_auth_nonce_ttl_seconds == 120
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("host_auth_timestamp_tolerance_seconds", 0),
+        ("host_auth_timestamp_tolerance_seconds", -1),
+        ("host_auth_nonce_ttl_seconds", 0),
+        ("request_max_bytes", 0),
+        ("request_max_bytes", -5),
+    ],
+)
+def test_non_positive_bounds_are_rejected(field: str, value: int) -> None:
+    with pytest.raises(ValidationError):
+        make_settings(**{field: value})
+
+
+def test_parse_host_auth_keys_function_validates_directly() -> None:
+    keys = parse_host_auth_keys(VALID_KEYS_JSON)
+    assert set(keys) == {"test-key"}
+    with pytest.raises(ValueError, match="at least one key id"):
+        parse_host_auth_keys("{}")
