@@ -1,18 +1,20 @@
 # Implementation State
 
-Last updated: 2026-10-19 (Phase 3, blueprint v1.2).
+Last updated: 2026-10-19 (Phase 4, blueprint v1.2).
 
 Phases 0a (repository foundation), 0b (security foundation), 1 (typed contracts and
-deterministic policy engine), 2 (tool registry and enforced gateway), and 3 (advisory
-input defense and context provenance) are **complete and verified**; the Docker Compose
-path was verified in 0b. Phase 3 adds strict/versioned detection configuration, bounded
-intake, copy-only normalization, deterministic injection heuristics, typed findings and
-non-PASS failure semantics, structured trust labels for context assembly, and a
-tenant/subject-bound session signal store with bounded counters and TTL/max-age expiry.
-Detection is **advisory only**: it has no path into policy facts, the engine, the gateway,
-or execution, and no `/v1` route exposes it yet. The codebase still does **not** implement
-`/v1` routes, approvals, manifest/intent binding, content DLP, real connectors, process
-isolation, rate limiting, model/provider integration, or the full audit taxonomy/verifier.
+deterministic policy engine), 2 (tool registry and enforced gateway), 3 (advisory input
+defense and context provenance), and 4 (intent extraction and action validation) are
+**complete and verified**; the Docker Compose path was verified in 0b. Phase 4 adds a
+server-only intent-manifest issuer, a mock extractor, a strict local-model adapter
+interface, sealed request/principal/policy-bound manifests with short expiry, exact
+action/resource/destination/parameter constraints and bounded uses, trusted-timezone
+relative-date resolution, and gateway enforcement for the app-built execution path.
+Malformed model output, ambiguity, provider outage, forged/expired/rebound manifests, and
+constraint violations never grant execution. Intent can only narrow the deterministic
+policy engine, which remains the sole `ALLOW` producer. The codebase still does **not**
+implement `/v1` business routes, approvals, content DLP, real connectors, process
+isolation, rate limiting, a real model provider, or the full audit taxonomy/verifier.
 See `docs/SECURITY_INVARIANTS.md` and `docs/KNOWN_LIMITATIONS.md`.
 
 ## What exists
@@ -20,30 +22,32 @@ See `docs/SECURITY_INVARIANTS.md` and `docs/KNOWN_LIMITATIONS.md`.
 | Area | Files | Notes |
 |---|---|---|
 | Project metadata | `pyproject.toml`, `uv.lock`, `.python-version` (3.12), `.gitignore`, `.env.example`, `README.md`, `Makefile`, `.gitleaks.toml` | Python `>=3.12,<3.13`; runtime deps: fastapi, uvicorn, pydantic, pydantic-settings, asyncpg, SQLAlchemy 2.x async, Alembic, PyYAML; dev deps: pytest, httpx2, ruff, mypy, types-PyYAML |
-| Application | `src/ai_security/__init__.py`, `settings.py`, `api/{app,dependencies,routes_health,middleware}.py` | App factory + module-level `app`; validated settings (incl. `POLICY_PATH`/`RISK_THRESHOLDS_PATH`); `/health/live`, `/health/ready` (config, database, policy_self_checks + `policy_version`/`policy_hash`); host-auth ASGI middleware on `/v1/*` |
+| Application | `src/ai_security/__init__.py`, `settings.py`, `api/{app,dependencies,routes_health,middleware}.py` | App factory + module-level `app`; validated settings (incl. policy/threshold paths and `INTENT_MANIFEST_TTL_SECONDS`); `/health/live`, `/health/ready` (config, database, policy_self_checks + `policy_version`/`policy_hash`); host-auth ASGI middleware on `/v1/*`; Phase 4 intent service/tracker exposed and wired into the gateway on `app.state` |
 | Security primitives | `security/{constant_time,canonical_json,urls}.py`, `audit/hash_chain.py` | `hmac.compare_digest` wrappers (confined by the gate); canonical JSON bytes; ADR-002 hash formula + fixed vectors; destination canonicalization (IDNA, percent-encoding, https-only) |
 | Identity | `identity/{models,signing,host_auth,resolver,adapters}.py` | `Principal` (strict, frozen); HMAC signing/verification (exact `v1` message, full rejection surface); `DevPrincipalResolver` guard + fail-closed `HostPrincipalResolver`; test-only `TestPrincipalResolver` (not selectable via settings/factory) |
 | Persistence | `persistence/{database,models,nonce_repository,audit_repository,session_repository}.py` | Async engine/session; atomic nonce upsert (`ON CONFLICT ... WHERE ... RETURNING`); ADR-002 advisory-lock audit append; tenant/subject-bound session signals with bounded counters, lazy expiry, and signal-free rotation |
 | Migrations | `alembic.ini`, `migrations/env.py`, `migrations/versions/{d15b46c49950,c7f1a2b3d4e5}_*.py` | Baseline: `host_request_nonces`, `audit_events`; Phase 3: `session_security_state` (constraints + binding/last-seen indexes); `make migrate`; upgrade/downgrade/upgrade verified; `alembic check` clean |
-| Typed contracts | `tools/base.py` (`SideEffectClass`, `ToolArguments`/`ToolResult`, `ExecutionAuthorization`, `compute_action_digest`, adapters protocol), `data_security/classification.py` (`DataClass`), `firewall/decision.py` (`FirewallDecision`/`DecisionReason`/`DecisionRecord`) | Canonical enums defined exactly once (blueprint §4/§6.1); stable reason-code vocabulary (extended with `binding_mismatch`, `deadline_exceeded`, `policy_evaluation_error`, `audit_unavailable`); sentinel-guarded authorization; strict schemas (`extra="forbid"`, `strict=True`) |
+| Typed contracts | `tools/base.py` (`SideEffectClass`, `ToolArguments`/`ToolResult`, `ExecutionAuthorization`, `compute_action_digest`, adapters protocol), `data_security/classification.py` (`DataClass`), `firewall/decision.py` (`FirewallDecision`/`DecisionReason`/`DecisionRecord`) | Canonical enums defined exactly once (blueprint §4/§6.1); stable reason-code vocabulary (extended with `binding_mismatch`, `deadline_exceeded`, `policy_evaluation_error`, `audit_unavailable`, and the Phase 4 `intent_*` codes); sentinel-guarded authorization; strict schemas (`extra="forbid"`, `strict=True`) |
 | Tool registry + mock adapters | `tools/registry.py`, `tools/mock_{email,files,external_sink,text}.py` | Immutable validated registrations; exact `(tool_id, action_id)` resolution; startup consistency vs policy (one-directional: policy→capability required; extra registrations stay policy-disabled); deterministic in-memory adapters with ownership checks and digest verification |
 | Input defense + provenance | `input_defense/{models,config,normalize,heuristics,service,context_labels,sessions}.py`, `security/safe_yaml.py`, `config/input_defense.yaml` | Advisory only: strict config (every finding code mapped, no PASS mapping), byte/type/UTF-8 intake, copy-only normalization, versioned heuristics with quoted-context downgrade, typed `IntakeReport` with digests/offsets, six trust labels + deterministic JSON context, optional diagnostic classifier, typed `DETECTOR_UNAVAILABLE` failures |
-| Gateway + risk engine | `firewall/{gateway,models,risk_engine}.py` | Single `invoke_tool` chokepoint; binding/validation/resource/destination/deadline/engine checks; decision audited before execution; timeouts + per-process concurrency + result bounds; typed outcomes; `risk-v1` scoring (side-effect/destination/data-class factors) |
+| Intent extraction + manifests | `intent/{models,extractors,service,validator,time_window}.py` | Server-only issuer; mock demo extractor + strict local-model adapter interface (bounded JSON, duplicate-key rejection, retries, outage mapping); sealed request/principal/tenant/policy-bound manifest with short expiry and goal digest; exact action/resource/destination/parameter constraints and per-process bounded uses; trusted-timezone TODAY/THIS_WEEK resolution (DST-tested) |
+| Gateway + risk engine | `firewall/{gateway,models,risk_engine}.py` | Single `invoke_tool` chokepoint; binding/validation/resource/destination/deadline/engine checks; Phase 4 manifest verification + concrete constraint/use-limit checks; decision audited before execution; timeouts + per-process concurrency + result bounds; typed outcomes; `risk-v1` scoring |
 | Audit emission | `audit/{models,writer}.py` | Phase-2 event subset (`POLICY_EVALUATED`, `TOOL_EXECUTION_COMPLETED`, `TOOL_EXECUTION_FAILED`); schema v1; `AuditRecorder` protocol + `ChainAuditRecorder` over the ADR-002 repository; payload-safe references only |
 | Policy engine | `firewall/policy_engine.py`, `policy/{models,loader,self_checks}.py`, `config/{policies,risk_thresholds,policy_self_checks}.yaml` | Deterministic §10.2 evaluation order over validated facts; safe YAML (duplicate-key rejection); versioned bundle with content hashes; 21 fixtures (incl. 7 mandated names and the Phase 2 binding/deadline/inconsistent facts) evaluated at startup + readiness; replaces `policy/interim_matrix.py` (deleted) |
-| Tests | `tests/conftest.py`, `tests/unit/*` (22 test files + `_tool_auth.py` helper), `tests/integration/*` (10 test files + `conftest.py`/`db_helpers.py`), `tests/security/*` (2 test files) | **600 tests** (517 unit, 60 integration, 23 security): prior suites plus normalization/heuristics/config/context-label/session math, detector-failure security tests, startup wiring, and real-PostgreSQL session-state tests |
+| Tests | `tests/conftest.py`, `tests/unit/*` (25 test files + helper), `tests/integration/*` (11 test files + helpers), `tests/security/*` (3 test files) | **661 tests** (568 unit, 64 integration, 29 security): prior suites plus intent models/extractors/service/validation, manifest no-grant security tests, settings TTL, and app-wiring/real-PostgreSQL intent tests |
 | Quality gate | `scripts/check.sh` | 8 steps: lockfile, ruff format, ruff lint, mypy, pytest, pinned Gitleaks (dir+git), prohibited-pattern greps, constant-time confinement |
 | Containers | `Dockerfile`, `docker-compose.yml` | Digest-pinned bases; non-root uid 10001; COPY `config/ migrations/ alembic.ini`; Compose `api` carries the disposable dev `HOST_AUTH_KEYS_JSON` |
-| Docs | `docs/*` (9 files), `docs/adr/ADR-001..010` | Status columns honest; ADR-008 records the Phase 1 engine contract, ADR-009 the Phase 2 registry/gateway contract, ADR-010 the Phase 3 advisory-detection/session contract; matrix doc reflects gateway-enforced facts |
-| Git | baseline `41e10da`; 0b commits `0aa11d9`…`d180b89`; docs `c95f2a6`; Phase 1 commits `cffdd62`, `eaae462`, `b91729b`; Phase 2 commits `5725256`…`c7a0f8d` | Repository under git since 2026-10-19; linear history on `main`; Phase 3 commits follow this document update |
+| Docs | `docs/*` (9 files), `docs/adr/ADR-001..011` | Status columns honest; ADR-008 records the Phase 1 engine contract, ADR-009 the Phase 2 registry/gateway contract, ADR-010 the Phase 3 advisory-detection/session contract, ADR-011 the Phase 4 manifest/constraint contract; matrix doc reflects gateway-enforced facts |
+| Git | baseline `41e10da`; 0b commits `0aa11d9`…`d180b89`; docs `c95f2a6`; Phase 1 commits `cffdd62`, `eaae462`, `b91729b`; Phase 2 commits `5725256`…`c7a0f8d`; Phase 3 commits `faafe13`…`30c0f41` | Repository under git since 2026-10-19; linear history on `main`; Phase 4 commits follow this document update |
 | Spec | `AI_Agent_Security_Platform_Master_Blueprint_v1.2.md`, `archive/..._v1.0_superseded.md` | v1.2 authoritative; v1.0 archived |
 
-Deliberately deferred beyond Phase 3: manifest/intent binding and semantic intent
-(Phase 4), approvals and factor expansion (Phase 5), content DLP/canary (Phase 6), full
-audit taxonomy + verifier (Phase 7), `/v1/*` routes + agent runtime + rate limiting
-(Phase 8), evaluation (Phase 9), isolation/SOC/SBOM (Phase 10). Detection is not yet
-consumed by routes or the model context; `evaluation/` and `data_security/` beyond
-`classification.py` do not exist yet.
+Deliberately deferred beyond Phase 4: approvals and risk-factor expansion (Phase 5),
+content DLP/canary (Phase 6), full audit taxonomy + verifier (Phase 7), `/v1/*` business
+routes + agent runtime + real local-model provider + rate limiting (Phase 8), evaluation
+(Phase 9), isolation/SOC/SBOM (Phase 10). Intent extraction is available in-process only
+and uses the mock extractor in the app; no route or real provider consumes it yet.
+Detection and trust labels still have no route/model consumer; `evaluation/` and
+`data_security/` beyond `classification.py` do not exist yet.
 
 ## Decisions taken during Phase 0b implementation (within blueprint constraints)
 
@@ -207,6 +211,38 @@ consumed by routes or the model context; `evaluation/` and `data_security/` beyo
 - **Optional classifier is not wired**: the protocol exists for Phase 4+ experimentation;
   faults/timeouts produce `DETECTOR_UNAVAILABLE`, preserving fail-closed behavior.
 
+## Decisions taken during Phase 4 implementation (within blueprint constraints; ADR-011)
+
+- **Extractor proposes, server issues**: only `IntentManifestService.extract_and_issue`
+  can create manifests; extractor output is untrusted data. The mock extractor is
+  deliberately limited to two documented demo requests and clarifies everything else.
+- **Strict local-model boundary**: output is bounded to 65,536 bytes, duplicate JSON keys
+  and unknown fields are rejected, the provider cannot set the extractor version or any
+  binding, malformed output is retried at most twice by default, and timeouts/provider
+  failures map to `IntentExtractorUnavailable`. Every failure path returns no manifest.
+- **Concrete constraints only**: exact tool/action, resource ids, canonical destinations,
+  and scalar parameter values plus `max_uses`; wildcards, prefixes, floats, duplicates,
+  unknown/reserved parameters, inapplicable scopes, and destinations outside adapter
+  capability are rejected before issuance. Limits are 16 constraints / 32 uses total.
+- **Sealed manifest and full binding**: the frozen dataclass is sentinel-sealed; the
+  verifier checks request, principal, tenant, policy version/hash, creation, and expiry.
+  The goal is stored only as a SHA-256 digest; raw request text never enters the manifest.
+- **Trusted-timezone relative dates**: `TODAY`/`THIS_WEEK` resolve once from the verified
+  principal's IANA timezone; missing timezone asks for clarification; invalid timezone
+  fails closed. UTC start/end instants are stored and DST transition tests cover 23-hour
+  and 25-hour days.
+- **Gateway ordering**: the app-built gateway requires a manifest and verifies it before
+  registry/policy work; constraint matching happens after argument/resource/destination
+  derivation; `max_uses` is reserved only after policy would `ALLOW` and before the
+  decision audit. Policy remains the sole `ALLOW` producer and intent can only downgrade.
+- **Legacy mode is explicit**: `ToolGateway(intent_tracker=None)` retains Phase 2
+  in-process test behavior; the app always supplies a tracker, so production wiring
+  cannot execute without a manifest. The tracker is per-process and fails closed at
+  10,000 live manifests.
+- **Transport limitation**: no route accepts a manifest. A future API must keep issuance
+  and verification in-process or add a server-signed serialization; accepted as a
+  documented Phase 4 limitation.
+
 ## Phase 0a verification record (actual runs, 2026-10-19; historical)
 
 Environment: macOS (darwin), uv 0.13.1, CPython 3.12.15, Docker 29.3.1 / Compose
@@ -347,12 +383,38 @@ Rows 42+ continue the numbered record. Full evidence:
 | Strict configuration refuses startup when invalid or incomplete | PASS — duplicate keys, missing/unknown finding codes, invalid content types, and PASS mappings all refuse startup (unit + app-wiring tests) |
 | Quality gate green; docs/memory/ADR updated | PASS — rows 42-47; ADR-010; this file; `SECURITY_INVARIANTS`, `KNOWN_LIMITATIONS`, `THREAT_MODEL`, `ARCHITECTURE`, README, memory refresh |
 
+## Phase 4 verification record (actual runs, 2026-10-19)
+
+Rows 48+ continue the numbered record. Full evidence:
+`project_memory/TESTING_AND_VERIFICATION.md` (V51+).
+
+| # | Command | Result |
+|---|---|---|
+| 48 | `uv run --frozen pytest -q` | PASS — **661 passed** (568 unit + 64 integration + 29 security; DB-backed integration against the Compose PostgreSQL) |
+| 49 | `bash scripts/check.sh` | PASS — exit 0, all 8 steps; ruff format/lint clean (151 files); mypy 60 source files; Gitleaks 8.30.1 dir+git: 23 commits, no leaks found |
+| 50 | `uv run --frozen pytest -q tests/unit/test_intent_models.py tests/unit/test_intent_extractors.py tests/unit/test_intent_validation.py tests/unit/test_intent_service.py tests/security/test_intent_no_grant.py` | PASS — 56 passed (sealing/binding/expiry, strict extractor output/retry/outage, exact constraints/tracker/DST, issuance/limits, no-grant security) |
+| 51 | `uv run --frozen pytest -q tests/integration/test_intent_wiring.py tests/unit/test_settings.py` | PASS — 63 passed (app wiring/end-to-end allow/limit/clarification/wrong request against real PostgreSQL; settings TTL) |
+| 52 | Manual `IntentManifestService` smoke (summarize/read/forward/greeting) | PASS — ACTIVE with resolved UTC window / ACTIVE / REJECTED / REQUIRES_CLARIFICATION, with no manifest for rejected or clarified requests |
+
+## Definition of Done checklist (blueprint section 21, Phase 4)
+
+| DoD item | Status |
+|---|---|
+| Malformed model output and extractor outages do not grant permission | **PASS** — strict bounded parser rejects duplicate keys/unknown fields/oversize; malformed output retries are bounded; timeout/outage map to `IntentExtractorUnavailable`; every failure path returns no manifest (unit + security tests) |
+| Ambiguous intent grants no permission | PASS — service returns `REQUIRES_CLARIFICATION` with no manifest; app integration proves no execution; missing/invalid trusted timezone fails closed |
+| Tool arguments are compared with concrete intent limits | PASS — gateway verifies action, exact resource set, canonical destination, exact parameter values, and bounded uses after argument/resource validation; mismatches map to intent reason codes with zero adapter calls |
+| Manifest mutation/replay/expiry/rebinding cannot execute | PASS — sentinel-sealed manifest + full request/principal/tenant/policy-version/policy-hash/expiry verification; 6 security tests cover forged, expired, rebound, and wrong-action cases |
+| All execution still routes through the gateway | PASS — single `invoke_tool` chokepoint unchanged; app-built gateway requires the tracker/manifest; legacy no-tracker gateways remain denied without a manifest (security test) |
+| Policy remains the sole `ALLOW` producer | PASS — intent constraints are applied after the engine and never enter `PolicyEvaluationRequest`; intent can only downgrade |
+| Quality gate green; docs/memory/ADR updated | PASS — rows 48-51; ADR-011; this file; `SECURITY_INVARIANTS`, `KNOWN_LIMITATIONS`, `THREAT_MODEL`, `ARCHITECTURE`, README, memory refresh |
+
 ## How to continue (next session)
 
-Phase 4 — Intent extraction and action validation (blueprint section 21, sections 8-9):
-parse structured intents, bind them to tool/action/resource targets, and validate plan
-consistency before execution while keeping the deterministic policy engine as the sole
-`ALLOW` producer. Read blueprint sections 8-9; keep the ADR-007/ADR-008 fixture contract,
-the ADR-009 gateway contract, ADR-010's advisory-detection boundary, and every existing
-test green. Invariants #10, #11, #15, #16, #23 remain at their recorded status; do not
-claim end-to-end enforcement before the routes and model context consume these layers.
+Phase 5 — Risk engine and approval workflow (blueprint section 21, sections 11-13): extend
+the deterministic risk-factor set/thresholds as required, add durable approval request
+storage, and implement atomic one-time approval consumption bound to the canonical action
+digest plus request/principal/tenant/expiry. Hard denies must remain non-overridable;
+`ASK_USER` must never execute without a valid unconsumed approval. Read blueprint
+sections 11-13; keep the ADR-008 engine contract, ADR-009 gateway contract, ADR-010
+advisory-detection boundary, and ADR-011 intent boundary intact and every existing test
+green.

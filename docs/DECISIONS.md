@@ -5,7 +5,8 @@ summaries; the full decision text lives in each ADR (blueprint section 21). ADR-
 through ADR-007 are required to be recorded before Phase 1 and were all recorded here on
 2026-10-19; ADR-008 records the Phase 1 policy-engine contract; ADR-009 records the
 Phase 2 registry/gateway contract; ADR-010 records the Phase 3 advisory input-defense,
-trust-label, and session-signal contract.
+trust-label, and session-signal contract; ADR-011 records the Phase 4 server-issued
+intent-manifest and constraint contract.
 
 | ADR | Title | Status | Implementation phase |
 |---|---|---|---|
@@ -19,6 +20,7 @@ trust-label, and session-signal contract.
 | [ADR-008](adr/ADR-008-policy-engine-typed-contracts.md) | Deterministic policy engine with strict typed contracts and versioned policy bundle | Accepted | Phase 1 |
 | [ADR-009](adr/ADR-009-tool-registry-and-enforced-gateway.md) | Tool registry, execution authorization, and the enforced gateway | Accepted | Phase 2 |
 | [ADR-010](adr/ADR-010-advisory-input-defense-and-session-signals.md) | Advisory input threat defense, trust labels, and session signals | Accepted | Phase 3 |
+| [ADR-011](adr/ADR-011-server-issued-intent-manifests.md) | Server-issued, sealed intent manifests and concrete action constraints | Accepted | Phase 4 |
 
 ## Adding a new ADR
 

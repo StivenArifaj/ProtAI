@@ -4,9 +4,10 @@ Repository foundation for the AI Agent Security & Safety Platform. The authorita
 specification is `AI_Agent_Security_Platform_Master_Blueprint_v1.2.md` in the repository
 root; the archived v1.0 is under `archive/` and is superseded.
 
-**Current state: Phases 0a-3 complete and verified** (repository foundation; security
+**Current state: Phases 0a-4 complete and verified** (repository foundation; security
 foundation; typed contracts + deterministic policy engine; tool registry + enforced
-gateway; advisory input defense + context provenance). Implemented today: enforced
+gateway; advisory input defense + context provenance; intent extraction + manifest
+validation). Implemented today: enforced
 configuration validation; host HMAC authentication + replay rejection on the `/v1/*`
 path prefix; deterministic policy engine with 21 startup/readiness self-check fixtures;
 typed tool registry + mock-only adapters; the `invoke_tool` gateway as the only execution
@@ -14,9 +15,12 @@ path (digest-bound execution authorization, deadlines, timeouts/concurrency/resu
 bounds, audit-first through the hash chain); `risk-v1` scoring; strict versioned
 input-defense config with bounded intake, copy-only normalization, versioned injection
 heuristics, typed non-PASS failure semantics, trust-labelled context assembly, and a
-tenant/subject-bound session signal store. Detection is advisory: it has no path into
-authorization or execution. **No `/v1` business routes, approvals, intent binding, DLP,
-real connectors, sandbox, or audit verifier exist yet** — do not present the system as
+tenant/subject-bound session signal store; server-issued sealed intent manifests with
+exact action/resource/destination/parameter/use constraints, trusted-timezone relative
+dates, and gateway enforcement with a mock extractor. Detection is advisory and intent
+can only narrow execution: neither can produce an `ALLOW` or bypass policy. **No `/v1`
+business routes, manifest transport, real model provider, approvals, DLP, real
+connectors, sandbox, or audit verifier exist yet** — do not present the system as
 providing them. See `docs/IMPLEMENTATION_STATE.md`, `docs/SECURITY_INVARIANTS.md`, and
 `docs/KNOWN_LIMITATIONS.md`.
 
@@ -30,7 +34,7 @@ providing them. See `docs/IMPLEMENTATION_STATE.md`, `docs/SECURITY_INVARIANTS.md
 
 ```bash
 uv sync --frozen          # install from the committed lockfile
-uv run pytest             # full suite (600 unit/integration/security tests)
+uv run pytest             # full suite (661 unit/integration/security tests)
 bash scripts/check.sh     # full local gate: lockfile, ruff, mypy, pytest, invariant greps
 ```
 

@@ -79,4 +79,5 @@ fail closed (`BLOCK`); no string aliases and no coercion into an allowed class.
 - Known deviations / limits (documented, tested): destinations match exactly (no
   wildcards in v1); no policy hot-reload (readiness detects file drift; the running
   process keeps its startup-loaded bundle); data class is a registration fact until
-  content-level DLP (Phase 6); `manifest`/intent binding arrives in Phase 4.
+  content-level DLP (Phase 6); Phase 4 manifests are enforced as post-policy
+  constraints and do not enter engine facts.

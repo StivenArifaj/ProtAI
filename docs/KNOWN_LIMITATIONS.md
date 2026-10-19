@@ -1,7 +1,7 @@
 # Known Limitations
 
-As of **Phase 3 (advisory input defense and context provenance, 2026-10-19)**. This list must be
-updated every phase; anything not explicitly implemented must remain listed here or in
+As of **Phase 4 (intent extraction and action validation, 2026-10-19)**. This list must
+be updated every phase; anything not explicitly implemented must remain listed here or in
 `docs/IMPLEMENTATION_STATE.md`.
 
 ## Security controls still absent or narrowed (do not claim otherwise)
@@ -25,11 +25,12 @@ updated every phase; anything not explicitly implemented must remain listed here
 3. **Approvals are not implemented.** `ASK_USER` is returned as a typed no-execution
    result; no approval request is stored or consumable until Phase 5. The starter policy
    enables no approval-eligible tool.
-4. **Manifest/intent binding is not implemented.** Semantic intent extraction and plan
-   validation (Phase 4) are absent; trust labels and detector findings currently have no
-   consumer. The gateway validates principal,
-   request, arguments, resource IDs, destination, and deadline; it does not yet bind a
-   `manifest` or intent/action constraints (Phase 4).
+4. **Intent binding is in-process only and uses a mock extractor.** The app-built
+   gateway requires a sealed, request/principal/policy-bound manifest and enforces its
+   concrete action/resource/destination/parameter/use constraints (Phase 4), but no
+   `/v1` route issues or transports a manifest, and the app uses the two-scenario mock
+   extractor rather than general natural-language understanding. Trust labels and
+   detector findings still have no consumer.
 5. **Audit coverage is a Phase 2 subset.** The gateway emits `POLICY_EVALUATED` and
    `TOOL_EXECUTION_COMPLETED`/`_FAILED` into the ADR-002 chain; the full taxonomy,
    verifier, retention, and query/API surfaces are Phase 7. A denial whose audit append
@@ -113,3 +114,22 @@ updated every phase; anything not explicitly implemented must remain listed here
 27. Session signals are counters only and are not yet an authorization or scoring input;
     multi-turn escalation logic (used by risk/session factors) is later-phase work. The
     store is available on `app.state` but no route authenticates a session identifier yet.
+28. **Intent manifests cannot cross a process boundary or the future API.** The manifest
+    is a sentinel-sealed in-process object, not a signed token. A `/v1` route must keep
+    issuance and verification in-process or add a server-signed serialization before
+    accepting a client-carried manifest; no route accepts one today.
+29. **The app's extractor is the mock implementation.** It recognizes only the two
+    documented demo requests and rejects forward/send/delete/upload/share phrasing;
+    everything else is clarified. `LocalModelIntentExtractor` exists with a strict,
+    bounded parser and an injected client interface, but no real provider is wired and
+    the model's semantic accuracy is unmeasured (Phase 8/9).
+30. **Intent use limits are per process and in memory.** `IntentUsageTracker` fails
+    closed at 10,000 live manifests and purges on expiry, but a multi-worker deployment
+    would enforce `max_uses` independently per worker; a shared store is later work.
+31. **Manifest request binding relies on a server-assigned `request_id`.** The gateway
+    verifies the id but has no request-body digest; the Phase 8 route must generate
+    unique request ids and must never accept a client-chosen id as a manifest binding.
+32. **Constraint syntax is intentionally narrow.** Exact tool/action, resource ids,
+    canonical destinations, and scalar parameter values only (no wildcards, prefixes,
+    ranges, or float values). This can require clarification for legitimate requests
+    that the extractor expresses too coarsely; it never widens execution.
