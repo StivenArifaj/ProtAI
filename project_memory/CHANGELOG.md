@@ -4,6 +4,22 @@ Concise, dated history of project activity. Newest first.
 
 ## 2026-10-19
 
+- **Phase 2 (tool registry and enforced gateway) implemented and verified** (same day as
+  0a/0b/1): strict `ToolArguments`/`ToolResult` + sentinel-guarded, digest-bound
+  `ExecutionAuthorization` (`tools/base.py`); immutable validated `ToolRegistration` +
+  one-directional policy/capability consistency (`tools/registry.py`); deterministic mock
+  adapters (`tools/mock_{email,files,external_sink,text}.py`); single `invoke_tool`
+  chokepoint with bindings, strict validation, derived resources/destination, resource
+  checks, deadlines, audit-first ordering, timeouts, per-process concurrency, and result
+  bounds (`firewall/{models,gateway}.py`); `risk-v1` scoring engine
+  (`firewall/risk_engine.py`); audit event subset + `ChainAuditRecorder`
+  (`audit/{models,writer}.py`); reason codes `binding_mismatch`, `deadline_exceeded`,
+  `policy_evaluation_error`, `audit_unavailable`; `create_app` wiring exposing
+  `app.state.tool_registry`/`app.state.tool_gateway`; self-check fixtures extended to 21.
+  Contract recorded in ADR-009. Evidence V36+ in
+  [TESTING_AND_VERIFICATION.md](TESTING_AND_VERIFICATION.md) — **520 tests** (461 unit +
+  47 integration + 12 security), 8-step gate green. Phase record:
+  [phases/PHASE_2_COMPLETE.md](phases/PHASE_2_COMPLETE.md).
 - **Phase 1 (typed contracts and deterministic policy engine) implemented and verified**
   (same day as 0a/0b): canonical enums defined exactly once (`tools/base.py`,
   `data_security/classification.py`, `firewall/decision.py`); strict contracts

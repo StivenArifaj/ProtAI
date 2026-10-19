@@ -1,15 +1,19 @@
 # Policy Decision Matrix
 
-Status: **implemented (Phase 1).** This document mirrors the mandatory v1 baseline from
-blueprint v1.2 section 10.3 as a specification; the deterministic engine
+Status: **implemented (Phases 1-2).** This document mirrors the mandatory v1 baseline
+from blueprint v1.2 section 10.3 as a specification; the deterministic engine
 (`src/ai_security/firewall/policy_engine.py`) enforces it against
 `config/policies.yaml` + `config/risk_thresholds.yaml`, and the fixture suite
 (`config/policy_self_checks.yaml`) exercises it at startup, on every readiness probe, and
-in the table-driven unit tests (ADR-007, ADR-008). The engine consumes validated facts and
-makes no network calls and no model calls — decisions are data.
+in the table-driven unit tests (ADR-007, ADR-008). Since Phase 2 the gateway
+(`src/ai_security/firewall/gateway.py`) is the only execution path and derives the
+engine's input facts from the validated call and registry (ADR-009). The engine consumes
+validated facts and makes no network calls and no model calls — decisions are data.
 
 `Risk` is the deterministic 0-100 residual risk score calculated only after mandatory
-checks pass (Phase 1 consumes the fact; the scoring engine itself is Phase 5).
+checks pass. Since Phase 2 the gateway computes it with the versioned `risk-v1` engine
+(`src/ai_security/firewall/risk_engine.py`); factor expansion and calibration remain
+Phase 5/9, and a caller can never supply the score.
 Side-effect classes are the canonical `SideEffectClass` enum
 (`READ_ONLY`, `LOCAL_MUTATION`, `EXTERNAL_MUTATION`, `DESTRUCTIVE`); data classes are
 the canonical `DataClass` enum (`PUBLIC`, `INTERNAL`, `CONFIDENTIAL`, `RESTRICTED`).
@@ -61,7 +65,18 @@ fail closed (`BLOCK`); no string aliases and no coercion into an allowed class.
 - Policy YAML uses safe loading (`yaml.safe_load` with duplicate-key detection) and
   validated Pydantic models; no mini-language, dynamic expressions, or code execution
   (section 10.4). Config version/hash are exposed in readiness metadata (ADR-007).
+- Phase 2 execution facts: the gateway validates arguments strictly, derives resource
+  IDs/destination from the validated fields (caller-declared targets must match), asks the
+  adapter's pure `check_resource_access`, and computes `risk_score` with `risk-v1`. A
+  registration absent from the policy stays registered but policy-disabled
+  (`unknown_tool`); a policy tool without a registration refuses startup. The engine
+  remains the sole `ALLOW` producer; the gateway may only downgrade (audit failure,
+  deadlines, evaluation errors).
+- Gateway operational reason codes are part of the observable contract:
+  `binding_mismatch`, `deadline_exceeded` (engine facts) and
+  `policy_evaluation_error`, `audit_unavailable` (gateway fail-closed overrides).
+  `ASK_USER` never executes in Phase 2 (approvals are Phase 5).
 - Known deviations / limits (documented, tested): destinations match exactly (no
   wildcards in v1); no policy hot-reload (readiness detects file drift; the running
-  process keeps its startup-loaded bundle); `Destination` and `risk_score` facts are
-  supplied by upstream layers as they land (registry, validator, risk engine).
+  process keeps its startup-loaded bundle); data class is a registration fact until
+  content-level DLP (Phase 6); `manifest`/intent binding arrives in Phase 4.

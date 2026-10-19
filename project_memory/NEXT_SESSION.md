@@ -4,81 +4,76 @@
 
 ## Where we are
 
-Phases 0a (repository foundation), 0b (security foundation), and 1 (typed contracts and
-deterministic policy engine) are **COMPLETE and VERIFIED** — see
-[phases/PHASE_1_COMPLETE.md](phases/PHASE_1_COMPLETE.md) and evidence V30+ in
-[TESTING_AND_VERIFICATION.md](TESTING_AND_VERIFICATION.md). The repository is under git
-with a linear history; the Compose `db` container and volume are preserved for tests
-(`api` stopped).
+Phases 0a (repository foundation), 0b (security foundation), 1 (typed contracts and
+deterministic policy engine), and 2 (tool registry and enforced gateway) are **COMPLETE —
+VERIFIED** — see [phases/PHASE_2_COMPLETE.md](phases/PHASE_2_COMPLETE.md) and evidence
+V36+ in [TESTING_AND_VERIFICATION.md](TESTING_AND_VERIFICATION.md). The repository is
+under git with a linear history; the Compose `db` container and volume are preserved for
+tests (`api` stopped).
 
 What exists now: host HMAC authentication + replay rejection on the `/v1/*` path prefix
-(routes do not exist yet), async persistence + Alembic baseline, the dev-resolver guard +
-test-only principal adapter, strict typed contracts (canonical `SideEffectClass`/
-`DataClass`), canonical destination handling, the safe versioned policy loader with
-duplicate-key rejection, the deterministic §10.2 policy engine with stable reason codes
-and provenance, ADR-007 self-check fixtures (17, incl. the 7 mandated names) wired into
-startup + readiness with `policy_version`/`policy_hash`, pinned Gitleaks, and 406 passing
-tests. **Nothing executes:** there is no tool registry, gateway, or adapter, so decisions
-have no side effects yet.
+(routes do not exist yet), async persistence + Alembic baseline, dev-resolver guard +
+test-only principal adapter, strict typed contracts, canonical destination handling, the
+safe versioned policy loader, the deterministic §10.2 policy engine with provenance and
+21 self-check fixtures wired into startup/readiness, and — new in Phase 2 — the typed
+tool registry with startup consistency checks, four deterministic mock adapters, the
+gateway-issued digest-bound `ExecutionAuthorization`, the `risk-v1` scoring engine, the
+single `invoke_tool` chokepoint (bindings → strict validation → resource/destination →
+real engine → audit-first → bounded execution → typed outcome), the audit recorder over
+the ADR-002 chain, and `create_app` wiring (`app.state.tool_registry` /
+`app.state.tool_gateway`). 520 tests pass; the gate is green (8/8). **Nothing outside the
+gateway executes:** denied/unknown/malformed/expired/audit-failed calls leave the mock
+sink unchanged (proven in unit, security, and real-PostgreSQL integration tests).
 
-## The next task: Phase 2 — Tool registry and enforced gateway (blueprint §21)
+## The next task: Phase 3 — Input threat defense and context provenance (blueprint §21)
 
-No blocking preconditions; Phase 1 passed its DoD, so proceed per the autonomy mandate.
-Read first: blueprint §§12 (firewall gateway + no-bypass), 14 (tool isolation/mock
-tools), §21 (Phase 2), and ADR-008 (fact separation: the registry and call validator
-produce the facts the Phase 1 engine consumes); then [../docs/ARCHITECTURE.md](../docs/ARCHITECTURE.md).
+No blocking preconditions; Phase 2 passed its DoD, so proceed per the autonomy mandate.
+Read first: blueprint §§7-8 (input threat signals, trust labels, context assembly) and
+§21 (Phase 3); then ADR-008 (facts the engine consumes) and ADR-009 (the gateway the
+signals will feed). Formalize `phases/PHASE_3_PLAN.md` when starting.
 
-Expected deliverables (condensed; formalize a `phases/PHASE_2_PLAN.md` when starting):
+Expected deliverables (condensed from blueprint §21):
 
-1. Tool protocol + registry derived from the loaded policy document (`config/policies.yaml`);
-   unknown/undeclared tools stay `unknown_tool`-deniable and unexecutable.
-2. Mock adapters only: email (search/read), files (read under a sandbox root via
-   resource IDs), external sink (write; egress disabled by default) — no real
-   connectors, no shell, no arbitrary network.
-3. The `invoke_tool` gateway chokepoint: construct the engine request from validated
-   facts, evaluate policy **before execution**, execute only on `ALLOW`, capture
-   decisions for later audit, enforce timeouts + result bounds.
-4. No-bypass tests: sink state changes only after a gateway `ALLOW`; denied/unknown/
-   invalid actions leave no side effect; adapters are never invoked directly.
-
-Runtime order reminder (blueprint work-order note): the unbypassable gateway lands
-**before** input detection (Phase 3) and before any powerful tools.
+1. Intake limits and a normalization copy (never mutate the original input).
+2. Versioned deterministic heuristics producing typed findings (direct/indirect
+   injection, canary/known-bad patterns) — no LLM in the decision path.
+3. Trust labels (`EXTERNAL_UNTRUSTED` etc.) that survive into agent context; provenance
+   records attached to context.
+4. Explicit detector failure behavior: a detector outage is a typed failure mode, never a
+   silent bypass of the gateway.
+5. Tests: direct/indirect attack fixtures + benign hard negatives; labels/provenance
+   reach context; detector failure cannot authorize anything.
 
 ## Verification commands and expected results
 
 | Command | Expected |
 |---|---|
-| `uv run --frozen pytest -q` | All tests pass (≥406; new registry/gateway/no-bypass tests added) |
+| `uv run --frozen pytest -q` | All tests pass (≥520; new input-defense suites added) |
 | `bash scripts/check.sh` | exit 0, all 8 steps (Gitleaks must stay clean) |
-| Policy self-checks | startup and `/health/ready` still pass; fixtures keep working against the engine |
-| No-bypass proof | denied/unknown action leaves the mock sink unchanged (new Phase 2 tests) |
+| Policy self-checks | startup and `/health/ready` still pass (21 fixtures) |
+| No-bypass suites | `tests/security` + gateway integration still green (gateway contract untouched) |
 
-## Security constraints that must hold throughout Phase 2
+## Security constraints that must hold throughout Phase 3
 
-- Invariants #17/#18/#25 stay green: never touch the middleware/policy contracts without
-  proving the denial matrix and policy suites still pass; keep `compare_digest` confined
-  to `security/constant_time.py`.
-- The gateway must call the real engine — never re-implement or bypass policy logic in
-  adapters; adapters never see raw host requests.
-- Mock tools only; egress stays disabled in the starter policy; file access stays within
-  the sandbox root by resource ID.
-- No execution without an `ALLOW` `DecisionRecord` for that exact call; decisions are
-  data and must be reproducible (same facts → same decision).
-- Update `docs/SECURITY_INVARIANTS.md` (#1/#9/#10/#12 become testable), both status
-  files, `ARCHITECTURE_MAP.md`, `FILE_MAP.md`, `CHANGELOG.md`, and this file in the same
-  task.
+- Invariants #17/#18/#25 stay green; keep `compare_digest` confined to
+  `security/constant_time.py`; do not weaken the HMAC denial matrix.
+- Detectors never become the policy authority: findings/labels feed facts; the engine
+  and gateway remain the only enforcement path (ADR-008/ADR-009).
+- No raw payloads in logs/audit; findings are typed with bounded fields.
+- Mock/local only; no network calls in the detection path; no model calls by default.
+- Update `docs/SECURITY_INVARIANTS.md` (#10/#11/#15/#16/#23), both status files,
+  `ARCHITECTURE_MAP.md`, `FILE_MAP.md`, `CHANGELOG.md`, and this file in the same task.
 
-## Definition of Done (blueprint §21, Phase 2 condensed)
+## Definition of Done (blueprint §21, Phase 3 condensed)
 
-No-bypass tests: the mock sink changes only after a valid gateway `ALLOW`; denied and
-unknown actions have no side effect; timeouts/result bounds enforced; the quality gate
-remains green; ADR-007/ADR-008 contracts untouched.
+Direct/indirect attack + benign hard-negative tests pass; labels and provenance survive
+to agent context; detector failure behavior is explicit and cannot bypass the gateway;
+quality gate remains green; ADR-007/ADR-008/ADR-009 contracts untouched.
 
 ## Open decisions / notes for the operator
 
 - None blocking. `check.sh` pins Gitleaks to exactly 8.30.1 by design; a mismatch fails
   the gate.
-- Known Phase 1 limits carried forward: no policy hot-reload (readiness detects drift);
-  destination allowlisting is exact-match only; the `risk_score` fact still comes from
-  the caller until the Phase 5 risk engine (Phase 2 supplies a placeholder deterministic
-  value or keeps it caller-supplied — decide and document in `PHASE_2_PLAN.md`).
+- Carried-forward limits (documented): no policy hot-reload; exact-match destination
+  allowlisting; `risk-v1` uncalibrated; per-process concurrency only; mock-only tools;
+  in-process guardrail (no sandbox) until Phase 10.

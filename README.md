@@ -4,11 +4,17 @@ Repository foundation for the AI Agent Security & Safety Platform. The authorita
 specification is `AI_Agent_Security_Platform_Master_Blueprint_v1.2.md` in the repository
 root; the archived v1.0 is under `archive/` and is superseded.
 
-**Current state: Phase 0a (repository foundation) only.** The application exposes liveness
-and readiness endpoints and enforced configuration validation. No security control from
-Phase 0b or later (host authentication, policy engine, tool firewall, DLP, audit chain)
-is implemented yet, and nothing in this repository should be presented as providing them.
-See `docs/IMPLEMENTATION_STATE.md` and `docs/KNOWN_LIMITATIONS.md`.
+**Current state: Phases 0a-2 complete and verified** (repository foundation; security
+foundation; typed contracts + deterministic policy engine; tool registry + enforced
+gateway). Implemented today: enforced configuration validation; host HMAC authentication
++ replay rejection on the `/v1/*` path prefix; deterministic policy engine with 21
+startup/readiness self-check fixtures; typed tool registry + mock-only adapters; the
+`invoke_tool` gateway as the only execution path (digest-bound execution authorization,
+deadlines, timeouts/concurrency/result bounds, audit-first through the hash chain);
+`risk-v1` scoring. **No `/v1` business routes, approvals, input defense, DLP, real
+connectors, sandbox, or audit verifier exist yet** — do not present the system as
+providing them. See `docs/IMPLEMENTATION_STATE.md`, `docs/SECURITY_INVARIANTS.md`, and
+`docs/KNOWN_LIMITATIONS.md`.
 
 ## Prerequisites
 
@@ -20,7 +26,7 @@ See `docs/IMPLEMENTATION_STATE.md` and `docs/KNOWN_LIMITATIONS.md`.
 
 ```bash
 uv sync --frozen          # install from the committed lockfile
-uv run pytest             # baseline unit + integration tests
+uv run pytest             # full suite (520 unit/integration/security tests)
 bash scripts/check.sh     # full local gate: lockfile, ruff, mypy, pytest, invariant greps
 ```
 
@@ -48,9 +54,10 @@ curl -s http://127.0.0.1:8080/health/live
 Expected results:
 
 - `GET /health/live` returns `200 {"status":"alive"}`.
-- `GET /health/ready` returns `200 {"status":"ready","checks":{"config":true,"database":true}}`
-  when the database is reachable, and `503 {"status":"not_ready",...}` when it is not.
-  Neither response contains credentials or stack details.
+- `GET /health/ready` returns `200` with `checks.config`, `checks.database`, and
+  `checks.policy_self_checks` all `true` (plus `policy_version`/`policy_hash`) when the
+  stack is healthy, and `503 {"status":"not_ready",...}` when the database is unreachable
+  or policy self-checks drift. Neither response contains credentials or stack details.
 - `/docs`, `/redoc`, and `/openapi.json` exist only when `APP_ENV` is exactly
   `development` or `test`; they are absent otherwise.
 
@@ -75,7 +82,7 @@ partially configured state.
 - `docs/ARCHITECTURE.md` — component map and request lifecycle
 - `docs/THREAT_MODEL.md` — threat table and trust boundaries with implementation status
 - `docs/SECURITY_INVARIANTS.md` — the 25 mandatory invariants and their status
-- `docs/POLICY_DECISION_MATRIX.md` — the mandated v1 decision matrix (specification)
+- `docs/POLICY_DECISION_MATRIX.md` — the mandated v1 decision matrix and its enforcement status
 - `docs/DECISIONS.md` + `docs/adr/` — architecture decision records
 - `docs/IMPLEMENTATION_STATE.md` — what exists, what is verified, what is deferred
 - `docs/KNOWN_LIMITATIONS.md` — known gaps of the current phase

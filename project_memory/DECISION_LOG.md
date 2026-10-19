@@ -23,6 +23,7 @@ the index; never silently rewrite the historical rationale.
 | ADR-006 | Alembic for all schema changes; `create_all` only in isolated unit fixtures | Phase 0b | [../docs/adr/ADR-006-alembic-migrations.md](../docs/adr/ADR-006-alembic-migrations.md) |
 | ADR-007 | Policy decision matrix mirrored in docs/config + startup self-checks | Phase 1 (scaffolding in 0b) | [../docs/adr/ADR-007-policy-matrix-self-checks.md](../docs/adr/ADR-007-policy-matrix-self-checks.md) |
 | ADR-008 | Deterministic policy engine with strict typed contracts + versioned policy bundle | Phase 1 | [../docs/adr/ADR-008-policy-engine-typed-contracts.md](../docs/adr/ADR-008-policy-engine-typed-contracts.md) |
+| ADR-009 | Tool registry, execution authorization, and the enforced gateway | Phase 2 | [../docs/adr/ADR-009-tool-registry-and-enforced-gateway.md](../docs/adr/ADR-009-tool-registry-and-enforced-gateway.md) |
 
 ## Implementation decisions (Phase 0a, within blueprint constraints)
 
@@ -75,13 +76,27 @@ the index; never silently rewrite the historical rationale.
 | `TestPrincipalResolver` test-only, not selectable via settings/factory | Test adapter must not weaken the dev-resolver guard (ADR-001) | `../src/ai_security/identity/adapters.py`; adapter tests |
 | Thresholds 40/80 marked experimental in the config header | §11.4 defaults, uncalibrated until Phase 9; no threshold can override hard deny | `../config/risk_thresholds.yaml` |
 
+## Implementation decisions (Phase 2, within blueprint constraints; contract in ADR-009)
+
+| Decision | Rationale | Recorded in |
+|---|---|---|
+| Registry/policy consistency **one-directional**: policy tools require registrations (startup refusal); extra registrations stay policy-disabled (`unknown_tool`) | §14.1 capability inventory (`mock_files.search`) exceeds the §10.5 enabled set; drift in policy→capability still fails closed | ADR-009; `tests/unit/test_tool_registry.py`, `tests/integration/test_gateway_wiring.py` |
+| Exact `(tool_id, action_id)` identity; no `action_id` naming convention enforced | Conventions add no security value; the pair is the policy/audit identifier | ADR-009; `tests/unit/test_tool_registry.py` |
+| Gateway-issued sentinel-guarded `ExecutionAuthorization` + SHA-256 canonical action digest; adapters re-verify before side effects | §12.4 "every adapter invocation originated from the gateway"; §13.2 digest binding pre-built for Phase 5; direct/forged construction raises `UngatedExecutionError` | ADR-009; `tests/unit/test_mock_adapters.py`, `tests/security/test_gateway_no_bypass.py` |
+| Gateway only downgrades: engine is the sole `ALLOW` producer; audit outage on would-be ALLOW → `BLOCK`/`audit_unavailable`; outcome-audit failure → `AUDIT_FAILED` (no result); denial audit failure keeps the denial | §16.4 fail-closed default without weakening denials (no side effect exists to roll back) | ADR-009; `tests/unit/test_gateway.py`, integration tests |
+| `risk-v1` computed in-gateway (side-effect, external destination, registration data class; cap 100; factor codes recorded) | §11.3 deterministic factors; §6.1 forbids model-supplied risk; weights experimental until Phase 9 | ADR-009; `tests/unit/test_risk_engine.py`, `docs/POLICY_DECISION_MATRIX.md` |
+| Per-tool timeout (`asyncio.timeout`), per-process concurrency (`asyncio.Semaphore` per running loop via `WeakKeyDictionary`), result schema/canonicalizability/≤1 MiB checks | §12.3 steps 9-11 bounded execution with typed outcomes (`TIMEOUT`, `RESULT_REJECTED`) | ADR-009; `tests/unit/test_gateway.py` |
+| Strictness tightening: `ToolArguments`/`ToolResult` `strict=True`; resource/destination argument annotations must be exactly `str` | Prevent coercion smuggling and non-str resource values past derivation/consistency checks | ADR-009; registry tests |
+| New observable reason codes: `policy_evaluation_error`, `audit_unavailable` (gateway), `binding_mismatch`, `deadline_exceeded` (engine facts, 21 fixtures) | Fail-closed overrides must be observable and fixture-covered | ADR-009; `config/policy_self_checks.yaml` |
+| Mock sink stores content digest/size only; registration `data_class: PUBLIC`; egress disabled in starter policy | §14.1 mock-only, §16.3 privacy; content classification is Phase 6 | ADR-009; `tests/unit/test_mock_adapters.py` |
+
 ## Deferred decisions (updated after Phase 1)
 
 | Topic | Status | Needed by |
 |---|---|---|
-| Policy self-check fixture content shape | **DECIDED (0b, extended 1):** strict YAML `{fixtures: [...]}`; each `case` is a full `PolicyEvaluationRequest`; optional fixture-level `tool_policy` override; 17 fixtures incl. 7 mandated rows | done |
+| Policy self-check fixture content shape | **DECIDED (0b; extended 1; extended 2):** strict YAML `{fixtures: [...]}`; each `case` is a full `PolicyEvaluationRequest`; optional fixture-level `tool_policy` override; 21 fixtures incl. 7 mandated rows and the Phase 2 binding/deadline/inconsistent-facts rows | done |
 | Gitleaks install method on macOS | **DECIDED:** operator installs (brew); gate pins 8.30.1 and fails clearly when missing/mismatched | done |
 | Git initialization + baseline commit scope | **DONE:** baseline `41e10da` + 0b commits + Phase 1 commit series; no remote | done |
 | ADR format enrichment ("alternatives considered" / "tests/verification" sections) | Still open; ADR-008 was created with the established Status/Context/Decision/Consequences/References shape | next ADR |
-| `risk_score` fact source until the Phase 5 risk engine exists | Open: keep caller-supplied (current) or a deterministic Phase 2 placeholder — decide in `PHASE_2_PLAN.md` and document | Phase 2 |
-| Policy hot-reload (atomic reload per §10.6) | Open; readiness detects drift today, process keeps startup bundle | Phase 2+ (not scheduled) |
+| `risk_score` fact source | **DECIDED (2, ADR-009):** computed by the versioned `risk-v1` engine in the gateway (side-effect/destination/registration-data-class factors); never caller-supplied. Factor expansion + approvals in Phase 5; calibration in Phase 9 | done (calibration later) |
+| Policy hot-reload (atomic reload per §10.6) | Open; readiness detects drift today, process keeps startup bundle | Not scheduled (documented limitation) |

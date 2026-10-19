@@ -59,14 +59,22 @@ implemented because a document describes it; record discrepancies instead of hid
   [phases/PHASE_0A_COMPLETE.md](phases/PHASE_0A_COMPLETE.md).
 - **Phase 0b (security foundation): COMPLETE and VERIFIED** (including the Docker path).
   See [phases/PHASE_0B_COMPLETE.md](phases/PHASE_0B_COMPLETE.md).
-- The repository is **under git** (baseline `41e10da` + seven Phase 0b commits; no remote
-  configured).
+- **Phase 1 (typed contracts and deterministic policy engine): COMPLETE and VERIFIED.**
+  See [phases/PHASE_1_COMPLETE.md](phases/PHASE_1_COMPLETE.md).
+- **Phase 2 (tool registry and enforced gateway): COMPLETE and VERIFIED.** See
+  [phases/PHASE_2_COMPLETE.md](phases/PHASE_2_COMPLETE.md).
+- The repository is **under git** (baseline `41e10da` + Phase 0b/1/2 commits on `main`;
+  no remote configured).
 - Enforced today: `/v1/*` host HMAC authentication + atomic replay rejection + request
-  bounds; dev-resolver guard; policy self-check scaffolding (startup + readiness);
-  pinned Gitleaks in the gate. **Absent:** authorization, tool gateway, approvals, DLP,
-  audit event emission, `/v1` routes, rate limits — do not present the system as
-  providing them.
-- **Phase 1 (typed contracts and deterministic policy engine) is the next task** — see
+  bounds; dev-resolver guard; deterministic policy engine + 21 self-check fixtures
+  (startup/readiness); typed tool registry + startup consistency; mock-only adapters;
+  the `invoke_tool` gateway as the only execution path (digest-bound execution
+  authorization, deadlines, timeouts, concurrency/result bounds, audit-first); `risk-v1`
+  scoring; audit decision/outcome events in the ADR-002 chain; pinned Gitleaks in the
+  gate. **Absent:** `/v1` routes + agent runtime, approvals, manifest/intent binding,
+  input defense/provenance, content DLP, real connectors, process isolation, rate
+  limits, audit verifier — do not present the system as providing them.
+- **Phase 3 (input threat defense and context provenance) is the next task** — see
   [NEXT_SESSION.md](NEXT_SESSION.md).
 
 ## Files in this directory
@@ -76,7 +84,7 @@ implemented because a document describes it; record discrepancies instead of hid
 | [README.md](README.md) | Entry point, reading order, update rules. |
 | [PROJECT_CONTEXT.md](PROJECT_CONTEXT.md) | Identity, scope, non-goals, stack, operator context. |
 | [IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md) | Source of truth for what exists now (labels + evidence pointers). |
-| [NEXT_SESSION.md](NEXT_SESSION.md) | Exact handoff for the next task (Phase 1). |
+| [NEXT_SESSION.md](NEXT_SESSION.md) | Exact handoff for the next task (Phase 3). |
 | [ARCHITECTURE_MAP.md](ARCHITECTURE_MAP.md) | Current implemented architecture and target v1 map. |
 | [SECURITY_REQUIREMENTS.md](SECURITY_REQUIREMENTS.md) | Complete security contract with status per control and blueprint refs. |
 | [DECISION_LOG.md](DECISION_LOG.md) | Consolidated decisions; links to ADRs (ADRs live in `docs/adr/`). |
@@ -89,6 +97,8 @@ implemented because a document describes it; record discrepancies instead of hid
 | [phases/PHASE_0A_COMPLETE.md](phases/PHASE_0A_COMPLETE.md) | Phase 0a completion record. |
 | [phases/PHASE_0B_COMPLETE.md](phases/PHASE_0B_COMPLETE.md) | Phase 0b completion record. |
 | [phases/PHASE_0B_PLAN.md](phases/PHASE_0B_PLAN.md) | Phase 0b executable plan (executed; kept for reference). |
+| [phases/PHASE_1_PLAN.md](phases/PHASE_1_PLAN.md) / [phases/PHASE_1_COMPLETE.md](phases/PHASE_1_COMPLETE.md) | Phase 1 plan and completion record. |
+| [phases/PHASE_2_PLAN.md](phases/PHASE_2_PLAN.md) / [phases/PHASE_2_COMPLETE.md](phases/PHASE_2_COMPLETE.md) | Phase 2 plan and completion record. |
 | [phases/PHASE_TEMPLATE.md](phases/PHASE_TEMPLATE.md) | Template for future phase records. |
 
 ## Relationship to `docs/`

@@ -1,10 +1,10 @@
 # Architecture
 
-Status: **Phase 0a scaffold.** This document describes the intended v1 architecture from
-blueprint v1.2 (sections 3-4) and marks what actually exists today. Only the API
-skeleton with liveness/readiness endpoints is implemented; every security component
-below is specified but not yet implemented. Do not cite this document as evidence that
-a control exists.
+Status: **implemented through Phase 2.** This document describes the intended v1
+architecture from blueprint v1.2 (sections 3-4) and marks what actually exists today.
+Host authentication, the deterministic policy engine, and the mock-tool gateway exist and
+are tested; input defense, intent binding, approvals, DLP, real connectors, and the audit
+verifier do not. Only components marked Implemented below may be cited as controls.
 
 ## Logical flow (target v1)
 
@@ -71,27 +71,27 @@ enforcement is not an agent security system (blueprint section 3.2).
 
 ## Component map and current status
 
-| Package / component | Blueprint role | Status (Phase 0a) |
+| Package / component | Blueprint role | Status (Phase 2) |
 |---|---|---|
-| `src/ai_security/api/` | HTTP adapter, health endpoints | **Implemented:** `create_app` factory, `/health/live`, `/health/ready`; `/v1/*` routes do not exist yet |
-| `src/ai_security/settings.py` | Validated configuration | **Implemented:** APP_ENV/LOG_LEVEL/DATABASE_URL with fail-closed validation |
-| `identity/` (HMAC host auth, resolver) | Authenticate host, verify principal | Not implemented (Phase 0b) |
-| `security/` (canonical JSON, constant-time) | Canonical bytes, comparisons | Not implemented (Phase 0b+) |
+| `src/ai_security/api/` | HTTP adapter, health endpoints | **Implemented:** `create_app` factory, `/health/live`, `/health/ready`, host-auth middleware, registry + gateway wiring on `app.state`; `/v1/*` business routes do not exist yet |
+| `src/ai_security/settings.py` | Validated configuration | **Implemented:** fail-closed validation incl. host keys, replay window, request bound, policy/threshold/self-check paths |
+| `identity/` (HMAC host auth, resolver) | Authenticate host, verify principal | **Implemented (0b/1):** exact signing message, full rejection surface, atomic nonce store, dev guard, test-only principal adapter; typed host-assertion contract pending |
+| `security/` (canonical JSON, constant-time, URLs) | Canonical bytes, comparisons, destinations | **Implemented (0b/1):** ADR-002 canonical JSON, constant-time helpers, destination canonicalization |
 | `input_defense/` | Heuristics, detector, provenance | Not implemented (Phase 3) |
 | `intent/` | Intent manifest, constraints | Not implemented (Phase 4) |
 | `agent/` (+ providers) | Runtime, mock/local models | Not implemented (Phase 4/8) |
-| `firewall/` | Gateway, policy, risk, approvals | Not implemented (Phases 1-5) |
-| `tools/` (mock adapters) | Mock email/files/sink | Not implemented (Phase 2) |
-| `data_security/` | Classification, DLP, egress | Not implemented (Phase 6) |
-| `audit/` | Hash-chained audit events | Not implemented (Phase 7) |
-| `persistence/` | SQLAlchemy async repositories | Not implemented (Phase 0b) |
+| `firewall/` | Gateway, policy engine, risk engine, approvals | **Implemented (1-2):** decision/engine/risk (`risk-v1`) + the single `invoke_tool` gateway with audit-first ordering, bindings, deadlines, bounds; approvals and manifest facts Phase 4/5 |
+| `tools/` (registry + mock adapters) | Tool capability layer | **Implemented (2):** validated registry + startup consistency, digest-bound execution authorization, deterministic in-memory email/files/sink/text adapters |
+| `data_security/` | Classification, DLP, egress | **Partial:** canonical `DataClass` enum; classification is registration-declared; content DLP Phase 6 |
+| `audit/` | Hash-chained audit events | **Partial (0b/2):** ADR-002 append protocol, hash chain, Phase-2 decision/outcome emitter; full taxonomy/verifier/retention Phase 7 |
+| `persistence/` | SQLAlchemy async repositories | **Implemented (0b):** engine/session, nonce + audit repositories |
 | `soc/` | Alert-only analytics | Not implemented (Phase 10) |
-| `config/*.yaml` | Policies, thresholds, self-checks | Not created yet (Phases 0b-1) |
-| `migrations/`, `alembic.ini` | Alembic schema management | Not implemented (Phase 0b) |
+| `config/*.yaml` | Policies, thresholds, self-checks | **Implemented (1-2):** `policies.yaml`, `risk_thresholds.yaml`, 21-fixture `policy_self_checks.yaml` |
+| `migrations/`, `alembic.ini` | Alembic schema management | **Implemented (0b):** baseline migration, idempotent upgrade |
 | `evaluation/` | Dataset, metrics, reports | Not implemented (Phase 9) |
-| `docs/adr/` | Decision records | **Implemented:** ADR-001..007 recorded |
+| `docs/adr/` | Decision records | **Implemented:** ADR-001..009 recorded |
 
-## Import boundaries (enforced from Phase 1 onward)
+## Import boundaries (enforced from Phase 1 onward; check.sh enforces prohibited patterns)
 
 - `firewall/` may depend on typed models, policies, risk, tool-registry interfaces,
   approval repository, and audit interface.
@@ -102,13 +102,17 @@ enforcement is not an agent security system (blueprint section 3.2).
 - Evaluation code is never imported into runtime request processing.
 - No circular imports; shared contracts live in their owning domain package.
 
-## API boundary (Phase 0a implementation)
+## API boundary (Phase 2 implementation)
 
 - `GET /health/live` -> `200 {"status":"alive"}`; no dependency checks, no internal
   details.
-- `GET /health/ready` -> `200 {"status":"ready","checks":{"config":true,"database":true}}`
-  or `503 {"status":"not_ready",...}`; the readiness probe performs a real
-  `SELECT 1` against `DATABASE_URL` with a 2 s timeout and never reveals credentials.
+- `GET /health/ready` -> `200` when `checks.config`, `checks.database`, and
+  `checks.policy_self_checks` are all true (plus `policy_version`/`policy_hash`), else
+  `503 {"status":"not_ready",...}`; the database probe performs a real `SELECT 1` with a
+  2 s timeout and never reveals credentials.
+- `/v1/*` accepts no request without valid host HMAC headers (400/401/413/503 per the
+  denial surface); authenticated requests currently 404 because no business routes
+  exist yet.
 - `/docs`, `/redoc`, `/openapi.json` are registered only when `APP_ENV` is exactly
   `development` or `test` (blueprint section 18.2).
 - Configuration errors raise at startup with a clear message; the process does not boot

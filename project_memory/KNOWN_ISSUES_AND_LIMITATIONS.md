@@ -1,7 +1,7 @@
 # Known Issues and Limitations
 
 Severity: **High** (blocks security goals) / **Medium** / **Low**. Status labels follow
-[README.md](README.md) ("RESOLVED (0b)"/"RESOLVED (1)" mark items closed in Phase 0b/1). "Section"
+[README.md](README.md) ("RESOLVED (0b)"/"RESOLVED (1)"/"RESOLVED (2)" mark items closed in Phase 0b/1/2). "Section"
 refers to the master blueprint v1.2. The canonical long-form list (with phase pointers) is
 [../docs/KNOWN_LIMITATIONS.md](../docs/KNOWN_LIMITATIONS.md) (items 1–24); this file adds
 severity, status, and next actions. Keep both consistent.
@@ -11,9 +11,9 @@ severity, status, and next actions. Keep both consistent.
 | # | Issue | Severity | Status | Blueprint | Next action |
 |---|---|---|---|---|---|
 | 1 | Host authentication: **implemented** for the `/v1/*` path prefix (HMAC + timestamp + atomic nonce replay + size bounds, fail-closed); no `/v1/*` routes exist yet; principal resolution beyond dev/test fails closed | High | **PARTIAL (0b/1)** | §9, §21 | Later phase (principal metadata), Phase 8 (routes) |
-| 2 | No execution: policy engine + strict contracts implemented (decision level), but no tool registry, firewall gateway, risk scoring engine, or approvals — decisions have no side effects yet | High | **PARTIAL (1)** | §§10–13 | Phases 2–5 |
+| 2 | Execution is mock-only and in-process: registry, gateway, execution authorization, `risk-v1`, and mock adapters exist and are tested, but there are no real connectors and no sandbox; approvals and manifest/intent binding are still missing | High | **PARTIAL (2)** | §§10–13 | Phases 4–5 (binding/approvals), Phase 10 (isolation) |
 | 3 | No input/output protection: no injection detection, provenance labels, intent extraction, DLP, or egress policy | High | NOT IMPLEMENTED | §§3, 8, 15 | Phases 3–6 |
-| 4 | Audit: append repository + ADR-002 lock protocol + fixed vectors exist and are tested; no event emission anywhere and no verifier | High | **PARTIAL (0b)** | §16 | Phase 7 |
+| 4 | Audit: append repository + ADR-002 lock protocol + fixed vectors exist and are tested; the gateway emits the Phase 2 event subset (decision/outcome) into the chain; the full taxonomy, retention, and verifier are missing | High | **PARTIAL (0b/2)** | §16 | Phase 7 |
 | 5 | No AI SOC analytics | Medium | NOT IMPLEMENTED | §17 | Phase 10 |
 | 6 | No rate limiting or request deadlines; request-size bound exists (64 KiB, 413) | Medium | **PARTIAL (0b)** | §18.2 | Phase 8 |
 | 7 | Persisted state: only `host_request_nonces` and `audit_events` via Alembic baseline; no session/approval storage; no pruning job for nonce/audit rows | High | **PARTIAL (0b)** | §§13, 20.2 | Phases 0b–7 (retention task) |
@@ -34,10 +34,17 @@ severity, status, and next actions. Keep both consistent.
 | 21 | `HostPrincipalResolver` fails closed (raises) until a later phase provides key→principal metadata; signed requests reach no principal | Medium | BY DESIGN (0b/1) | Later phase |
 | 22 | Interim policy evaluator (`policy/interim_matrix.py`) was scaffolding, not the real engine | Medium | **RESOLVED (1)** — deleted; the deterministic engine + fixture suite replaced it | None (readiness drift detection retained) |
 | 23 | `check.sh` fails on any Gitleaks version ≠ 8.30.1 (deliberate pin) | Low | BY DESIGN | Update pin deliberately if the scanner is upgraded |
-| 25 | Engine consumes upstream-supplied facts (`risk_score`, destination); the layers that produce them (tool validator, registry, risk engine) do not exist yet | Medium | BY DESIGN (1) | Phases 2/4/5 |
+| 25 | Engine consumes upstream-supplied facts; since Phase 2 the gateway produces them (registry capability, validated arguments/resource IDs, canonical destination, `risk-v1` score). `manifest`/intent facts do not exist yet | Medium | **RESOLVED (2, partially)** — remaining: manifest/intent facts | Phase 4 |
 | 26 | No policy hot-reload: the process keeps its startup-loaded bundle; readiness detects file drift (503) but does not reload | Low | BY DESIGN (1) | Phase 2+ (not scheduled) |
 | 27 | Destination allowlisting is exact-match only (no wildcards); non-ASCII paths/queries and IPv6 zone IDs are rejected | Low | BY DESIGN (1) | Revisit when wildcard matching semantics are documented |
 | 28 | Risk thresholds 40/80 are experimental defaults, not empirically calibrated | Low | BY DESIGN (1) | Phase 9 (evaluation/calibration) |
+
+| 29 | No approvals: `ASK_USER` returns a typed no-execution result; no approval storage/consumption | Medium | BY DESIGN (2) | §13 | Phase 5 |
+| 30 | No manifest/intent binding: the gateway validates principal/request/args/resources/destination/deadline only | Medium | BY DESIGN (2) | §11.1–11.2 | Phase 4 |
+| 31 | Content-level DLP absent: data class is a registration-declared fact; no canary/pattern inspection of payloads | High | BY DESIGN (2) | §15 | Phase 6 |
+| 32 | Execution authorization is an in-process guardrail, not a sandbox: malicious in-process code could bypass private internals | High | BY DESIGN (2) | §14.2 | Phase 10 |
+| 33 | Concurrency bounds and the in-memory sink are per process/event loop; no cross-worker coordination | Medium | BY DESIGN (2) | §18.2 | Later operational phase |
+| 34 | `risk-v1` weights uncalibrated; factor set minimal (no identity/session/history factors) | Low | BY DESIGN (2) | §11.3–11.4 | Phases 5/9 |
 
 ## Behavioral notes (expected behavior, not defects)
 
@@ -48,6 +55,7 @@ severity, status, and next actions. Keep both consistent.
 | 19 | Compose API host port is 8080 (host port 8000 is commonly occupied by unrelated local services); container port remains 8000 | None |
 | 20 | `uv lock` resolves 38 packages while `uv sync` checks 36 (installed set) — both expected | None |
 | 24 | Authenticated `/v1/*` requests answer 404 until routes land (auth passes first — verified live in 0b) | Phase 8 (routes) |
+| 35 | An audit append failure after an executed mock side effect yields `AUDIT_FAILED` with no result returned; the in-memory sink is not rolled back (no compensating action in v1) | Documented; revisit with real connectors |
 
 ## How issues graduate
 

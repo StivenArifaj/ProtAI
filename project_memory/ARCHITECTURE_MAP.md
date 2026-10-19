@@ -39,15 +39,17 @@ Components:
   the validated policy document model (`ToolPolicy`, `PolicyBundle` with `version` +
   sha256 content hashes), the safe YAML loader (`yaml.safe_load` + duplicate-key
   detection; `PolicyConfigError` fails closed), and the ADR-007 self-check suite —
-  17 strict fixtures (7 mandated names) evaluated against the real engine at startup
+  21 strict fixtures (7 mandated names + Phase 2 rows) evaluated against the real engine at startup
   (refusal) and on every readiness probe (live drift detection). The Phase 0b interim
   transcription (`policy/interim_matrix.py`) is deleted.
 - `ai_security.firewall` (`decision`, `policy_engine`): stable decision contract
   (`FirewallDecision`, `DecisionReason` codes, `DecisionRecord` with policy
   version/hash) and the deterministic engine implementing the blueprint §10.2 order
   over strict validated facts; deny-by-default; no I/O, no model calls (ADR-008).
-- `ai_security.tools.base` (`SideEffectClass`) and `ai_security.data_security.classification`
-  (`DataClass`): canonical enums defined exactly once (Phase 2 extends these modules).
+- `ai_security.tools.base` (`SideEffectClass`, strict contracts, execution
+  authorization, action digest) and `ai_security.data_security.classification`
+  (`DataClass`): canonical enums defined exactly once; `tools/registry.py` and the
+  deterministic mock adapters implement the Phase 2 capability layer.
 - `ai_security.security.urls`: destination canonicalization (https-only, IDNA host,
   percent-encoding normalization, no userinfo/fragment/zone-ids; exact-match semantics).
 - `ai_security.identity.adapters`: `TestPrincipalResolver` — constructible only under

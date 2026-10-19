@@ -2,15 +2,15 @@
 
 Rules: never claim a result that was not produced by a command actually run. Fresh
 re-runs and historical records are kept in separate tables. Evidence IDs (V1–V29 for
-0a/0b; V30+ for Phase 1) are referenced from [IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md)
-and the phase records.
+0a/0b; V30–V35 for Phase 1; V36+ for Phase 2) are referenced from
+[IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md) and the phase records.
 
 ## How to verify (documented commands)
 
 | Command | What it checks | Expected |
 |---|---|---|
 | `uv sync --frozen` | lockfile/install consistency | installs with no resolution drift |
-| `uv run pytest` | 406 unit/integration tests | 406 passed (DB-backed integration skips cleanly if PostgreSQL is unreachable) |
+| `uv run pytest` | unit/integration/security tests | 520 passed (DB-backed integration skips cleanly if PostgreSQL is unreachable) |
 | `bash scripts/check.sh` | full local gate (8 steps) | exit 0; prints "All checks passed." |
 | `uv run alembic upgrade head` | migrations (needs §5.4 env; host `db`→`127.0.0.1`) | applies baseline to an empty DB; second run reports already at head |
 | `docker compose config -q` | Compose file syntax | exit 0 |
@@ -20,10 +20,30 @@ and the phase records.
 | `curl http://127.0.0.1:8080/health/live` | liveness | 200 `{"status":"alive"}` |
 | `curl http://127.0.0.1:8080/health/ready` | readiness | 200 ready incl. `policy_version`/`policy_hash` (503 not_ready without DB or with drifted self-checks) |
 | unsigned/signed requests to `/v1/*` | host auth | unsigned → 400 `missing_headers`; valid signature → 404 (no routes yet) with nonce registered; replay → 401 `replayed_nonce` |
-| `uv run python -c "…load_policy_bundle…"` | policy bundle smoke | `version`, per-file hashes, `combined_hash`; 17 fixtures, 0 failures |
+| `uv run python -c "…load_policy_bundle…"` | policy bundle smoke | `version`, per-file hashes, `combined_hash`; 21 fixtures, 0 failures |
+| `uv run pytest tests/security tests/unit/test_gateway.py -q` | no-bypass invariants | 31 passed (denied/unknown/audit-failed calls never reach the adapter) |
 | `docker compose down` | teardown (volume preserved) | stack removed |
 
 Failure behavior: `check.sh` exits non-zero and prints `CHECK FAILED: <reason>`.
+
+## Fresh evidence (2026-10-19, Phase 2 session)
+
+| ID | Command / check | Result |
+|---|---|---|
+| V36 | `uv run --frozen pytest -q` | PASS — **520 passed** (461 unit + 47 integration + 12 security), incl. DB-backed gateway integration against Compose PostgreSQL |
+| V37 | `bash scripts/check.sh` | PASS — exit 0, all 8 steps: lockfile; ruff format; ruff lint; mypy clean; 520 tests; Gitleaks 8.30.1 dir+git "no leaks found" (13 commits scanned); prohibited-pattern greps clean; `compare_digest` confined |
+| V38 | `uv run --frozen pytest tests/security tests/unit/test_gateway.py -q` | PASS — 31 passed (8 parametrized no-byte-denials + audit-down + no-decision-no-exec + outcome-audit-fail + direct-adapter fail-closed + 20 gateway unit tests) |
+| V39 | `uv run --frozen pytest tests/integration/test_gateway_end_to_end.py tests/integration/test_gateway_wiring.py -q` | PASS — 5 passed (durable decision→outcome order + linkage + result digest + payload non-leakage; denied egress leaves sink unchanged; audit outage → `BLOCK`/`audit_unavailable`; startup refuses unregistered policy tool) |
+| V40 | `uv run --frozen pytest tests/unit/test_policy_self_checks.py tests/integration/test_policy_self_checks_wiring.py -q` | PASS — 41 passed; fixture file now 21 fixtures incl. the 7 mandated names |
+| V41 | `uv run --frozen mypy src` + `ruff check src/ tests/` + `ruff format --check src tests` | PASS — clean (45 source files, strict) |
+
+Development-time findings fixed and regression-tested during Phase 2 (recorded for
+honesty): `verify_execution_authorization` originally accepted any object passed as the
+authorization — a security test now proves a non-authorization value raises
+`ExecutionAuthorizationError`; the security spy adapter initially failed because
+`MockEmailAdapter` requires `super().__init__()` (its store is an instance attribute);
+the integration deny test initially asserted a non-existent `data_class` field on
+`RiskAssessment` (the field lives in the audit payload, value `PUBLIC`).
 
 ## Fresh evidence (2026-10-19, Phase 1 session)
 
@@ -99,7 +119,7 @@ iterations, at the ruff format and lint steps. Removing the file restored exit 0
 The Phase 0b gate additionally fails if Gitleaks is missing or version-mismatched
 (deliberate pin, 8.30.1).
 
-## Test inventory (406 tests)
+## Test inventory (520 tests)
 
 Unit (`tests/unit/`):
 
@@ -128,6 +148,23 @@ Unit (`tests/unit/`):
 - `test_policy_self_checks.py` (33) — repo fixture file passes completely; mandated rows
   present; runner detects decision/reason mismatches; malformed fixture shapes rejected;
   readiness report behavior.
+- `test_action_digest.py` (7) — canonical action digest stability, field sensitivity,
+  key-order invariance, hex shape.
+- `test_tool_registry.py` (24) — registration validation matrix (DESTRUCTIVE refusal,
+  schema strictness, resource/destination annotation checks, bounds, bool rejection),
+  duplicate resolution, startup consistency failures (`ToolRegistryConfigError`).
+- `test_mock_adapters.py` (14) — mock email/files/sink/text behavior, ownership checks,
+  unauthorized-call refusal (`UngatedExecutionError`), digest tamper rejection.
+- `test_risk_engine.py` (9) — `risk-v1` weights, cap at 100, external-destination
+  requirement, factor codes, version reporting.
+- `test_gateway.py` (20) — see the Phase 2 completion record for the full scenario list.
+
+Security (`tests/security/`):
+
+- `test_gateway_no_bypass.py` (12) — denied/unknown/malformed/expired/audit-failed calls
+  never execute (spy adapter byte equality on the sink); no execution without a
+  successfully recorded decision; result withheld on outcome-audit failure; direct
+  adapter invocation without a gateway authorization fails closed.
 
 Integration (`tests/integration/`):
 
@@ -146,6 +183,12 @@ Integration (`tests/integration/`):
   file, invalid policy, and fixture mismatch; valid bundle passes startup + readiness
   with version/hash; live policy-version drift flips to 503 while the startup bundle
   stays fixed.
+- `test_gateway_end_to_end.py` (3) — real-PostgreSQL chain: durable decision→outcome
+  order and hash linkage, result digest = sha256 canonical result, no raw content in
+  stored payloads, denied egress leaves the sink empty, audit outage → `BLOCK`/
+  `audit_unavailable`.
+- `test_gateway_wiring.py` (2) — `create_app` exposes a validated registry + gateway
+  (`ChainAuditRecorder`); startup refuses a policy tool with no registration.
 - `conftest.py` + `db_helpers.py` — auto-create `firewall_test`, run Alembic, skip
   cleanly when PostgreSQL is unreachable; NullPool harness for asyncio.run tests.
 

@@ -1,17 +1,18 @@
 # Implementation State
 
-Last updated: 2026-10-19 (Phase 1, blueprint v1.2).
+Last updated: 2026-10-19 (Phase 2, blueprint v1.2).
 
-Phases 0a (repository foundation), 0b (security foundation), and 1 (typed contracts and
-deterministic policy engine) are **complete and verified**; the Docker Compose path was
-verified in 0b. Phase 1 adds the strict typed contracts, the safe versioned policy loader
-(`config/policies.yaml`, `config/risk_thresholds.yaml`), the deterministic engine
-(`firewall/policy_engine.py`) that replaces the Phase 0b interim matrix, canonical
-destination handling (`security/urls.py`), the test-only principal adapter, and
-startup/readiness wiring with `policy_version`/`policy_hash`. It does **not** implement
-execution (no tool registry/gateway), the risk scoring engine, approvals, DLP/egress
-enforcement at a sink, or audit event emission; the engine decides over validated
-caller-supplied facts and nothing acts on those decisions yet. See
+Phases 0a (repository foundation), 0b (security foundation), 1 (typed contracts and
+deterministic policy engine), and 2 (tool registry and enforced gateway) are **complete
+and verified**; the Docker Compose path was verified in 0b. Phase 2 adds the typed tool
+registry with startup consistency checks, four deterministic mock adapters, the
+gateway-issued execution authorization (canonical action digest), the `risk-v1`
+deterministic scoring engine, the single `invoke_tool` chokepoint with bindings,
+validation, deadlines, per-tool concurrency, timeouts and result bounds, the audit
+recorder interface over the ADR-002 chain, and wiring in `create_app`. The gateway is the
+only execution path (in-process/in tests; `create_app` exposes it on `app.state`). It does
+**not** implement `/v1` routes, approvals, manifest/intent binding, content DLP, real
+connectors, process isolation, rate limiting, or the full audit taxonomy/verifier. See
 `docs/SECURITY_INVARIANTS.md` and `docs/KNOWN_LIMITATIONS.md`.
 
 ## What exists
@@ -24,18 +25,23 @@ caller-supplied facts and nothing acts on those decisions yet. See
 | Identity | `identity/{models,signing,host_auth,resolver,adapters}.py` | `Principal` (strict, frozen); HMAC signing/verification (exact `v1` message, full rejection surface); `DevPrincipalResolver` guard + fail-closed `HostPrincipalResolver`; test-only `TestPrincipalResolver` (not selectable via settings/factory) |
 | Persistence | `persistence/{database,models,nonce_repository,audit_repository}.py` | Async engine/session; atomic nonce upsert (`ON CONFLICT ... WHERE ... RETURNING`); ADR-002 advisory-lock audit append |
 | Migrations | `alembic.ini`, `migrations/env.py`, `migrations/versions/d15b46c49950_*.py` | Baseline: `host_request_nonces`, `audit_events`; `make migrate`; idempotent; `alembic check` clean |
-| Typed contracts | `tools/base.py` (`SideEffectClass`), `data_security/classification.py` (`DataClass`), `firewall/decision.py` (`FirewallDecision`/`DecisionReason`/`DecisionRecord`) | Canonical enums defined exactly once (blueprint §4/§6.1); stable reason-code vocabulary; no aliases or coercions |
-| Policy engine | `firewall/policy_engine.py`, `policy/{models,loader,self_checks}.py`, `config/{policies,risk_thresholds,policy_self_checks}.yaml` | Deterministic §10.2 evaluation order over validated facts; safe YAML (duplicate-key rejection); versioned bundle with content hashes; 17 fixtures (incl. 7 mandated names) evaluated at startup + readiness; replaces `policy/interim_matrix.py` (deleted) |
-| Tests | `tests/conftest.py`, `tests/unit/*` (12 files), `tests/integration/*` (6 files + helpers) | **406 tests** (364 unit + 42 integration): settings, primitives, hash chain, verifier matrix, resolver, urls, policy models/loader/engine, self-checks, test adapter, health, middleware denial matrix, nonce/audit repositories, migration idempotency |
+| Typed contracts | `tools/base.py` (`SideEffectClass`, `ToolArguments`/`ToolResult`, `ExecutionAuthorization`, `compute_action_digest`, adapters protocol), `data_security/classification.py` (`DataClass`), `firewall/decision.py` (`FirewallDecision`/`DecisionReason`/`DecisionRecord`) | Canonical enums defined exactly once (blueprint §4/§6.1); stable reason-code vocabulary (extended with `binding_mismatch`, `deadline_exceeded`, `policy_evaluation_error`, `audit_unavailable`); sentinel-guarded authorization; strict schemas (`extra="forbid"`, `strict=True`) |
+| Tool registry + mock adapters | `tools/registry.py`, `tools/mock_{email,files,external_sink,text}.py` | Immutable validated registrations; exact `(tool_id, action_id)` resolution; startup consistency vs policy (one-directional: policy→capability required; extra registrations stay policy-disabled); deterministic in-memory adapters with ownership checks and digest verification |
+| Gateway + risk engine | `firewall/{gateway,models,risk_engine}.py` | Single `invoke_tool` chokepoint; binding/validation/resource/destination/deadline/engine checks; decision audited before execution; timeouts + per-process concurrency + result bounds; typed outcomes; `risk-v1` scoring (side-effect/destination/data-class factors) |
+| Audit emission | `audit/{models,writer}.py` | Phase-2 event subset (`POLICY_EVALUATED`, `TOOL_EXECUTION_COMPLETED`, `TOOL_EXECUTION_FAILED`); schema v1; `AuditRecorder` protocol + `ChainAuditRecorder` over the ADR-002 repository; payload-safe references only |
+| Policy engine | `firewall/policy_engine.py`, `policy/{models,loader,self_checks}.py`, `config/{policies,risk_thresholds,policy_self_checks}.yaml` | Deterministic §10.2 evaluation order over validated facts; safe YAML (duplicate-key rejection); versioned bundle with content hashes; 21 fixtures (incl. 7 mandated names and the Phase 2 binding/deadline/inconsistent facts) evaluated at startup + readiness; replaces `policy/interim_matrix.py` (deleted) |
+| Tests | `tests/conftest.py`, `tests/unit/*` (16 test files + `_tool_auth.py` helper), `tests/integration/*` (9 test files + helpers), `tests/security/*` | **520 tests** (461 unit, 47 integration, 12 security): the Phase 1 suites plus action digests, registry validation, mock adapters, risk engine, gateway failure modes, no-bypass security invariants, real-PostgreSQL gateway end-to-end, and app wiring |
 | Quality gate | `scripts/check.sh` | 8 steps: lockfile, ruff format, ruff lint, mypy, pytest, pinned Gitleaks (dir+git), prohibited-pattern greps, constant-time confinement |
 | Containers | `Dockerfile`, `docker-compose.yml` | Digest-pinned bases; non-root uid 10001; COPY `config/ migrations/ alembic.ini`; Compose `api` carries the disposable dev `HOST_AUTH_KEYS_JSON` |
-| Docs | `docs/*` (8 files), `docs/adr/ADR-001..008` | Status columns honest; ADR-008 records the Phase 1 engine contract; matrix doc marked implemented |
+| Docs | `docs/*` (8 files), `docs/adr/ADR-001..009` | Status columns honest; ADR-008 records the Phase 1 engine contract, ADR-009 the Phase 2 registry/gateway contract; matrix doc reflects gateway-enforced facts |
 | Git | baseline `41e10da`; 0b commits `0aa11d9`…`d180b89`; docs `c95f2a6`; Phase 1 commits `cffdd62`, `eaae462`, `b91729b` | Repository under git since 2026-10-19; linear history on `main` |
 | Spec | `AI_Agent_Security_Platform_Master_Blueprint_v1.2.md`, `archive/..._v1.0_superseded.md` | v1.2 authoritative; v1.0 archived |
 
-Deliberately deferred to Phase 2+: tool registry + gateway execution, input defense,
-intent, risk scoring engine, approvals, DLP/egress enforcement, audit event emission +
-verifier, `/v1/*` routes, rate limiting, SOC, evaluation. `evaluation/` does not exist yet.
+Deliberately deferred beyond Phase 2: input defense/provenance (Phase 3), manifest/intent
+binding (Phase 4), approvals and factor expansion (Phase 5), content DLP/canary (Phase 6),
+full audit taxonomy + verifier (Phase 7), `/v1/*` routes + agent runtime + rate limiting
+(Phase 8), evaluation (Phase 9), isolation/SOC/SBOM (Phase 10). `evaluation/` and
+`data_security/` beyond `classification.py` do not exist yet.
 
 ## Decisions taken during Phase 0b implementation (within blueprint constraints)
 
@@ -124,6 +130,50 @@ verifier, `/v1/*` routes, rate limiting, SOC, evaluation. `evaluation/` does not
 - **Thresholds 40/80 marked experimental** in the config header; validated
   (`ask_user_at_or_above < block_at_or_above`); calibration defers to Phase 9.
 
+## Decisions taken during Phase 2 implementation (within blueprint constraints; ADR-009)
+
+- **Registry capability vs policy authorization (one-directional consistency)**: every
+  tool declared in the policy must have a compatible registration or startup fails; a
+  registration absent from the policy is registered but disabled (engine `unknown_tool`).
+  This is what allows `mock_files.search` (blueprint section 14.1) while the starter
+  policy (section 10.5) enables only `mock_files.read`. Class mismatch, `DESTRUCTIVE`,
+  approval metadata inconsistency, enabled-egress-without-capability, and policy
+  destinations outside the declared set all refuse startup.
+- **Exact action identity, no naming convention**: the registry key is the exact
+  `(tool_id, action_id)` pair; `action_id` is not required to equal the final dotted
+  segment of `tool_id` (an earlier plan idea, deliberately dropped as unenforced
+  convention).
+- **Execution authorization is gateway-issued and digest-bound**: `ExecutionAuthorization`
+  is sentinel-guarded (direct construction raises `UngatedExecutionError`); the digest is
+  SHA-256 over canonical JSON of tool/action/validated arguments/resource IDs/destination/
+  principal/request/policy hash. Adapters verify the digest immediately before the side
+  effect; a non-authorization value raises `ExecutionAuthorizationError`. In-process
+  guardrail, not a sandbox (Phase 10).
+- **Gateway may only downgrade the engine**: the engine stays the sole `ALLOW` producer;
+  audit-outage, deadline, and evaluation-error paths become BLOCK/DENIED typed outcomes.
+  `ASK_USER` returns a no-execution result (no pending approval storage until Phase 5).
+- **Audit ordering and failure semantics**: `POLICY_EVALUATED` is appended before any
+  protected side effect; an append failure on a would-be `ALLOW` yields
+  `BLOCK`/`audit_unavailable` and no adapter call. Post-execution append failure yields
+  `AUDIT_FAILED` with no result returned. A denial whose audit append fails keeps the
+  denial reason (no side effect to roll back). Audit payloads carry identifiers,
+  provenance, risk factors, and result digests/sizes only.
+- **`risk-v1` scoring is gateway-computed and versioned**: side-effect class, external
+  destination (only for `EXTERNAL_MUTATION`; inconsistent facts raise), and registration
+  data class; capped at 100; factor codes recorded in decision and audit payloads;
+  zero-weight data-class factor omitted. Weights are initial experimental defaults
+  (calibration Phase 9); no caller-supplied score is accepted.
+- **Bounds are explicit registration facts**: timeout 1-60 s, per-process concurrency
+  1-64 (`asyncio.Semaphore` held per running loop via `WeakKeyDictionary`), result size
+  <=1 MiB measured over canonical JSON bytes; results are re-validated for schema identity
+  and canonicalizability before being returned.
+- **Two new observable reason codes**: `policy_evaluation_error` and `audit_unavailable`
+  (gateway fail-closed overrides); `binding_mismatch` and `deadline_exceeded` are engine
+  facts added in Phase 2 self-check fixtures (21 total).
+- **Strictness tightening**: `ToolArguments`/`ToolResult` are `strict=True`; registration
+  validation requires resource/destination argument annotations to be exactly `str`
+  (a non-str annotation could smuggle mismatched resource IDs past derivation).
+
 ## Phase 0a verification record (actual runs, 2026-10-19; historical)
 
 Environment: macOS (darwin), uv 0.13.1, CPython 3.12.15, Docker 29.3.1 / Compose
@@ -185,6 +235,20 @@ Rows 30+ continue the numbered record. Full evidence: `project_memory/TESTING_AN
 | 34 | Policy bundle smoke check (`load_policy_bundle` + `check_policy_self_checks`) | PASS — `version: dev-1`, `policies_sha256 35bcd687…`, `thresholds_sha256 3e1d34ae…`, `combined_hash 8a4ba203e3baaf86eabb2e299992166289cae938ec9ea9a7bccadf6e6e068e6a`; 17 fixtures, 0 failures |
 | 35 | Integration wiring tests (`test_policy_self_checks_wiring.py`, `test_health.py`) | PASS — invalid/missing policy file refuses startup; mismatching fixture refuses startup; live policy/fixture drift flips readiness to 503; readiness payload carries `policy_version`/`policy_hash` |
 
+## Phase 2 verification record (actual runs, 2026-10-19)
+
+Rows 36+ continue the numbered record. Full evidence:
+`project_memory/TESTING_AND_VERIFICATION.md` (V36+).
+
+| # | Command | Result |
+|---|---|---|
+| 36 | `uv run --frozen pytest -q` | PASS — **520 passed** (461 unit + 47 integration + 12 security; DB-backed integration against the Compose PostgreSQL) |
+| 37 | `bash scripts/check.sh` | PASS — exit 0, all 8 steps; Gitleaks 8.30.1 `git` scan: 13 commits, no leaks found |
+| 38 | `uv run --frozen pytest tests/security tests/unit/test_gateway.py -q` | PASS — **31 passed** (no-bypass + gateway failure-mode suites) |
+| 39 | `uv run --frozen pytest tests/integration/test_gateway_end_to_end.py tests/integration/test_gateway_wiring.py -q` | PASS — **5 passed** (real-PostgreSQL decision/outcome chain order and linkage; startup registry/gateway wiring; unregistered-policy-tool startup refusal) |
+| 40 | `uv run --frozen pytest tests/unit/test_policy_self_checks.py tests/integration/test_policy_self_checks_wiring.py -q` | PASS — **41 passed** — 21 fixtures against the real engine, startup + readiness wiring |
+| 41 | `uv run --frozen mypy src`; `ruff check src tests`; `ruff format --check src tests` | PASS — no issues, 45 source files (strict); lint/format clean (included in gate step 37) |
+
 ## Definition of Done checklist (blueprint section 21, Phase 0b)
 
 | DoD item | Status |
@@ -209,12 +273,25 @@ Rows 30+ continue the numbered record. Full evidence: `project_memory/TESTING_AN
 | No LLM involved in authorization (engine imports no model provider; gate greps intact) | PASS — static imports only; `check.sh` prohibited-pattern greps remain clean |
 | Quality gate green (`check.sh`, Gitleaks clean) | PASS — rows 32–33 |
 
+## Definition of Done checklist (blueprint section 21, Phase 2)
+
+| DoD item | Status |
+|---|---|
+| No-bypass tests prove the mock side-effect sink changes only after a valid gateway `ALLOW` | **PASS** — `tests/security/test_gateway_no_bypass.py` (denied paths never execute; sink empty under every denial and under audit outage) + `tests/integration/test_gateway_end_to_end.py` (sink record only after chained decision/outcome events) |
+| Unknown or denied actions have no side effect | PASS — unknown tool, registered-but-disabled tool, invalid arguments, resource/destination mismatches, cross-user scope, deadline expiry, disabled egress: all DENIED with adapter call count 0 and empty sink |
+| Every adapter invocation originates from the gateway; direct calls fail closed | PASS — sentinel-guarded `ExecutionAuthorization` (direct construction raises); adapters verify the digest and reject non-authorizations; gateway issues authorization only after a durable `ALLOW` decision event |
+| Exceptions during policy/validation/audit prerequisites never continue to a side effect | PASS — engine exception yields `policy_evaluation_error` DENIED; audit append failure on a would-be ALLOW yields `audit_unavailable` DENIED; both leave the sink empty |
+| Timeouts and bounded result sizes enforced with typed outcomes | PASS — sleeping adapter with 1 ms timeout yields `TIMEOUT`; oversized result yields `RESULT_REJECTED`/`ResultTooLarge`; wrong-schema result yields `RESULT_REJECTED`/`ResultSchemaMismatch`; per-tool concurrency limit == 1 enforced under `gather` |
+| Invalid registry/policy configuration refuses startup | PASS — DESTRUCTIVE/duplicate/mismatched/oversized registrations raise at construction; policy tool without adapter refuses `create_app` (`ToolRegistryConfigError`, tested) |
+| Post-authorization tool/argument mutation fails the action-digest check | PASS — `tests/unit/test_mock_adapters.py` (changed arguments, different tool/action) and `tests/unit/test_action_digest.py` coverage |
+| Policy engine remains the sole `ALLOW` producer; gateway may only downgrade | PASS — the gateway constructs no ALLOW; audit/deadline/evaluation overrides are BLOCK/DENIED; `ASK_USER` never executes |
+| Full suite + gate green; docs/memory/ADR updated | PASS — rows 36-41; ADR-009; this file; `SECURITY_INVARIANTS`, `POLICY_DECISION_MATRIX`, `KNOWN_LIMITATIONS`, memory refresh |
+
 ## How to continue (next session)
 
-Phase 2 — Tool registry and enforced gateway (blueprint section 21): tool protocol +
-registry from the policy document, mock email/files/sink adapters, the `invoke_tool`
-gateway that gates every adapter call on a valid engine `ALLOW` (no bypass), timeouts
-and result bounds, and the audit interface hook. Read blueprint §§12, 14; keep the
-ADR-007/ADR-008 fixture contract and every existing test green. The governing
-no-bypass assertions ("sink changes only after an allow; denied/unknown actions leave
-no side effect") become testable there — invariants #1, #9, #10, #12.
+Phase 3 — Input threat defense, trust labels, and context provenance (blueprint
+section 21, sections 7-9): deterministic injection/canary detection on tool outputs and
+user input, trust labels, and context provenance records feeding the policy facts. Read
+blueprint sections 7-8; keep the ADR-007/ADR-008 fixture contract, the ADR-009 gateway
+contract, and every existing test green. Invariants #10, #11, #15, #16, #23 become
+testable there.
