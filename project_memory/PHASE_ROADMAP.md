@@ -1,16 +1,16 @@
 # Phase Roadmap
 
 Source: blueprint v1.2 §21 (phase gates) and §23 (release maturity). Status labels per
-[README.md](README.md). Only Phase 0a is complete; everything else is planned. Build vertical,
-testable slices — never the whole platform at once.
+[README.md](README.md). Phases 0a and 0b are complete; Phase 1 is the next eligible phase.
+Build vertical, testable slices — never the whole platform at once.
 
 ## Phase table
 
 | Phase | Name | Status | Key deliverables | Definition of Done (summary) |
 |---|---|---|---|---|
 | 0a | Repository foundation | **COMPLETE — VERIFIED** (2026-10-19) | scaffold, pyproject/uv.lock, Dockerfile/Compose, settings validation, `/health/*`, tests, `check.sh`, docs scaffold, ADR-001..007 | fresh setup works with documented commands; config errors fail startup; no secrets; `check.sh` non-zero on failure; health/OpenAPI checks pass |
-| 0b | Security foundation | **NEXT — NOT STARTED** | HMAC host auth (§9.2), nonce replay (`host_request_nonces`), SQLAlchemy async, Alembic baseline, dev-resolver guard, policy self-check scaffolding, Gitleaks, auth tests | auth/replay tests pass; migrations idempotent; resolver cannot start outside dev/test; self-checks fail on mismatching fixture; docs remain gated; Gitleaks runs; `check.sh` fails on any failure |
-| 1 | Typed contracts and deterministic policy engine | NOT IMPLEMENTED | strict Pydantic models, safe YAML loader, validated policy model, principal test adapter, reason codes, canonicalization | table-driven policy tests: allowed/forbidden/malformed/cross-scope/unknown/error; no LLM in authorization |
+| 0b | Security foundation | **COMPLETE — VERIFIED** (2026-10-19) | HMAC host auth (§9.2) + replay rejection, request bounds, SQLAlchemy async, Alembic baseline, dev-resolver guard, ADR-007 self-checks, pinned Gitleaks, auth tests | auth/replay denial matrix passes (unit + integration + live container); migrations idempotent; resolver cannot start outside dev/test; self-checks fail on mismatching fixture; docs gating unchanged; Gitleaks clean; gate non-zero on failure |
+| 1 | Typed contracts and deterministic policy engine | **NEXT — NOT STARTED** | strict Pydantic models, safe YAML loader, validated policy model, principal test adapter, reason codes, canonicalization | table-driven policy tests: allowed/forbidden/malformed/cross-scope/unknown/error; no LLM in authorization |
 | 2 | Tool registry and enforced gateway | NOT IMPLEMENTED | registry, tool protocol, mock email/files/sink adapters, `invoke_tool` gateway, timeouts/result bounds, audit interface | no-bypass tests: sink changes only after a valid gateway `ALLOW`; denied/unknown actions have no side effect |
 | 3 | Input threat defense and provenance | NOT IMPLEMENTED | intake limits, normalization copy, versioned heuristics, typed findings, trust labels, context assembly, detector failure behavior | direct/indirect attack + benign hard-negative tests pass; labels survive to agent context; no completeness claims |
 | 4 | Intent extraction and action validation | NOT IMPLEMENTED | mock extractor, local-model adapter interface, bounded `IntentManifest`, request binding/expiry, constraint validator, ambiguity behavior | malformed model output/outage grants no permission; args compared to intent; execution only via gateway |

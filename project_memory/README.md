@@ -55,14 +55,19 @@ implemented because a document describes it; record discrepancies instead of hid
 
 ## Current snapshot (2026-10-19)
 
-- **Phase 0a (repository foundation): COMPLETE and VERIFIED** (including the Docker
-  Compose path). See [phases/PHASE_0A_COMPLETE.md](phases/PHASE_0A_COMPLETE.md).
-- **Phase 0b (security foundation): NOT STARTED.** Plan: [phases/PHASE_0B_PLAN.md](phases/PHASE_0B_PLAN.md).
-- The repository is **not yet under git version control** (no history); recommended first
-  step is `git init` plus a baseline commit — operator's decision.
-- No security controls beyond configuration validation, documentation gating, and
-  health-endpoint non-leakage exist. Do not present the system as providing
-  authorization, DLP, or audit.
+- **Phase 0a (repository foundation): COMPLETE and VERIFIED.** See
+  [phases/PHASE_0A_COMPLETE.md](phases/PHASE_0A_COMPLETE.md).
+- **Phase 0b (security foundation): COMPLETE and VERIFIED** (including the Docker path).
+  See [phases/PHASE_0B_COMPLETE.md](phases/PHASE_0B_COMPLETE.md).
+- The repository is **under git** (baseline `41e10da` + seven Phase 0b commits; no remote
+  configured).
+- Enforced today: `/v1/*` host HMAC authentication + atomic replay rejection + request
+  bounds; dev-resolver guard; policy self-check scaffolding (startup + readiness);
+  pinned Gitleaks in the gate. **Absent:** authorization, tool gateway, approvals, DLP,
+  audit event emission, `/v1` routes, rate limits — do not present the system as
+  providing them.
+- **Phase 1 (typed contracts and deterministic policy engine) is the next task** — see
+  [NEXT_SESSION.md](NEXT_SESSION.md).
 
 ## Files in this directory
 
@@ -71,7 +76,7 @@ implemented because a document describes it; record discrepancies instead of hid
 | [README.md](README.md) | Entry point, reading order, update rules. |
 | [PROJECT_CONTEXT.md](PROJECT_CONTEXT.md) | Identity, scope, non-goals, stack, operator context. |
 | [IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md) | Source of truth for what exists now (labels + evidence pointers). |
-| [NEXT_SESSION.md](NEXT_SESSION.md) | Exact handoff for the next task (Phase 0b). |
+| [NEXT_SESSION.md](NEXT_SESSION.md) | Exact handoff for the next task (Phase 1). |
 | [ARCHITECTURE_MAP.md](ARCHITECTURE_MAP.md) | Current implemented architecture and target v1 map. |
 | [SECURITY_REQUIREMENTS.md](SECURITY_REQUIREMENTS.md) | Complete security contract with status per control and blueprint refs. |
 | [DECISION_LOG.md](DECISION_LOG.md) | Consolidated decisions; links to ADRs (ADRs live in `docs/adr/`). |
@@ -82,7 +87,8 @@ implemented because a document describes it; record discrepancies instead of hid
 | [AGENT_WORK_PROTOCOL.md](AGENT_WORK_PROTOCOL.md) | Mandatory operating rules for coding agents (15 rules + checklists). |
 | [CHANGELOG.md](CHANGELOG.md) | Concise dated history of project activity. |
 | [phases/PHASE_0A_COMPLETE.md](phases/PHASE_0A_COMPLETE.md) | Phase 0a completion record. |
-| [phases/PHASE_0B_PLAN.md](phases/PHASE_0B_PLAN.md) | Phase 0b executable plan (not started). |
+| [phases/PHASE_0B_COMPLETE.md](phases/PHASE_0B_COMPLETE.md) | Phase 0b completion record. |
+| [phases/PHASE_0B_PLAN.md](phases/PHASE_0B_PLAN.md) | Phase 0b executable plan (executed; kept for reference). |
 | [phases/PHASE_TEMPLATE.md](phases/PHASE_TEMPLATE.md) | Template for future phase records. |
 
 ## Relationship to `docs/`

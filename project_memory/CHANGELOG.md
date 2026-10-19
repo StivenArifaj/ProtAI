@@ -4,6 +4,15 @@ Concise, dated history of project activity. Newest first.
 
 ## 2026-10-19
 
+- **Phase 0b (security foundation) implemented and verified end-to-end** (same day as
+  0a): settings extensions; security primitives; identity package; async persistence +
+  Alembic baseline; `/v1/*` host-auth ASGI middleware; policy self-check scaffolding;
+  pinned Gitleaks + invariant steps in the gate; container runtime assets and Compose
+  dev key. Commits `0aa11d9`, `9b3f153`, `42e8b71`, `4d18e27`, `28bede9`, `a5794cc`,
+  `d180b89` on baseline `41e10da`. Evidence V18–V29 in
+  [TESTING_AND_VERIFICATION.md](TESTING_AND_VERIFICATION.md) (231 tests; 8-step gate;
+  live Docker auth/replay proof; startup refusals; `gitleaks git` clean). Phase record:
+  [phases/PHASE_0B_COMPLETE.md](phases/PHASE_0B_COMPLETE.md).
 - **Created the persistent project memory system** (`project_memory/`, this directory):
   13 core files + [phases/](phases/) records, per the memory-system task. Validation: all
   16 files present; 163 relative links checked, 0 broken; secret scan clean (no

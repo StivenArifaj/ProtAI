@@ -40,11 +40,28 @@ the index; never silently rewrite the historical rationale.
 | `.env.example` carries the full blueprint §5.4 variable set; header explains which values are 0a vs 0b | One authoritative environment template; no surprise variables in 0b | `../.env.example` |
 | No `config/`, `migrations/`, `evaluation/` directories in 0a | They belong to Phases 0b/0b/9 per phase gates | IMPLEMENTATION_STATE |
 
-## Deferred decisions (planned, not yet decided)
+## Implementation decisions (Phase 0b, within blueprint constraints)
 
-| Topic | Why it can wait | Needed by |
+| Decision | Rationale | Recorded in |
 |---|---|---|
-| Policy self-check fixture content shape | Scaffolding lands in 0b; representative rows come from [../docs/POLICY_DECISION_MATRIX.md](../docs/POLICY_DECISION_MATRIX.md); escalate if ambiguous | Phase 0b |
-| Gitleaks install method on macOS | `check.sh` must fail clearly when the scanner is missing; installation is an operator environment choice | Phase 0b |
-| Git initialization + baseline commit scope | Operator's decision (repository/commit policy); does not block code | Before Phase 0b (recommended) |
-| ADR format enrichment ("alternatives considered" / "tests/verification" sections) | ADR-001..007 use the current format; blueprint §22.4 names those sections for ADRs generally | Phase 0b (new ADRs) |
+| Pure-ASGI middleware keyed on the `/v1/` path prefix (not per-route dependencies) | Enforcement is fail-closed and independent of route existence; runs before routing and identically under `PRINCIPAL_RESOLVER=dev` (no bypass) | `../src/ai_security/api/middleware.py`; middleware tests |
+| Atomic replay rejection in one statement (`ON CONFLICT ... WHERE expires_at < now() RETURNING`) | Concurrency-safe single-use semantics without read-then-write races; expanded rows re-register | `../src/ai_security/persistence/nonce_repository.py`; concurrency tests |
+| Nonce-store failure → 503, never fail-open | Blueprint §9.4 spirit: inability to prove nonce freshness must deny | middleware + tests |
+| Denial surface stabilized as machine-readable detail codes (400/401/413/503) | Lets later phases and tests distinguish causes without leaking key material | `../src/ai_security/identity/host_auth.py`, middleware |
+| `HOST_AUTH_KEYS_JSON` required; strict records (`extra="forbid"`, base64 ≥32 bytes, duplicate IDs rejected, all-zero sample refused outside dev/test) | Fail closed on every key-configuration sloppiness; keep the 0a sample-refusal pattern | `../src/ai_security/settings.py`; settings tests |
+| Dev-resolver guard in three places (settings validator, resolver constructor, factory) | Defense in depth against future call sites constructing the resolver directly | `../src/ai_security/identity/resolver.py`; tests incl. `model_construct` bypass attempt |
+| Audit append follows ADR-002 verbatim (advisory-lock key `3141592653589793`, chain `v1`, canonical bytes stored, unique sequence) | Lock protocol is contract-level; scaffolding must be byte-exact now so Phase 7 changes nothing structural | `../src/ai_security/persistence/audit_repository.py`; vector + concurrency tests |
+| Interim policy matrix evaluator shipped as explicit scaffolding (`policy/interim_matrix.py`) with the ADR-007 fixture contract; Phase 1 replaces the evaluator, not the contract | Self-checks must exist in 0b; an honest transcription beats a fake engine | `../src/ai_security/policy/`; `../config/policy_self_checks.yaml` |
+| Readiness re-evaluates the fixture file on every probe | Post-startup file drift (tampering/edits) flips readiness to 503 — drift detection by construction | `../src/ai_security/api/dependencies.py`; wiring tests |
+| Gitleaks pinned to exactly 8.30.1 in `check.sh`; `.gitleaks.toml` extends defaults with one narrowly allowlisted dev value | Reproducible gate; the Compose dev key is public by design and allowlisted explicitly rather than suppressing the rule | `../scripts/check.sh`, `../.gitleaks.toml` |
+| Container ships `config/`, `migrations/`, `alembic.ini`; `make migrate` is the documented command | The image must be able to run its own migration and must contain the startup-required fixtures | `../Dockerfile`, `../Makefile` |
+| Integration tests auto-create `firewall_test` and run Alembic; skip cleanly without PostgreSQL | Tests exercise the real schema path (ADR-006: no `create_all` in integration) while staying runnable anywhere | `../tests/integration/conftest.py` |
+
+## Deferred decisions (updated after 0b)
+
+| Topic | Status | Needed by |
+|---|---|---|
+| Policy self-check fixture content shape | **DECIDED (0b):** strict YAML `{fixtures: [...]}`, one case per matrix row with `expected_decision` (+ optional `expected_reason`); 16 fixtures incl. 7 mandated rows | done |
+| Gitleaks install method on macOS | **DECIDED:** operator installs (brew); gate pins 8.30.1 and fails clearly when missing/mismatched | done |
+| Git initialization + baseline commit scope | **DONE:** baseline `41e10da` + 0b commits; no remote | done |
+| ADR format enrichment ("alternatives considered" / "tests/verification" sections) | Still open; no new ADR was needed in 0b (ADR-001..007 already existed) | Phase 1 (if a new ADR is created) |

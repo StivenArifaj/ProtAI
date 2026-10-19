@@ -50,22 +50,24 @@ These are settled design decisions, not open questions for an implementer to re-
 - SOC analyzer read-only/alert-only; attacker-influenced fields treated as untrusted
   (§17, ADR-004).
 
-## Stack (current, verified in Phase 0a)
+## Stack (current, verified through Phase 0b)
 
 - Python `>=3.12,<3.13` (3.12.15 in use), managed with uv 0.13.1.
-- FastAPI + uvicorn; pydantic / pydantic-settings; asyncpg (readiness probe today;
-  SQLAlchemy async layer in Phase 0b).
+- FastAPI + uvicorn; pydantic / pydantic-settings; asyncpg + SQLAlchemy 2.x async
+  (ADR-005) + Alembic (ADR-006); PyYAML for the strict self-check loader.
 - PostgreSQL 17 (Compose image `postgres:17.2-alpine`); Docker Compose for local dev.
-- pytest + httpx2 (needed by Starlette 1.9's `TestClient`), ruff, mypy (strict, `src/`).
-- `scripts/check.sh` is the local quality gate; no CI system is configured.
+- pytest + httpx2 (needed by Starlette 1.9's `TestClient`), ruff, mypy (strict, `src/`),
+  Gitleaks 8.30.1 (pinned in the gate).
+- `scripts/check.sh` is the local quality gate (8 steps); no CI system is configured.
 
 ## Operator and environment
 
 - Single operator (personal project), macOS (darwin), local development only.
 - Working copy: `/Users/stiven/ProtAI`.
-- The repository is **not yet under git version control** (operator's decision pending).
+- The repository is **under git** (baseline `41e10da` + Phase 0b commits; no remote
+  configured).
 - Docker Desktop must be running for the Compose path. The stack is normally stopped
-  (`docker compose down`); the `db_data` volume is preserved.
+  (`docker compose down`) or reduced to `db` for tests; the `db_data` volume is preserved.
 - Local ports: Compose publishes the API on host `127.0.0.1:8080` (host port 8000 is
   commonly occupied by unrelated local emulators) and PostgreSQL on `127.0.0.1:5432`.
   The container itself listens on port 8000.
