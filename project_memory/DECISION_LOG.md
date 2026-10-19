@@ -22,6 +22,7 @@ the index; never silently rewrite the historical rationale.
 | ADR-005 | SQLAlchemy 2.x async persistence with asyncpg | Phase 0b | [../docs/adr/ADR-005-sqlalchemy-async-persistence.md](../docs/adr/ADR-005-sqlalchemy-async-persistence.md) |
 | ADR-006 | Alembic for all schema changes; `create_all` only in isolated unit fixtures | Phase 0b | [../docs/adr/ADR-006-alembic-migrations.md](../docs/adr/ADR-006-alembic-migrations.md) |
 | ADR-007 | Policy decision matrix mirrored in docs/config + startup self-checks | Phase 1 (scaffolding in 0b) | [../docs/adr/ADR-007-policy-matrix-self-checks.md](../docs/adr/ADR-007-policy-matrix-self-checks.md) |
+| ADR-008 | Deterministic policy engine with strict typed contracts + versioned policy bundle | Phase 1 | [../docs/adr/ADR-008-policy-engine-typed-contracts.md](../docs/adr/ADR-008-policy-engine-typed-contracts.md) |
 
 ## Implementation decisions (Phase 0a, within blueprint constraints)
 
@@ -57,11 +58,30 @@ the index; never silently rewrite the historical rationale.
 | Container ships `config/`, `migrations/`, `alembic.ini`; `make migrate` is the documented command | The image must be able to run its own migration and must contain the startup-required fixtures | `../Dockerfile`, `../Makefile` |
 | Integration tests auto-create `firewall_test` and run Alembic; skip cleanly without PostgreSQL | Tests exercise the real schema path (ADR-006: no `create_all` in integration) while staying runnable anywhere | `../tests/integration/conftest.py` |
 
-## Deferred decisions (updated after 0b)
+## Implementation decisions (Phase 1, within blueprint constraints; contract in ADR-008)
+
+| Decision | Rationale | Recorded in |
+|---|---|---|
+| Engine in `firewall/policy_engine.py`; document models/loader in `policy/`; canonical enums in `tools/base.py`, `data_security/classification.py`, `firewall/decision.py` | Blueprint §4 layout; §6.1 "defined exactly once" | ADR-008 |
+| Fact separation: request carries upstream facts only; policy flags come only from the loaded bundle | §10.2 order; policy facts must never be caller-supplied | ADR-008; engine tests |
+| Evaluation order = §10.2 steps with stable `DecisionReason` codes | Documented deterministic order; reason vocabulary is an observable contract | `../src/ai_security/firewall/decision.py`; engine tests |
+| `TOOL_ID_PATTERN` anchored (`^…$`) | Pydantic `pattern=` uses search semantics; the unanchored pattern accepted an invalid id containing a space | `../src/ai_security/policy/models.py`; model tests |
+| `risk_score` strict int 0-100 (`strict=True`) | Reject string/bool coercion silently changing a score | `../src/ai_security/firewall/policy_engine.py`; model tests |
+| Unicode hosts allowed and IDNA-encoded; path/query printable ASCII only; whitespace/controls/zone-ids/trailing dots rejected | Terminate the IDNA-vs-ASCII ambiguity explicitly; keep destinations canonical for exact matching | `../src/ai_security/security/urls.py`; url tests |
+| Loader uses `yaml.compose` node walk for duplicate keys + `yaml.safe_load` for parsing | The gate prohibits `yaml.load(` in `src/`; duplicate-key rejection without violating the invariant | `../src/ai_security/policy/loader.py`; loader tests |
+| Fixture-level `tool_policy` override (strict `ToolPolicy` model) | §10.5 "dedicated test scenario" without weakening the starter policy | `../config/policy_self_checks.yaml`; self-check tests |
+| `PolicyBundle` exposes version + per-file sha256 + `combined_hash`; readiness payload gains `policy_version`/`policy_hash` | ADR-007 metadata requirement; drift must be observable | `../src/ai_security/policy/{models,self_checks}.py`, `../src/ai_security/api/routes_health.py` |
+| No hot reload: process keeps startup bundle; readiness detects file drift (503) | §10.6 atomic reload is future work; fail-closed behavior today is drift detection | `../docs/KNOWN_LIMITATIONS.md`; wiring tests |
+| `TestPrincipalResolver` test-only, not selectable via settings/factory | Test adapter must not weaken the dev-resolver guard (ADR-001) | `../src/ai_security/identity/adapters.py`; adapter tests |
+| Thresholds 40/80 marked experimental in the config header | §11.4 defaults, uncalibrated until Phase 9; no threshold can override hard deny | `../config/risk_thresholds.yaml` |
+
+## Deferred decisions (updated after Phase 1)
 
 | Topic | Status | Needed by |
 |---|---|---|
-| Policy self-check fixture content shape | **DECIDED (0b):** strict YAML `{fixtures: [...]}`, one case per matrix row with `expected_decision` (+ optional `expected_reason`); 16 fixtures incl. 7 mandated rows | done |
+| Policy self-check fixture content shape | **DECIDED (0b, extended 1):** strict YAML `{fixtures: [...]}`; each `case` is a full `PolicyEvaluationRequest`; optional fixture-level `tool_policy` override; 17 fixtures incl. 7 mandated rows | done |
 | Gitleaks install method on macOS | **DECIDED:** operator installs (brew); gate pins 8.30.1 and fails clearly when missing/mismatched | done |
-| Git initialization + baseline commit scope | **DONE:** baseline `41e10da` + 0b commits; no remote | done |
-| ADR format enrichment ("alternatives considered" / "tests/verification" sections) | Still open; no new ADR was needed in 0b (ADR-001..007 already existed) | Phase 1 (if a new ADR is created) |
+| Git initialization + baseline commit scope | **DONE:** baseline `41e10da` + 0b commits + Phase 1 commit series; no remote | done |
+| ADR format enrichment ("alternatives considered" / "tests/verification" sections) | Still open; ADR-008 was created with the established Status/Context/Decision/Consequences/References shape | next ADR |
+| `risk_score` fact source until the Phase 5 risk engine exists | Open: keep caller-supplied (current) or a deterministic Phase 2 placeholder — decide in `PHASE_2_PLAN.md` and document | Phase 2 |
+| Policy hot-reload (atomic reload per §10.6) | Open; readiness detects drift today, process keeps startup bundle | Phase 2+ (not scheduled) |

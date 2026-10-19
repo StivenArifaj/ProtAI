@@ -1,15 +1,16 @@
 # Testing and Verification
 
 Rules: never claim a result that was not produced by a command actually run. Fresh
-re-runs and historical records are kept in separate tables. Evidence IDs (V1–V29) are
-referenced from [IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md) and the phase records.
+re-runs and historical records are kept in separate tables. Evidence IDs (V1–V29 for
+0a/0b; V30+ for Phase 1) are referenced from [IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md)
+and the phase records.
 
 ## How to verify (documented commands)
 
 | Command | What it checks | Expected |
 |---|---|---|
 | `uv sync --frozen` | lockfile/install consistency | installs with no resolution drift |
-| `uv run pytest` | 231 unit/integration tests | 231 passed (DB-backed integration skips cleanly if PostgreSQL is unreachable) |
+| `uv run pytest` | 406 unit/integration tests | 406 passed (DB-backed integration skips cleanly if PostgreSQL is unreachable) |
 | `bash scripts/check.sh` | full local gate (8 steps) | exit 0; prints "All checks passed." |
 | `uv run alembic upgrade head` | migrations (needs §5.4 env; host `db`→`127.0.0.1`) | applies baseline to an empty DB; second run reports already at head |
 | `docker compose config -q` | Compose file syntax | exit 0 |
@@ -17,11 +18,30 @@ referenced from [IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md) and the pha
 | `docker compose run --rm api alembic upgrade head` | in-container migration | baseline applied |
 | `docker compose up -d db api` | stack | `protai-db-1` + `protai-api-1` healthy |
 | `curl http://127.0.0.1:8080/health/live` | liveness | 200 `{"status":"alive"}` |
-| `curl http://127.0.0.1:8080/health/ready` | readiness | 200 ready (503 not_ready without DB or with drifted self-checks) |
+| `curl http://127.0.0.1:8080/health/ready` | readiness | 200 ready incl. `policy_version`/`policy_hash` (503 not_ready without DB or with drifted self-checks) |
 | unsigned/signed requests to `/v1/*` | host auth | unsigned → 400 `missing_headers`; valid signature → 404 (no routes yet) with nonce registered; replay → 401 `replayed_nonce` |
+| `uv run python -c "…load_policy_bundle…"` | policy bundle smoke | `version`, per-file hashes, `combined_hash`; 17 fixtures, 0 failures |
 | `docker compose down` | teardown (volume preserved) | stack removed |
 
 Failure behavior: `check.sh` exits non-zero and prints `CHECK FAILED: <reason>`.
+
+## Fresh evidence (2026-10-19, Phase 1 session)
+
+| ID | Command / check | Result |
+|---|---|---|
+| V30 | `uv run --frozen pytest -q` | PASS — **406 passed** (364 unit + 42 integration), incl. DB-backed integration against Compose PostgreSQL |
+| V31 | `uv run --frozen mypy src` | PASS — no issues, 35 source files (strict) |
+| V32 | `uv run --frozen ruff check src/ tests/` + `ruff format src tests` | PASS — clean; format applied to 3 files, then check clean |
+| V33 | `bash scripts/check.sh` | PASS — exit 0, all 8 steps: lockfile; ruff format; ruff lint; mypy; 406 tests; Gitleaks 8.30.1 dir+git "no leaks found" (9 commits scanned); prohibited-pattern greps clean; `compare_digest` confined |
+| V34 | Policy bundle smoke (`load_policy_bundle` + `check_policy_self_checks`, live run) | PASS — `version: dev-1`; `policies_sha256 35bcd687…`; `thresholds_sha256 3e1d34ae…`; `combined_hash 8a4ba203e3baaf86eabb2e299992166289cae938ec9ea9a7bccadf6e6e068e6a`; 17 fixtures, 0 failures |
+| V35 | Policy wiring integration tests (`test_policy_self_checks_wiring.py`, `test_health.py`) | PASS — invalid/missing policy file and mismatching fixture refuse startup; live policy/fixture drift flips readiness to 503; readiness payload carries `policy_version`/`policy_hash` |
+
+Additional Phase 1 development-time findings (fixed and regression-tested, recorded for
+honesty): the initially unanchored `TOOL_ID_PATTERN` accepted an invalid tool id (fixed
+by anchoring); pydantic's lax int coercion accepted a string or bool `risk_score` (fixed
+with `strict=True`); the loader's first duplicate-key approach would have added a
+`yaml.load(` call the gate prohibits (restructured to a `yaml.compose` node walk +
+`yaml.safe_load`); three files were not ruff-formatted (the gate's format step caught it).
 
 ## Fresh evidence (2026-10-19, Phase 0b session; Docker Desktop running)
 
@@ -79,28 +99,40 @@ iterations, at the ruff format and lint steps. Removing the file restored exit 0
 The Phase 0b gate additionally fails if Gitleaks is missing or version-mismatched
 (deliberate pin, 8.30.1).
 
-## Test inventory (231 tests)
+## Test inventory (406 tests)
 
 Unit (`tests/unit/`):
 
-- `test_settings.py` (51) — 0a validation + masking + docs flag; 0b host-auth key
+- `test_settings.py` (55) — 0a validation + masking + docs flag; 0b host-auth key
   schemas, duplicate rejection, sample-secret refusal, resolver guard, TTL/tolerance
-  relation, `policy_self_checks_path`.
+  relation, `policy_self_checks_path`; 1 `policy_path`/`risk_thresholds_path` defaults,
+  overrides, empty-path rejection.
 - `test_constant_time.py` (16) — equality helpers incl. unequal-length and hex paths.
 - `test_canonical_json.py` (17) — canonical text/bytes stability and edge cases.
 - `test_hash_chain.py` (17) — ADR-002 formula, genesis, fixed vectors, hex conversion.
-- `test_host_auth_verifier.py` (~44) — exact signing message vector, header handling,
+- `test_host_auth_verifier.py` (46) — exact signing message vector, header handling,
   full rejection matrix, timestamp-window boundaries, constant-time paths.
 - `test_principal_resolver.py` (14) — frozen `Principal` model, timezone validation,
   dev-resolver guard (incl. `model_construct` bypass attempt), fail-closed host resolver.
+- `test_principal_test_adapter.py` (8) — test-only constructor guard, factory exclusion.
+- `test_urls.py` (36) — scheme/host/port/path/query canonicalization, IDNA hosts,
+  percent-encoding, rejection cases (whitespace, controls, userinfo, fragment, zone id,
+  trailing dot), exact-match equality.
+- `test_policy_models.py` (38) — strict policy/threshold documents, anchored tool ids,
+  strict enum/int rejection, bundle hashes, threshold ordering.
+- `test_policy_loader.py` (20) — safe loading, duplicate keys, missing/non-UTF-8/malformed
+  documents, `PolicyConfigError` behavior.
+- `test_policy_engine.py` (64) — table-driven matrix (allowed/forbidden/malformed/
+  cross-scope/unknown/error), evaluation-order precedence, thresholds, provenance,
+  determinism, malformed requests.
 - `test_policy_self_checks.py` (33) — repo fixture file passes completely; mandated rows
-  present; runner detects decision/reason mismatches; loader rejects 12 malformed shapes;
-  probe never raises; matrix risk boundaries; hard-constraint dominance.
+  present; runner detects decision/reason mismatches; malformed fixture shapes rejected;
+  readiness report behavior.
 
 Integration (`tests/integration/`):
 
-- `test_health.py` (~12) — liveness; readiness 200/503 incl. policy_self_checks; docs
-  gating all environments; non-leakage.
+- `test_health.py` (10) — liveness; readiness 200/503 incl. policy readiness override;
+  `policy_version`/`policy_hash` assertions; docs gating all environments; non-leakage.
 - `test_host_auth_middleware.py` (13) — end-to-end denial matrix through the app:
   valid sign → route + context; forged/mutated/stale/unknown-key → 401; replay → 401;
   failing registrar → 503; oversize content-length + chunked → 413; query string → 400;
@@ -110,8 +142,10 @@ Integration (`tests/integration/`):
 - `test_audit_append.py` (5) — chain continuity, genesis, canonical bytes recompute,
   5-writer concurrency contiguity, unique-sequence guard.
 - `test_migrations.py` (1) — upgrade idempotency on the test database.
-- `test_policy_self_checks_wiring.py` (4) — startup refuses on missing file and on
-  mismatch; valid file passes startup + readiness; post-startup drift flips to 503.
+- `test_policy_self_checks_wiring.py` (8) — startup refuses on missing policy/threshold
+  file, invalid policy, and fixture mismatch; valid bundle passes startup + readiness
+  with version/hash; live policy-version drift flips to 503 while the startup bundle
+  stays fixed.
 - `conftest.py` + `db_helpers.py` — auto-create `firewall_test`, run Alembic, skip
   cleanly when PostgreSQL is unreachable; NullPool harness for asyncio.run tests.
 

@@ -1,7 +1,7 @@
 # Security Invariants
 
 The 25 mandatory invariants from blueprint v1.2 section 20.2, with honest status as of
-**Phase 0b**. An invariant may only be marked implemented when its tests exist and pass.
+**Phase 1**. An invariant may only be marked implemented when its tests exist and pass.
 
 Legend: **Implemented** (tests written and passing) / **Partial** (only the listed part)
 / **Not implemented** (planned phase noted).
@@ -10,13 +10,13 @@ Legend: **Implemented** (tests written and passing) / **Partial** (only the list
 |---|---|---|
 | 1 | Unknown tool/action -> no execution | Not implemented (Phase 2) |
 | 2 | Missing/invalid principal -> no protected action | **Partial (0b):** every `/v1/*` request is HMAC-authenticated before any processing (verified in the middleware denial matrix); there is no protected action surface yet, and principal resolution outside dev deliberately fails closed (`HostPrincipalResolver` raises until Phase 1). |
-| 3 | Policy evaluation error -> no execution | Not implemented (Phase 1) |
-| 4 | Invalid arguments or unexpected fields -> no execution | Not implemented (Phase 1-2) |
-| 5 | Hard deny -> no execution regardless of risk score or model confidence | Not implemented (Phase 1/5) |
+| 3 | Policy evaluation error -> no execution | **Partial (Phase 1):** the deterministic engine (`firewall/policy_engine.py`) has no error path that yields `ALLOW`: invalid/missing facts block, unknown tool states block, and invalid policy configuration refuses startup (`PolicyConfigError`); there is no execution surface yet, so the end-to-end guarantee arrives with the Phase 2 gateway. |
+| 4 | Invalid arguments or unexpected fields -> no execution | **Partial (Phase 1):** strict contracts (`extra="forbid"`, strict types; unknown enum values rejected with no aliases/coercions) and the `arguments_valid=false` fact → `invalid_arguments` BLOCK are tested; the execution-side guarantee is Phase 2 (gateway). |
+| 5 | Hard deny -> no execution regardless of risk score or model confidence | **Partial (Phase 1):** `hard_deny=true` → BLOCK takes precedence over every score (tested, incl. the mandated low-risk hard-deny fixture); model confidence never enters the engine. Execution side: Phase 2. |
 | 6 | Missing approval -> no execution | Not implemented (Phase 5) |
 | 7 | Changed approved arguments -> no execution | Not implemented (Phase 5) |
 | 8 | Reused/expired approval -> no execution | Not implemented (Phase 5) |
-| 9 | Egress/DLP block -> sink is unchanged | Not implemented (Phase 6) |
+| 9 | Egress/DLP block -> sink is unchanged | Not implemented (Phase 6). The Phase 1 engine already denies disallowed external destinations at decision level (`external_egress_disabled`, `destination_not_allowlisted`, `confidential_egress_blocked`, `restricted_egress_blocked`); there is no sink yet whose invariance could be proven. |
 | 10 | Detector false negative -> firewall still enforces permissions | Not implemented (Phase 2-3) |
 | 11 | Detector/provider outage -> no automatic fail-open | Not implemented (Phase 3-4) |
 | 12 | Every adapter call has a correlated gateway decision event | Not implemented (Phase 2/7) |
@@ -32,7 +32,7 @@ Legend: **Implemented** (tests written and passing) / **Partial** (only the list
 | 22 | AI SOC analysis cannot call tools, change policies, edit logs, or trigger containment | Not implemented (Phase 10; decision recorded in ADR-004) |
 | 23 | Session security state bound to verified tenant/subject; guessed/borrowed/rotated/cross-user references cannot read, extend, or create another session's signals | Not implemented (Phase 3/5) |
 | 24 | Only a verified principal satisfying `required_approver_rule` can approve; self-approval requires explicit policy; unsatisfiable rule -> `BLOCK` | Not implemented (Phase 5) |
-| 25 | Unknown/missing/invalid `SideEffectClass` or `DataClass` fail closed; no aliases or coercions | **Partial (0b scaffolding):** the interim matrix `PolicyInput` accepts only the exact canonical enum values and rejects unknown/extra fields (tested), and the fixture loader is strict; the authoritative Phase 1 contracts/engine replace the scaffolding. |
+| 25 | Unknown/missing/invalid `SideEffectClass` or `DataClass` fail closed; no aliases or coercions | **Implemented (Phase 1):** canonical enums are defined exactly once (`tools/base.py`, `data_security/classification.py`); strict models reject unknown/missing values and extra fields (`extra="forbid"`) with no aliases or coercions; `risk_score` is a strict integer 0-100 (string/bool coercion rejected); the engine denies on any unknown/invalid state with stable reason codes; all covered by unit tests (model, engine, url canonicalization). |
 
 ## Phase 0a scope statement
 
@@ -59,3 +59,23 @@ testable and enforced:
 - startup refuses any configuration or policy self-check mismatch (ADR-007).
 
 Everything not listed above remains future work; the repository must not claim it.
+
+## Phase 1 scope statement
+
+Phase 1 makes invariant #25 implemented and advances #3/#4/#5 to engine-level
+partial status:
+
+- the deterministic policy engine evaluates the blueprint section 10.2 order with
+  stable reason codes and provenance (`policy_version`/`policy_hash`); invalid,
+  unknown, or missing state never yields `ALLOW`;
+- strict typed contracts fail closed on unknown/invalid values with no aliases or
+  coercions (canonical enums defined exactly once);
+- policy documents load safely (no `yaml.load`; duplicate keys rejected) and invalid
+  policy refuses startup; readiness detects live policy/fixture drift;
+- the ADR-007 self-check fixtures (7 mandated names retained, 17 total) pass against
+  the real engine at startup and on readiness;
+- destination canonicalization (IDNA, percent-encoding, https-only, no userinfo/
+  fragment) supports exact-match allowlisting; no wildcards in v1.
+
+Everything beyond these statements (execution guarantees, gateway no-bypass, risk
+scoring engine, DLP/egress enforcement at a sink) remains future work.

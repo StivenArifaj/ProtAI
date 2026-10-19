@@ -2,8 +2,8 @@
 
 This index links to one file per ADR under `docs/adr/`. It intentionally contains only
 summaries; the full decision text lives in each ADR (blueprint section 21). ADR-001
-through ADR-007 are required to be recorded before Phase 1 and are all recorded here on
-2026-10-19.
+through ADR-007 are required to be recorded before Phase 1 and were all recorded here on
+2026-10-19; ADR-008 records the Phase 1 policy-engine contract.
 
 | ADR | Title | Status | Implementation phase |
 |---|---|---|---|
@@ -14,6 +14,7 @@ through ADR-007 are required to be recorded before Phase 1 and are all recorded 
 | [ADR-005](adr/ADR-005-sqlalchemy-async-persistence.md) | SQLAlchemy 2.x async persistence with asyncpg | Accepted | Phase 0b |
 | [ADR-006](adr/ADR-006-alembic-migrations.md) | Alembic for all schema changes; `create_all` only in isolated unit-test fixtures | Accepted | Phase 0b |
 | [ADR-007](adr/ADR-007-policy-matrix-self-checks.md) | Policy decision matrix mirrored in docs/config with startup self-checks | Accepted | Phase 1 (self-check scaffolding in Phase 0b) |
+| [ADR-008](adr/ADR-008-policy-engine-typed-contracts.md) | Deterministic policy engine with strict typed contracts and versioned policy bundle | Accepted | Phase 1 |
 
 ## Adding a new ADR
 

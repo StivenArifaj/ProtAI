@@ -4,75 +4,81 @@
 
 ## Where we are
 
-Phases 0a (repository foundation) and 0b (security foundation) are **COMPLETE and
-VERIFIED**, including the Docker Compose path — see
-[phases/PHASE_0B_COMPLETE.md](phases/PHASE_0B_COMPLETE.md) and evidence V18–V29 in
+Phases 0a (repository foundation), 0b (security foundation), and 1 (typed contracts and
+deterministic policy engine) are **COMPLETE and VERIFIED** — see
+[phases/PHASE_1_COMPLETE.md](phases/PHASE_1_COMPLETE.md) and evidence V30+ in
 [TESTING_AND_VERIFICATION.md](TESTING_AND_VERIFICATION.md). The repository is under git
-with a linear Phase 0b commit series. The Compose `api` container is stopped; the `db`
-container and volume are preserved for tests.
+with a linear history; the Compose `db` container and volume are preserved for tests
+(`api` stopped).
 
-What exists now: host HMAC authentication + replay rejection enforced on the `/v1/*` path
-prefix (routes do not exist yet), async persistence + Alembic baseline, the dev-resolver
-guard, policy self-check scaffolding wired into startup and readiness, pinned Gitleaks in
-the gate, and 231 passing tests. Nothing else: no authorization, no tool gateway, no
-approvals, no DLP, no audit event emission.
+What exists now: host HMAC authentication + replay rejection on the `/v1/*` path prefix
+(routes do not exist yet), async persistence + Alembic baseline, the dev-resolver guard +
+test-only principal adapter, strict typed contracts (canonical `SideEffectClass`/
+`DataClass`), canonical destination handling, the safe versioned policy loader with
+duplicate-key rejection, the deterministic §10.2 policy engine with stable reason codes
+and provenance, ADR-007 self-check fixtures (17, incl. the 7 mandated names) wired into
+startup + readiness with `policy_version`/`policy_hash`, pinned Gitleaks, and 406 passing
+tests. **Nothing executes:** there is no tool registry, gateway, or adapter, so decisions
+have no side effects yet.
 
-## The next task: Phase 1 — Typed contracts and deterministic policy engine (blueprint §21)
+## The next task: Phase 2 — Tool registry and enforced gateway (blueprint §21)
 
-No blocking preconditions; Phase 0b passed its DoD, so proceed per the autonomy mandate.
-Read first: blueprint §§6 (typed contracts), §10 (policy engine + matrix), §11.4 (risk
-thresholds interplay), §20.2 #25, and ADR-007; then [../docs/POLICY_DECISION_MATRIX.md](../docs/POLICY_DECISION_MATRIX.md).
+No blocking preconditions; Phase 1 passed its DoD, so proceed per the autonomy mandate.
+Read first: blueprint §§12 (firewall gateway + no-bypass), 14 (tool isolation/mock
+tools), §21 (Phase 2), and ADR-008 (fact separation: the registry and call validator
+produce the facts the Phase 1 engine consumes); then [../docs/ARCHITECTURE.md](../docs/ARCHITECTURE.md).
 
-Expected deliverables (condensed; formalize a `phases/PHASE_1_PLAN.md` when starting):
+Expected deliverables (condensed; formalize a `phases/PHASE_2_PLAN.md` when starting):
 
-1. Strict Pydantic request/response/action contracts (`extra="forbid"`, frozen where
-   appropriate) with canonical `SideEffectClass`/`DataClass` enums — unknown/missing/
-   invalid values fail closed with no aliases or coercions.
-2. A safe YAML policy loader (the only sanctioned YAML entry point is
-   `yaml.safe_load`; the Phase 0b gate already prohibits bare `yaml.load(`) and a
-   validated, versioned policy model with explicit reason codes and documented
-   evaluation order (hard constraints first).
-3. The real deterministic policy engine replacing `policy/interim_matrix.py` while
-   keeping the `config/policy_self_checks.yaml` fixture contract intact (ADR-007):
-   the self-checks must still pass at startup and in readiness, and the fixtures may be
-   extended to cover the full engine.
-4. A principal test adapter (explicitly test-scoped) without weakening the dev-resolver
-   guard or the HMAC middleware.
-5. Canonicalization utilities/tests where the contracts require them.
+1. Tool protocol + registry derived from the loaded policy document (`config/policies.yaml`);
+   unknown/undeclared tools stay `unknown_tool`-deniable and unexecutable.
+2. Mock adapters only: email (search/read), files (read under a sandbox root via
+   resource IDs), external sink (write; egress disabled by default) — no real
+   connectors, no shell, no arbitrary network.
+3. The `invoke_tool` gateway chokepoint: construct the engine request from validated
+   facts, evaluate policy **before execution**, execute only on `ALLOW`, capture
+   decisions for later audit, enforce timeouts + result bounds.
+4. No-bypass tests: sink state changes only after a gateway `ALLOW`; denied/unknown/
+   invalid actions leave no side effect; adapters are never invoked directly.
 
-Runtime order reminder (blueprint work-order note): typed schemas + policy land before the
-tool gateway; input detection before any powerful tools.
+Runtime order reminder (blueprint work-order note): the unbypassable gateway lands
+**before** input detection (Phase 3) and before any powerful tools.
 
 ## Verification commands and expected results
 
 | Command | Expected |
 |---|---|
-| `uv run --frozen pytest -q` | All tests pass (≥231; new contract/policy tests added) |
+| `uv run --frozen pytest -q` | All tests pass (≥406; new registry/gateway/no-bypass tests added) |
 | `bash scripts/check.sh` | exit 0, all 8 steps (Gitleaks must stay clean) |
-| `uv run --frozen ruff check .` / `mypy` | clean / no issues |
-| Policy self-checks | startup and `/health/ready` still pass with the fixtures; a deliberately mismatching fixture still refuses startup |
+| Policy self-checks | startup and `/health/ready` still pass; fixtures keep working against the engine |
+| No-bypass proof | denied/unknown action leaves the mock sink unchanged (new Phase 2 tests) |
 
-## Security constraints that must hold throughout Phase 1
+## Security constraints that must hold throughout Phase 2
 
-- Invariants #17/#18 must stay green: never touch the middleware path without proving the
-  denial matrix still passes; keep `compare_digest` confined to `security/constant_time.py`.
-- The policy engine is deterministic and makes no network calls; no LLM in authorization.
-- Never weaken the fixture contract to make room for the engine — extend fixtures instead.
-- Do not add executables or side effects: Phase 1 has no action surface; reason codes and
-  decisions are data.
-- Update `docs/SECURITY_INVARIANTS.md` (#25 becomes fully testable) and both status files
-  in the same task; keep `docs/IMPLEMENTATION_STATE.md` and
-  [IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md) consistent; append to
-  [CHANGELOG.md](CHANGELOG.md); refresh this file at the end.
+- Invariants #17/#18/#25 stay green: never touch the middleware/policy contracts without
+  proving the denial matrix and policy suites still pass; keep `compare_digest` confined
+  to `security/constant_time.py`.
+- The gateway must call the real engine — never re-implement or bypass policy logic in
+  adapters; adapters never see raw host requests.
+- Mock tools only; egress stays disabled in the starter policy; file access stays within
+  the sandbox root by resource ID.
+- No execution without an `ALLOW` `DecisionRecord` for that exact call; decisions are
+  data and must be reproducible (same facts → same decision).
+- Update `docs/SECURITY_INVARIANTS.md` (#1/#9/#10/#12 become testable), both status
+  files, `ARCHITECTURE_MAP.md`, `FILE_MAP.md`, `CHANGELOG.md`, and this file in the same
+  task.
 
-## Definition of Done (blueprint §21, Phase 1 condensed)
+## Definition of Done (blueprint §21, Phase 2 condensed)
 
-Table-driven policy tests covering allowed/forbidden/malformed/cross-scope/unknown/error
-cases; strict contracts fail closed on unknown/invalid values; the ADR-007 self-check
-fixtures pass against the real engine; no LLM involvement; the quality gate remains green.
+No-bypass tests: the mock sink changes only after a valid gateway `ALLOW`; denied and
+unknown actions have no side effect; timeouts/result bounds enforced; the quality gate
+remains green; ADR-007/ADR-008 contracts untouched.
 
 ## Open decisions / notes for the operator
 
-- None blocking. The Phase 0a ADR-format nuance remains open (new ADRs may include
-  "alternatives considered"/"tests/verification" sections); no new ADR was created in 0b.
-- `check.sh` pins Gitleaks to exactly 8.30.1 by design; a mismatch fails the gate.
+- None blocking. `check.sh` pins Gitleaks to exactly 8.30.1 by design; a mismatch fails
+  the gate.
+- Known Phase 1 limits carried forward: no policy hot-reload (readiness detects drift);
+  destination allowlisting is exact-match only; the `risk_score` fact still comes from
+  the caller until the Phase 5 risk engine (Phase 2 supplies a placeholder deterministic
+  value or keeps it caller-supplied — decide and document in `PHASE_2_PLAN.md`).

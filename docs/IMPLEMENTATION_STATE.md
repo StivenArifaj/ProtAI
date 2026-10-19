@@ -1,12 +1,17 @@
 # Implementation State
 
-Last updated: 2026-10-19 (Phase 0b, blueprint v1.2; Docker verification completed).
+Last updated: 2026-10-19 (Phase 1, blueprint v1.2).
 
-Phases 0a (repository foundation) and 0b (security foundation) are **complete and
-verified**, including the Docker Compose path. Phase 0b implements host authentication,
-replay rejection, persistence + migrations, the development-resolver guard, policy
-self-check scaffolding, and pinned secret scanning. It does **not** implement
-authorization, the tool gateway, approvals, DLP/egress, or audit event emission; see
+Phases 0a (repository foundation), 0b (security foundation), and 1 (typed contracts and
+deterministic policy engine) are **complete and verified**; the Docker Compose path was
+verified in 0b. Phase 1 adds the strict typed contracts, the safe versioned policy loader
+(`config/policies.yaml`, `config/risk_thresholds.yaml`), the deterministic engine
+(`firewall/policy_engine.py`) that replaces the Phase 0b interim matrix, canonical
+destination handling (`security/urls.py`), the test-only principal adapter, and
+startup/readiness wiring with `policy_version`/`policy_hash`. It does **not** implement
+execution (no tool registry/gateway), the risk scoring engine, approvals, DLP/egress
+enforcement at a sink, or audit event emission; the engine decides over validated
+caller-supplied facts and nothing acts on those decisions yet. See
 `docs/SECURITY_INVARIANTS.md` and `docs/KNOWN_LIMITATIONS.md`.
 
 ## What exists
@@ -14,23 +19,23 @@ authorization, the tool gateway, approvals, DLP/egress, or audit event emission;
 | Area | Files | Notes |
 |---|---|---|
 | Project metadata | `pyproject.toml`, `uv.lock`, `.python-version` (3.12), `.gitignore`, `.env.example`, `README.md`, `Makefile`, `.gitleaks.toml` | Python `>=3.12,<3.13`; runtime deps: fastapi, uvicorn, pydantic, pydantic-settings, asyncpg, SQLAlchemy 2.x async, Alembic, PyYAML; dev deps: pytest, httpx2, ruff, mypy, types-PyYAML |
-| Application | `src/ai_security/__init__.py`, `settings.py`, `api/{app,dependencies,routes_health,middleware}.py` | App factory + module-level `app`; validated settings; `/health/live`, `/health/ready` (now: config, database, policy_self_checks); host-auth ASGI middleware on `/v1/*` |
-| Security primitives | `security/{constant_time,canonical_json}.py`, `audit/hash_chain.py` | `hmac.compare_digest` wrappers (confined by the gate); canonical JSON bytes; ADR-002 hash formula + fixed vectors |
-| Identity | `identity/{models,signing,host_auth,resolver}.py` | `Principal` (strict, frozen); HMAC signing/verification (exact `v1` message, full rejection surface); `DevPrincipalResolver` guard + fail-closed `HostPrincipalResolver` |
+| Application | `src/ai_security/__init__.py`, `settings.py`, `api/{app,dependencies,routes_health,middleware}.py` | App factory + module-level `app`; validated settings (incl. `POLICY_PATH`/`RISK_THRESHOLDS_PATH`); `/health/live`, `/health/ready` (config, database, policy_self_checks + `policy_version`/`policy_hash`); host-auth ASGI middleware on `/v1/*` |
+| Security primitives | `security/{constant_time,canonical_json,urls}.py`, `audit/hash_chain.py` | `hmac.compare_digest` wrappers (confined by the gate); canonical JSON bytes; ADR-002 hash formula + fixed vectors; destination canonicalization (IDNA, percent-encoding, https-only) |
+| Identity | `identity/{models,signing,host_auth,resolver,adapters}.py` | `Principal` (strict, frozen); HMAC signing/verification (exact `v1` message, full rejection surface); `DevPrincipalResolver` guard + fail-closed `HostPrincipalResolver`; test-only `TestPrincipalResolver` (not selectable via settings/factory) |
 | Persistence | `persistence/{database,models,nonce_repository,audit_repository}.py` | Async engine/session; atomic nonce upsert (`ON CONFLICT ... WHERE ... RETURNING`); ADR-002 advisory-lock audit append |
 | Migrations | `alembic.ini`, `migrations/env.py`, `migrations/versions/d15b46c49950_*.py` | Baseline: `host_request_nonces`, `audit_events`; `make migrate`; idempotent; `alembic check` clean |
-| Policy scaffolding | `policy/{interim_matrix,self_checks}.py`, `config/policy_self_checks.yaml` | Interim transcription of the v1 matrix (labeled scaffolding; Phase 1 replaces); 16 fixtures; startup + readiness enforcement (ADR-007) |
-| Tests | `tests/conftest.py`, `tests/unit/*` (8 files), `tests/integration/*` (6 files incl. helpers) | **231 tests**: settings, primitives, hash chain, verifier matrix, resolver, policy self-checks, health, middleware denial matrix, nonce/audit repositories, migration idempotency |
+| Typed contracts | `tools/base.py` (`SideEffectClass`), `data_security/classification.py` (`DataClass`), `firewall/decision.py` (`FirewallDecision`/`DecisionReason`/`DecisionRecord`) | Canonical enums defined exactly once (blueprint §4/§6.1); stable reason-code vocabulary; no aliases or coercions |
+| Policy engine | `firewall/policy_engine.py`, `policy/{models,loader,self_checks}.py`, `config/{policies,risk_thresholds,policy_self_checks}.yaml` | Deterministic §10.2 evaluation order over validated facts; safe YAML (duplicate-key rejection); versioned bundle with content hashes; 17 fixtures (incl. 7 mandated names) evaluated at startup + readiness; replaces `policy/interim_matrix.py` (deleted) |
+| Tests | `tests/conftest.py`, `tests/unit/*` (12 files), `tests/integration/*` (6 files + helpers) | **406 tests** (364 unit + 42 integration): settings, primitives, hash chain, verifier matrix, resolver, urls, policy models/loader/engine, self-checks, test adapter, health, middleware denial matrix, nonce/audit repositories, migration idempotency |
 | Quality gate | `scripts/check.sh` | 8 steps: lockfile, ruff format, ruff lint, mypy, pytest, pinned Gitleaks (dir+git), prohibited-pattern greps, constant-time confinement |
 | Containers | `Dockerfile`, `docker-compose.yml` | Digest-pinned bases; non-root uid 10001; COPY `config/ migrations/ alembic.ini`; Compose `api` carries the disposable dev `HOST_AUTH_KEYS_JSON` |
-| Docs | `docs/*` (8 files), `docs/adr/ADR-001..007` | Status columns honest; ADR-007 scaffolding now realized in `config/` + startup/readiness |
-| Git | baseline `41e10da`; 0b commits `0aa11d9`, `9b3f153`, `42e8b71`, `4d18e27`, `28bede9`, `a5794cc`, `d180b89` | Repository under git since 2026-10-19; linear history on `main` |
+| Docs | `docs/*` (8 files), `docs/adr/ADR-001..008` | Status columns honest; ADR-008 records the Phase 1 engine contract; matrix doc marked implemented |
+| Git | baseline `41e10da`; 0b commits `0aa11d9`…`d180b89`; docs `c95f2a6`; Phase 1 commits `cffdd62`, `eaae462`, `b91729b` | Repository under git since 2026-10-19; linear history on `main` |
 | Spec | `AI_Agent_Security_Platform_Master_Blueprint_v1.2.md`, `archive/..._v1.0_superseded.md` | v1.2 authoritative; v1.0 archived |
 
-Deliberately deferred to Phase 1+: authorization/policy engine (replaces the interim
-matrix), tool registry + gateway, input defense, intent, risk engine, approvals,
-DLP/egress, audit event emission + verifier, `/v1/*` routes, rate limiting, SOC,
-evaluation. `evaluation/` does not exist yet.
+Deliberately deferred to Phase 2+: tool registry + gateway execution, input defense,
+intent, risk scoring engine, approvals, DLP/egress enforcement, audit event emission +
+verifier, `/v1/*` routes, rate limiting, SOC, evaluation. `evaluation/` does not exist yet.
 
 ## Decisions taken during Phase 0b implementation (within blueprint constraints)
 
@@ -70,6 +75,54 @@ evaluation. `evaluation/` does not exist yet.
 - **Test DB strategy**: integration fixtures auto-create `firewall_test` on the Compose
   PostgreSQL, run `alembic upgrade head`, and skip (with a clear reason) when the server
   is unreachable; tests never require `create_all` in integration paths (ADR-006).
+
+## Decisions taken during Phase 1 implementation (within blueprint constraints; ADR-008)
+
+- **Module layout**: engine in `firewall/policy_engine.py`; policy document models +
+  loader in `policy/`; canonical enums defined exactly once (`tools/base.py`,
+  `data_security/classification.py`, `firewall/decision.py`).
+- **Fact separation**: `PolicyEvaluationRequest` carries upstream facts only
+  (`principal_resolved`, `arguments_valid`, `hard_deny`, `resource_authorized`,
+  `risk_score`, optional `destination`); policy-derived facts (membership, explicit
+  permission, approval eligibility, egress enablement, allowlist) come only from the
+  loaded bundle. The engine cannot authorize on caller-supplied policy flags.
+- **Evaluation order = blueprint §10.2**: principal → tool membership (`unknown_tool`)
+  → side-effect class match → arguments → hard deny → resource scope → destination
+  (`invalid_destination` for malformed or misplaced) → matrix rows with configured
+  thresholds. Every outcome has a stable `DecisionReason`; the vocabulary is an
+  observable contract (renaming is a breaking change).
+- **Fail closed everywhere**: `DESTRUCTIVE` never executable in v1 (registration may
+  exist; the engine blocks); `RESTRICTED` writes/egress and `CONFIDENTIAL` egress
+  blocked; `ASK_USER` only when policy marks the action approval-eligible, otherwise
+  `BLOCK`; tool absent from the document → `unknown_tool` BLOCK (deny-by-default).
+- **Strict primitives**: `risk_score` is a strict integer 0-100 (string/bool coercion
+  rejected); `TOOL_ID_PATTERN` is anchored (`^…$`) because pydantic `pattern=` uses
+  search semantics (an unanchored pattern accepted an invalid tool id containing a
+  space, e.g. `"bad id"`).
+- **Destination canonicalization (option chosen)**: Unicode hosts are supported and
+  IDNA-encoded then lowercased (`BÜCHER.example` → `xn--bcher-kva.example`); paths and
+  queries must be printable ASCII (percent-encoding normalized); whitespace/control
+  characters anywhere, userinfo, fragments, IPv6 zone IDs, and trailing dots are
+  rejected; port 443 elided; https-only. Allowlisting is exact-match (no wildcards).
+- **Loader without the prohibited call**: duplicate keys are detected via a
+  `yaml.compose` node walk (the gate prohibits `yaml.load(` in `src/`), then the
+  document is parsed with `yaml.safe_load`; strict Pydantic validation; `PolicyConfigError`
+  fails closed. Errors name the file, never dump the document.
+- **Bundle provenance**: `PolicyBundle.version` + per-file `sha256` + `combined_hash`
+  (`sha256("policies=<h>;thresholds=<h>")`); readiness exposes `policy_version` and
+  `policy_hash` (the combined hash) on both 200 and 503 payloads (ADR-007 metadata).
+- **Self-check fixtures v2**: each `case` is a full `PolicyEvaluationRequest`; an
+  optional fixture-level `tool_policy` override (same strict `ToolPolicy` model) covers
+  the §10.5 "dedicated test scenario" (e.g. enabling egress) without weakening the
+  starter policy; all 7 mandated fixture names retained; expanded to 17 fixtures.
+- **Wiring**: startup loads and self-checks the bundle (invalid policy refuses startup);
+  readiness re-evaluates the files live so drift flips to 503; the running process keeps
+  its startup-loaded bundle (no hot reload — documented limitation).
+- **Test principal adapter**: `TestPrincipalResolver` constructible only under
+  `APP_ENV=test`, not selectable via settings or `build_principal_resolver`; the
+  dev-resolver guard and HMAC middleware are untouched (denial matrix unchanged).
+- **Thresholds 40/80 marked experimental** in the config header; validated
+  (`ask_user_at_or_above < block_at_or_above`); calibration defers to Phase 9.
 
 ## Phase 0a verification record (actual runs, 2026-10-19; historical)
 
@@ -119,6 +172,19 @@ Rows 18+ continue the numbered record. Detail codes and file references are in
 The Compose API container was stopped after verification (`docker compose stop api`);
 the database container and `db_data` volume are preserved for local runs and tests.
 
+## Phase 1 verification record (actual runs, 2026-10-19)
+
+Rows 30+ continue the numbered record. Full evidence: `project_memory/TESTING_AND_VERIFICATION.md` (V30+).
+
+| # | Command | Result |
+|---|---|---|
+| 30 | `uv run --frozen pytest -q` | PASS — **406 passed** (364 unit + 42 integration; DB-backed integration against the Compose PostgreSQL) |
+| 31 | `uv run --frozen mypy src` | PASS — no issues, 35 source files (strict) |
+| 32 | `uv run --frozen ruff check src/ tests/`; `ruff format src tests` | PASS — clean (format applied to 3 files, then check clean) |
+| 33 | `bash scripts/check.sh` | PASS — exit 0, all 8 steps; Gitleaks 8.30.1 `git` scan: 9 commits, no leaks found |
+| 34 | Policy bundle smoke check (`load_policy_bundle` + `check_policy_self_checks`) | PASS — `version: dev-1`, `policies_sha256 35bcd687…`, `thresholds_sha256 3e1d34ae…`, `combined_hash 8a4ba203e3baaf86eabb2e299992166289cae938ec9ea9a7bccadf6e6e068e6a`; 17 fixtures, 0 failures |
+| 35 | Integration wiring tests (`test_policy_self_checks_wiring.py`, `test_health.py`) | PASS — invalid/missing policy file refuses startup; mismatching fixture refuses startup; live policy/fixture drift flips readiness to 503; readiness payload carries `policy_version`/`policy_hash` |
+
 ## Definition of Done checklist (blueprint section 21, Phase 0b)
 
 | DoD item | Status |
@@ -133,12 +199,22 @@ the database container and `db_data` volume are preserved for local runs and tes
 | `check.sh` exits non-zero on any failure | PASS — 8 steps; failure path unchanged |
 | Phase 0b is not complete merely because the application starts | PASS — all invariant tests above actually ran and are recorded |
 
+## Definition of Done checklist (blueprint section 21, Phase 1)
+
+| DoD item | Status |
+|---|---|
+| Table-driven policy tests cover allowed/forbidden/malformed/cross-scope/unknown/error | **PASS** — `tests/unit/test_policy_engine.py` (64 tests; full matrix incl. malformed requests, cross-scope, unknown tool, error/threshold rows) + loader/model/url suites |
+| Strict contracts fail closed on unknown/invalid values | PASS — `extra="forbid"`, strict ints, anchored tool-id pattern, canonical enums without aliases/coercions; covered by `test_policy_models.py`, `test_policy_loader.py`, `test_urls.py` |
+| ADR-007 self-check fixtures pass against the real engine (startup + readiness) | PASS — 17 fixtures (7 mandated names retained) pass via `check_policy_self_checks` (row 34) and through app startup/readiness (row 35) |
+| No LLM involved in authorization (engine imports no model provider; gate greps intact) | PASS — static imports only; `check.sh` prohibited-pattern greps remain clean |
+| Quality gate green (`check.sh`, Gitleaks clean) | PASS — rows 32–33 |
+
 ## How to continue (next session)
 
-Phase 1 — Typed contracts and deterministic policy engine (blueprint section 21):
-strict Pydantic request/response/action contracts, the safe YAML policy loader and
-validated policy model, the principal test adapter interface, reason codes, and
-canonicalization — replacing `policy/interim_matrix.py` while keeping the
-`config/policy_self_checks.yaml` fixture contract (ADR-007). Read blueprint §§6, 10,
-11.4; keep every existing test green; extend `docs/SECURITY_INVARIANTS.md` statuses
-(#25 becomes fully testable there).
+Phase 2 — Tool registry and enforced gateway (blueprint section 21): tool protocol +
+registry from the policy document, mock email/files/sink adapters, the `invoke_tool`
+gateway that gates every adapter call on a valid engine `ALLOW` (no bypass), timeouts
+and result bounds, and the audit interface hook. Read blueprint §§12, 14; keep the
+ADR-007/ADR-008 fixture contract and every existing test green. The governing
+no-bypass assertions ("sink changes only after an allow; denied/unknown actions leave
+no side effect") become testable there — invariants #1, #9, #10, #12.

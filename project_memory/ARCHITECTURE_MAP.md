@@ -5,7 +5,7 @@ blueprint. Full narrative and the per-request lifecycle: [../docs/ARCHITECTURE.m
 (mark status per component there as well). **Nothing under "Target v1" may be claimed as
 existing.**
 
-## Implemented today (Phases 0a–0b — VERIFIED 2026-10-19)
+## Implemented today (Phases 0a–1 — VERIFIED 2026-10-19)
 
 Components:
 
@@ -35,17 +35,33 @@ Components:
   never-raising `healthy()`); atomic nonce upsert (`ON CONFLICT ... WHERE expires_at <
   now() RETURNING`); ADR-002 advisory-lock audit append (canonical bytes stored,
   unique `(chain_id, sequence_number)`).
-- `ai_security.policy` (`interim_matrix`, `self_checks`) + `../config/policy_self_checks.yaml`:
-  explicit scaffolding — an interim transcription of `docs/POLICY_DECISION_MATRIX.md`
-  evaluated against 16 strict fixtures at startup (refusal) and on every readiness probe
-  (live drift detection). Phase 1 replaces the evaluator, keeps the contract (ADR-007).
+- `ai_security.policy` (`models`, `loader`, `self_checks`) + `../config/{policies,risk_thresholds,policy_self_checks}.yaml`:
+  the validated policy document model (`ToolPolicy`, `PolicyBundle` with `version` +
+  sha256 content hashes), the safe YAML loader (`yaml.safe_load` + duplicate-key
+  detection; `PolicyConfigError` fails closed), and the ADR-007 self-check suite —
+  17 strict fixtures (7 mandated names) evaluated against the real engine at startup
+  (refusal) and on every readiness probe (live drift detection). The Phase 0b interim
+  transcription (`policy/interim_matrix.py`) is deleted.
+- `ai_security.firewall` (`decision`, `policy_engine`): stable decision contract
+  (`FirewallDecision`, `DecisionReason` codes, `DecisionRecord` with policy
+  version/hash) and the deterministic engine implementing the blueprint §10.2 order
+  over strict validated facts; deny-by-default; no I/O, no model calls (ADR-008).
+- `ai_security.tools.base` (`SideEffectClass`) and `ai_security.data_security.classification`
+  (`DataClass`): canonical enums defined exactly once (Phase 2 extends these modules).
+- `ai_security.security.urls`: destination canonicalization (https-only, IDNA host,
+  percent-encoding normalization, no userinfo/fragment/zone-ids; exact-match semantics).
+- `ai_security.identity.adapters`: `TestPrincipalResolver` — constructible only under
+  `APP_ENV=test`, not selectable via settings/factory; the dev-resolver guard and the
+  HMAC middleware are untouched.
 - `ai_security.api.app` (`../src/ai_security/api/app.py`): `create_app(settings)` factory
-  plus module-level `app`. Startup refuses bad configuration, dev-resolver misuse, and
-  self-check mismatch; builds `Database` + nonce registrar + audit chain; adds the
-  middleware; `/docs`, `/redoc`, `/openapi.json` only in `development`/`test`.
+  plus module-level `app`. Startup refuses bad configuration, dev-resolver misuse,
+  policy-configuration errors, and self-check mismatch; builds `Database` + nonce
+  registrar + audit chain; adds the middleware; `/docs`, `/redoc`, `/openapi.json` only
+  in `development`/`test`.
 - `ai_security.api.routes_health`: `GET /health/live` → 200 `{"status":"alive"}`;
-  `GET /health/ready` → 200/503 with `checks: {config, database, policy_self_checks}`;
-  only booleans, never credentials or stack details.
+  `GET /health/ready` → 200/503 with `checks: {config, database, policy_self_checks}`
+  plus `policy_version`/`policy_hash`; only booleans and version metadata, never
+  credentials or stack details.
 - `ai_security.api.dependencies`: `get_settings`, `get_database`, `database_ready`,
   `policy_self_checks_ok` (both probes overridable in tests).
 - `migrations/` + `alembic.ini`: async env reading settings; baseline `d15b46c49950`
@@ -56,12 +72,14 @@ Request flow today:
 ```text
 uvicorn → FastAPI app
   ├─ /health/* → dependencies (database_ready via SQLAlchemy, policy_self_checks_ok) → JSON
+  │               (+ policy_version / policy_hash from the startup-loaded bundle)
   └─ /v1/*     → HostAuthMiddleware (size bound → HMAC/timestamp → atomic nonce register
                   → replay body) → (no routes yet) → 404 after successful auth
 ```
 
 Data: PostgreSQL 17 holds the two baseline tables; nonces are registered per signed
-request; nothing writes audit events yet.
+request; nothing writes audit events yet. The policy engine produces decisions as data
+(`DecisionRecord`), but nothing consumes them yet (no execution surface).
 
 ## Target v1 (blueprint §§3–4) — NOT IMPLEMENTED
 
@@ -86,13 +104,14 @@ listed above):
 | `security/` (canonical bytes, constant-time helpers) | 0b/1 | **VERIFIED (0b)** | Signing message, `hmac.compare_digest` wrappers |
 | `persistence/` (SQLAlchemy 2.x async) | 0b | **VERIFIED (0b)** | Engine/session, nonce store, audit append; later repositories |
 | `migrations/` + `alembic.ini` | 0b | **VERIFIED (0b)** | Schema management (ADR-006); baseline only |
-| `config/policy_self_checks.yaml` (+ policy/thresholds later) | 0b/1 | **VERIFIED (0b scaffolding)**; engine Phase 1 | Startup/CI self-check fixtures |
+| `config/{policies,risk_thresholds,policy_self_checks}.yaml` | 0b/1 | **VERIFIED (1)** — validated versioned bundle + 17 self-check fixtures | Startup/CI self-check fixtures |
 | `input_defense/` | 3 | NOT IMPLEMENTED | Heuristics, detector, provenance labels |
 | `intent/` | 4 | NOT IMPLEMENTED | Bounded intent manifest, constraints, request binding |
 | `agent/` + providers | 4/8 | NOT IMPLEMENTED | Runtime; mock/local model adapters |
-| `firewall/` (gateway, policy, risk, approvals) | 1–5 | NOT IMPLEMENTED | The mandatory enforcement chokepoint |
-| `tools/` (mock email/files/sink) | 2 | NOT IMPLEMENTED | Mock adapters only; no real connectors in v1 |
-| `data_security/` (classification, DLP, egress) | 6 | NOT IMPLEMENTED | Output and egress inspection |
+| `firewall/policy_engine.py` + `decision.py` | 1 | **VERIFIED (1)** — deterministic §10.2 evaluation, stable reason codes, no I/O (ADR-008) | Policy evaluation over validated facts |
+| `firewall/` gateway + risk + approvals | 2/5 | NOT IMPLEMENTED | The mandatory execution chokepoint |
+| `tools/` (canonical enums in `base.py`; mock email/files/sink) | 1/2 | **PARTIAL (1)**: `SideEffectClass` + tool-id contract; registry/adapters Phase 2 | Mock adapters only; no real connectors in v1 |
+| `data_security/` (`DataClass` in 1; DLP, egress in 6) | 1/6 | **PARTIAL (1)**: canonical `DataClass`; classification/DLP/egress Phase 6 | Output and egress inspection |
 | `audit/` (hash chain) | 7 (scaffold 0b) | **PARTIAL (0b)**: formula + append protocol + vectors verified; emission/verifier Phase 7 | Serialized append, verifier |
 | `api/` `/v1/*` routes | 8 | NOT IMPLEMENTED (middleware path enforced) | Request/tool/approval endpoints |
 | `soc/` (alert-only) | 10 | NOT IMPLEMENTED | Deterministic alerts; read-only analyzer |

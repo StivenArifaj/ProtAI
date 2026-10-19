@@ -1,13 +1,16 @@
 # Policy Decision Matrix
 
-Status: **specification only.** This document mirrors the mandatory v1 baseline from
-blueprint v1.2 section 10.3. The policy engine that enforces it is not implemented yet
-(Phases 1-5), so nothing here is enforced today. When `config/risk_thresholds.yaml` and
-the policy engine exist, they MUST mirror this matrix, and the policy self-check suite
-MUST test representative rows at startup and in CI.
+Status: **implemented (Phase 1).** This document mirrors the mandatory v1 baseline from
+blueprint v1.2 section 10.3 as a specification; the deterministic engine
+(`src/ai_security/firewall/policy_engine.py`) enforces it against
+`config/policies.yaml` + `config/risk_thresholds.yaml`, and the fixture suite
+(`config/policy_self_checks.yaml`) exercises it at startup, on every readiness probe, and
+in the table-driven unit tests (ADR-007, ADR-008). The engine consumes validated facts and
+makes no network calls and no model calls — decisions are data.
 
 `Risk` is the deterministic 0-100 residual risk score calculated only after mandatory
-checks pass. Side-effect classes are the canonical `SideEffectClass` enum
+checks pass (Phase 1 consumes the fact; the scoring engine itself is Phase 5).
+Side-effect classes are the canonical `SideEffectClass` enum
 (`READ_ONLY`, `LOCAL_MUTATION`, `EXTERNAL_MUTATION`, `DESTRUCTIVE`); data classes are
 the canonical `DataClass` enum (`PUBLIC`, `INTERNAL`, `CONFIDENTIAL`, `RESTRICTED`).
 
@@ -38,11 +41,27 @@ fail closed (`BLOCK`); no string aliases and no coercion into an allowed class.
 
 ## Implementation notes
 
-- Initial starter policy (blueprint section 10.5) allows only: `mock_email.search`,
-  `mock_email.read`, `text.summarize`, `mock_files.read`; `mock_external_sink.write` is
-  disabled by default and enabled only in a dedicated egress-blocking test scenario.
-- The initial policy MUST deny arbitrary shell execution, unrestricted network
-  requests, real external email sending, file deletion, arbitrary database writes, and
-  cross-user resource access.
-- Policy YAML uses safe loading and validated Pydantic models; no mini-language,
-  dynamic expressions, or code execution (section 10.4).
+- Evaluation order (engine): principal → tool membership → side-effect class match →
+  argument validity → hard deny → resource scope → destination → matrix rows with the
+  configured thresholds. Every outcome carries a stable `DecisionReason` code
+  (`firewall/decision.py`); the code vocabulary is part of the observable contract.
+- Initial starter policy (blueprint section 10.5) lives in `config/policies.yaml`
+  (`version: dev-1`) and allows only: `mock_email.search`, `mock_email.read`,
+  `text.summarize`, `mock_files.read`. `mock_external_sink.write` is registered with
+  `external_egress_enabled: false`; the dedicated egress self-check scenarios enable it
+  per-fixture via the documented `tool_policy` override (never by weakening the starter
+  document). Tools absent from the document are denied (`unknown_tool`).
+- The starter policy denies arbitrary shell execution, unrestricted network requests,
+  real external email sending, file deletion, arbitrary database writes, and cross-user
+  resource access by construction: none of those tools exist in the document, and
+  `DESTRUCTIVE`/`RESTRICTED` rows are hard-blocked in v1.
+- Thresholds (`config/risk_thresholds.yaml`, 40/80) are validated
+  (`ask_user_at_or_above < block_at_or_above`) and marked experimental until the Phase 9
+  calibration; no threshold can override a hard denial.
+- Policy YAML uses safe loading (`yaml.safe_load` with duplicate-key detection) and
+  validated Pydantic models; no mini-language, dynamic expressions, or code execution
+  (section 10.4). Config version/hash are exposed in readiness metadata (ADR-007).
+- Known deviations / limits (documented, tested): destinations match exactly (no
+  wildcards in v1); no policy hot-reload (readiness detects file drift; the running
+  process keeps its startup-loaded bundle); `Destination` and `risk_score` facts are
+  supplied by upstream layers as they land (registry, validator, risk engine).

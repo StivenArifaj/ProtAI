@@ -1,17 +1,17 @@
 # Known Issues and Limitations
 
 Severity: **High** (blocks security goals) / **Medium** / **Low**. Status labels follow
-[README.md](README.md) ("RESOLVED (0b)" marks items closed in Phase 0b). "Section" refers to the
-master blueprint v1.2. The canonical long-form list (with phase pointers) is
-[../docs/KNOWN_LIMITATIONS.md](../docs/KNOWN_LIMITATIONS.md) (items 1–20); this file adds
+[README.md](README.md) ("RESOLVED (0b)"/"RESOLVED (1)" mark items closed in Phase 0b/1). "Section"
+refers to the master blueprint v1.2. The canonical long-form list (with phase pointers) is
+[../docs/KNOWN_LIMITATIONS.md](../docs/KNOWN_LIMITATIONS.md) (items 1–24); this file adds
 severity, status, and next actions. Keep both consistent.
 
 ## Security controls absent (High — do not claim otherwise)
 
 | # | Issue | Severity | Status | Blueprint | Next action |
 |---|---|---|---|---|---|
-| 1 | Host authentication: **implemented** for the `/v1/*` path prefix (HMAC + timestamp + atomic nonce replay + size bounds, fail-closed); no `/v1/*` routes exist yet; principal resolution beyond dev fails closed | High | **PARTIAL (0b)** | §9, §21 | Phase 1 (principal metadata), Phase 8 (routes) |
-| 2 | No authorization: no policy engine (only ADR-007 self-check scaffolding), tool registry, firewall gateway, risk engine, or approvals | High | NOT IMPLEMENTED | §§10–13 | Phases 1–5 |
+| 1 | Host authentication: **implemented** for the `/v1/*` path prefix (HMAC + timestamp + atomic nonce replay + size bounds, fail-closed); no `/v1/*` routes exist yet; principal resolution beyond dev/test fails closed | High | **PARTIAL (0b/1)** | §9, §21 | Later phase (principal metadata), Phase 8 (routes) |
+| 2 | No execution: policy engine + strict contracts implemented (decision level), but no tool registry, firewall gateway, risk scoring engine, or approvals — decisions have no side effects yet | High | **PARTIAL (1)** | §§10–13 | Phases 2–5 |
 | 3 | No input/output protection: no injection detection, provenance labels, intent extraction, DLP, or egress policy | High | NOT IMPLEMENTED | §§3, 8, 15 | Phases 3–6 |
 | 4 | Audit: append repository + ADR-002 lock protocol + fixed vectors exist and are tested; no event emission anywhere and no verifier | High | **PARTIAL (0b)** | §16 | Phase 7 |
 | 5 | No AI SOC analytics | Medium | NOT IMPLEMENTED | §17 | Phase 10 |
@@ -31,15 +31,19 @@ severity, status, and next actions. Keep both consistent.
 | 14 | No CI configuration; `check.sh` (8 steps) is the only gate | Low | NOT IMPLEMENTED | Out of scope for 0a–0b (documented) |
 | 15 | No markdown linter installed in this environment; memory-file link checks are ad hoc | Low | VERIFIED (not installed) | Install only if the operator wants it |
 | 16 | ADR files omit explicit "alternatives considered" / "tests/verification" sections named in blueprint §22.4 | Low | VERIFIED (format nuance) | New ADRs can include them; do not rewrite ADR-001..007 silently |
-| 21 | `HostPrincipalResolver` fails closed (raises) until Phase 1 provides key→principal metadata; signed requests reach no principal | Medium | BY DESIGN (0b) | Phase 1 |
-| 22 | Interim policy evaluator is a scaffolding transcription (`policy/interim_matrix.py`), not the Phase 1 engine | Medium | BY DESIGN (0b) | Phase 1 (keep fixture contract) |
+| 21 | `HostPrincipalResolver` fails closed (raises) until a later phase provides key→principal metadata; signed requests reach no principal | Medium | BY DESIGN (0b/1) | Later phase |
+| 22 | Interim policy evaluator (`policy/interim_matrix.py`) was scaffolding, not the real engine | Medium | **RESOLVED (1)** — deleted; the deterministic engine + fixture suite replaced it | None (readiness drift detection retained) |
 | 23 | `check.sh` fails on any Gitleaks version ≠ 8.30.1 (deliberate pin) | Low | BY DESIGN | Update pin deliberately if the scanner is upgraded |
+| 25 | Engine consumes upstream-supplied facts (`risk_score`, destination); the layers that produce them (tool validator, registry, risk engine) do not exist yet | Medium | BY DESIGN (1) | Phases 2/4/5 |
+| 26 | No policy hot-reload: the process keeps its startup-loaded bundle; readiness detects file drift (503) but does not reload | Low | BY DESIGN (1) | Phase 2+ (not scheduled) |
+| 27 | Destination allowlisting is exact-match only (no wildcards); non-ASCII paths/queries and IPv6 zone IDs are rejected | Low | BY DESIGN (1) | Revisit when wildcard matching semantics are documented |
+| 28 | Risk thresholds 40/80 are experimental defaults, not empirically calibrated | Low | BY DESIGN (1) | Phase 9 (evaluation/calibration) |
 
 ## Behavioral notes (expected behavior, not defects)
 
 | # | Note | Next action |
 |---|---|---|
-| 17 | Readiness 503 is expected when PostgreSQL is down/unreachable; the API itself can still be alive (liveness 200). Readiness also reports `policy_self_checks`, re-evaluated per probe (file drift → 503, deliberate) | None |
+| 17 | Readiness 503 is expected when PostgreSQL is down/unreachable; the API itself can still be alive (liveness 200). Readiness also reports `policy_self_checks` + `policy_version`/`policy_hash`, re-evaluated per probe (policy or fixture file drift → 503, deliberate) | None |
 | 18 | Readiness runs `SELECT 1` through the persistence layer (`pool_pre_ping`, 2 s connect timeout); short-lived connection per check remains acceptable locally | None |
 | 19 | Compose API host port is 8080 (host port 8000 is commonly occupied by unrelated local services); container port remains 8000 | None |
 | 20 | `uv lock` resolves 38 packages while `uv sync` checks 36 (installed set) — both expected | None |
