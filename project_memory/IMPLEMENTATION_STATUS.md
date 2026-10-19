@@ -22,7 +22,9 @@ Repository state: **git repository** since 2026-10-19, branch `main`, linear his
 baseline `41e10da` (Phase 0a) + Phase 0b commits `0aa11d9`…`d180b89` + docs/memory
 `c95f2a6` + Phase 1 commits `cffdd62` (contracts + canonicalization), `eaae462`
 (models/loader/engine + config + fixtures), `b91729b` (wiring + adapter + env example) +
-Phase 2 commits (this phase). No remote configured.
+Phase 2 commits `5725256` (contracts/registry/adapters/facts/fixtures), `11740bd`
+(risk/audit/gateway + unit tests), `0b935be` (app wiring + no-bypass/integration tests),
+`75bd59a` (ADR-009 + docs/memory refresh). No remote configured.
 
 ## What exists (all VERIFIED)
 
