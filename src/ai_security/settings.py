@@ -197,6 +197,7 @@ class Settings(BaseSettings):
     host_auth_timestamp_tolerance_seconds: int = Field(default=60, gt=0)
     host_auth_nonce_ttl_seconds: int = Field(default=300, gt=0)
     request_max_bytes: int = Field(default=65536, gt=0)
+    policy_self_checks_path: str = Field(default="config/policy_self_checks.yaml", min_length=1)
 
     _host_auth_keys: dict[str, HostAuthKey] = PrivateAttr(default_factory=dict)
 

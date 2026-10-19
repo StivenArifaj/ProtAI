@@ -165,6 +165,12 @@ def test_settings_factory_fixture_is_valid(settings_factory: Callable[..., Setti
     assert settings.app_env.value == "test"
 
 
+def test_policy_self_checks_path_defaults_and_overrides() -> None:
+    assert make_settings().policy_self_checks_path == "config/policy_self_checks.yaml"
+    overridden = make_settings(policy_self_checks_path="/etc/policy_checks.yaml")
+    assert overridden.policy_self_checks_path == "/etc/policy_checks.yaml"
+
+
 # --- Host-auth key configuration (blueprint sections 5.4, 9.2) ---
 
 

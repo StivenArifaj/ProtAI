@@ -1,0 +1,184 @@
+# Policy self-check fixtures (ADR-007; blueprint section 10.3).
+#
+# Every fixture is deterministic and side-effect-free: it names one evaluation case and
+# the decision the v1 policy decision matrix mandates for it. Startup and readiness
+# evaluate all fixtures against the active decision path; ANY mismatch fails
+# startup/readiness. When the Phase 1 policy engine replaces the interim matrix
+# transcription, this file is the mechanism that proves the matrix is still mirrored.
+#
+# Representative rows (not exhaustive) from docs/POLICY_DECISION_MATRIX.md; adding a
+# fixture requires the matrix row it derives from.
+
+fixtures:
+  - name: allowed-mock-read
+    description: READ_ONLY on data the principal may read, low residual risk -> ALLOW.
+    case: {tool_id: mock_email.read, side_effect_class: READ_ONLY, data_class: INTERNAL, risk: 10}
+    expected_decision: ALLOW
+    expected_reason: authorized_read
+
+  - name: forbidden-external-egress
+    description: EXTERNAL_MUTATION to a destination that is not allowlisted -> BLOCK.
+    case:
+      tool_id: mock_external_sink.write
+      side_effect_class: EXTERNAL_MUTATION
+      data_class: PUBLIC
+      risk: 10
+      external_egress_enabled: true
+      destination_allowlisted: false
+    expected_decision: BLOCK
+    expected_reason: destination_not_allowlisted
+
+  - name: cross-user-resource-denial
+    description: resource not authorized for this principal -> BLOCK before any score.
+    case:
+      tool_id: mock_files.read
+      side_effect_class: READ_ONLY
+      data_class: INTERNAL
+      risk: 5
+      resource_authorized: false
+    expected_decision: BLOCK
+    expected_reason: resource_not_authorized
+
+  - name: unknown-tool-denial
+    description: tool is not registered -> BLOCK.
+    case:
+      tool_id: shell.exec
+      side_effect_class: DESTRUCTIVE
+      data_class: RESTRICTED
+      risk: 0
+      tool_known: false
+    expected_decision: BLOCK
+    expected_reason: unknown_tool
+
+  - name: invalid-argument-denial
+    description: arguments fail schema validation -> BLOCK.
+    case:
+      tool_id: mock_email.search
+      side_effect_class: READ_ONLY
+      data_class: INTERNAL
+      risk: 5
+      arguments_valid: false
+    expected_decision: BLOCK
+    expected_reason: invalid_arguments
+
+  - name: restricted-data-egress-block
+    description: RESTRICTED data to an approved external destination -> BLOCK in v1.
+    case:
+      tool_id: mock_external_sink.write
+      side_effect_class: EXTERNAL_MUTATION
+      data_class: RESTRICTED
+      risk: 10
+      external_egress_enabled: true
+      destination_allowlisted: true
+      approval_eligible: true
+    expected_decision: BLOCK
+    expected_reason: restricted_egress_blocked
+
+  - name: hard-deny-low-risk
+    description: hard-denied action with risk 0 -> BLOCK; score cannot override hard constraints.
+    case:
+      tool_id: mock_email.read
+      side_effect_class: READ_ONLY
+      data_class: PUBLIC
+      risk: 0
+      hard_deny: true
+    expected_decision: BLOCK
+    expected_reason: hard_denied
+
+  - name: allowed-explicit-local-write
+    description: LOCAL_MUTATION on PUBLIC data, low risk, explicitly permitted -> ALLOW.
+    case:
+      tool_id: mock_files.write
+      side_effect_class: LOCAL_MUTATION
+      data_class: PUBLIC
+      risk: 20
+      action_explicitly_permitted: true
+    expected_decision: ALLOW
+    expected_reason: explicitly_permitted_local_write
+
+  - name: confidential-local-write-needs-approval
+    description: LOCAL_MUTATION on CONFIDENTIAL data, mid risk, approval-eligible -> ASK_USER.
+    case:
+      tool_id: mock_files.write
+      side_effect_class: LOCAL_MUTATION
+      data_class: CONFIDENTIAL
+      risk: 50
+      approval_eligible: true
+    expected_decision: ASK_USER
+    expected_reason: confidential_write_requires_approval
+
+  - name: restricted-local-write-blocked
+    description: LOCAL_MUTATION on RESTRICTED data -> BLOCK in v1.
+    case:
+      tool_id: mock_files.write
+      side_effect_class: LOCAL_MUTATION
+      data_class: RESTRICTED
+      risk: 10
+    expected_decision: BLOCK
+    expected_reason: restricted_write_not_registered
+
+  - name: destructive-blocked
+    description: DESTRUCTIVE tools are not registered in v1 -> BLOCK.
+    case:
+      tool_id: mock_files.delete
+      side_effect_class: DESTRUCTIVE
+      data_class: PUBLIC
+      risk: 5
+    expected_decision: BLOCK
+    expected_reason: destructive_not_registered
+
+  - name: external-egress-disabled-by-default
+    description: EXTERNAL_MUTATION is disabled unless explicitly enabled -> BLOCK.
+    case:
+      tool_id: mock_external_sink.write
+      side_effect_class: EXTERNAL_MUTATION
+      data_class: PUBLIC
+      risk: 5
+      external_egress_enabled: false
+      destination_allowlisted: true
+    expected_decision: BLOCK
+    expected_reason: external_egress_disabled
+
+  - name: high-risk-read-blocked
+    description: READ_ONLY with residual risk 80-100 -> BLOCK.
+    case: {tool_id: mock_email.read, side_effect_class: READ_ONLY, data_class: INTERNAL, risk: 90}
+    expected_decision: BLOCK
+    expected_reason: risk_too_high
+
+  - name: mid-risk-read-needs-clarification
+    description: READ_ONLY with mid risk, approval-eligible -> ASK_USER.
+    case:
+      tool_id: mock_email.read
+      side_effect_class: READ_ONLY
+      data_class: INTERNAL
+      risk: 55
+      approval_eligible: true
+    expected_decision: ASK_USER
+    expected_reason: risk_requires_clarification
+
+  - name: internal-egress-approved-destination
+    description: EXTERNAL_MUTATION INTERNAL, enabled+allowlisted destination, mid risk,
+      approval-eligible -> ASK_USER (never a silent allow).
+    case:
+      tool_id: mock_external_sink.write
+      side_effect_class: EXTERNAL_MUTATION
+      data_class: INTERNAL
+      risk: 20
+      external_egress_enabled: true
+      destination_allowlisted: true
+      approval_eligible: true
+    expected_decision: ASK_USER
+    expected_reason: internal_egress_requires_approval
+
+  - name: confidential-egress-blocked
+    description: EXTERNAL_MUTATION on CONFIDENTIAL data -> BLOCK; no approval exception.
+    case:
+      tool_id: mock_external_sink.write
+      side_effect_class: EXTERNAL_MUTATION
+      data_class: CONFIDENTIAL
+      risk: 10
+      external_egress_enabled: true
+      destination_allowlisted: true
+      approval_eligible: true
+    expected_decision: BLOCK
+    expected_reason: confidential_egress_blocked

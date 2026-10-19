@@ -9,11 +9,10 @@ this migration chain — runtime code never calls ``create_all``.
 import asyncio
 from logging.config import fileConfig
 
+from alembic import context
 from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import create_async_engine
-
-from alembic import context
 
 from ai_security.persistence.models import Base
 from ai_security.settings import Settings

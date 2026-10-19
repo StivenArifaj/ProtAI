@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from ai_security.api.dependencies import database_ready
+from ai_security.api.dependencies import database_ready, policy_self_checks_ok
 
 router = APIRouter(tags=["health"])
 
@@ -24,6 +24,7 @@ class LivenessResponse(BaseModel):
 class ReadinessChecks(BaseModel):
     config: bool
     database: bool
+    policy_self_checks: bool
 
 
 class ReadinessResponse(BaseModel):
@@ -44,10 +45,11 @@ async def health_live() -> LivenessResponse:
 )
 async def health_ready(
     database_ok: Annotated[bool, Depends(database_ready)],
+    policy_ok: Annotated[bool, Depends(policy_self_checks_ok)],
 ) -> ReadinessResponse | JSONResponse:
-    """Critical config and mandatory dependencies are ready (blueprint 18.1)."""
-    checks = ReadinessChecks(config=True, database=database_ok)
-    if database_ok:
+    """Critical config, dependencies, and policy self-checks are ready (blueprint 18.1)."""
+    checks = ReadinessChecks(config=True, database=database_ok, policy_self_checks=policy_ok)
+    if database_ok and policy_ok:
         return ReadinessResponse(status="ready", checks=checks)
     return JSONResponse(
         status_code=503,

@@ -27,6 +27,7 @@ from ai_security.api.routes_health import router as health_router
 from ai_security.persistence.audit_repository import V1_CHAIN_ID, AuditChainRepository
 from ai_security.persistence.database import Database
 from ai_security.persistence.nonce_repository import SqlAlchemyNonceRepository
+from ai_security.policy.self_checks import PolicySelfCheckError, check_policy_self_checks
 from ai_security.settings import Settings
 
 APP_VERSION = "0.1.0"
@@ -37,6 +38,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     resolved = settings if settings is not None else Settings()  # type: ignore[call-arg]
 
     logging.basicConfig(level=resolved.log_level.value)
+
+    # Startup policy self-checks (ADR-007): a missing/malformed fixture file or any
+    # matrix mismatch refuses startup. Readiness re-evaluates the fixtures live.
+    self_check_failures = check_policy_self_checks(resolved.policy_self_checks_path)
+    if self_check_failures:
+        names = ", ".join(failure.fixture for failure in self_check_failures)
+        raise PolicySelfCheckError(f"policy self-checks failed at startup: {names}")
 
     database = Database.from_settings(resolved)
 

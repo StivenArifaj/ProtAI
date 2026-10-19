@@ -9,7 +9,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from ai_security.api.app import create_app
-from ai_security.api.dependencies import database_ready
+from ai_security.api.dependencies import database_ready, policy_self_checks_ok
 from ai_security.settings import Settings
 
 SettingsFactory = Callable[..., Settings]
@@ -20,6 +20,13 @@ def override_database_ready(app: FastAPI, *, ready: bool) -> None:
         return ready
 
     app.dependency_overrides[database_ready] = _ready
+
+
+def override_policy_self_checks(app: FastAPI, *, ok: bool) -> None:
+    async def _ok() -> bool:
+        return ok
+
+    app.dependency_overrides[policy_self_checks_ok] = _ok
 
 
 @pytest.fixture
@@ -36,10 +43,13 @@ def test_liveness_returns_alive(client: TestClient) -> None:
     assert response.json() == {"status": "alive"}
 
 
-def test_readiness_returns_ready_when_database_reachable(client: TestClient) -> None:
+def test_readiness_returns_ready_when_all_checks_pass(client: TestClient) -> None:
     response = client.get("/health/ready")
     assert response.status_code == 200
-    assert response.json() == {"status": "ready", "checks": {"config": True, "database": True}}
+    assert response.json() == {
+        "status": "ready",
+        "checks": {"config": True, "database": True, "policy_self_checks": True},
+    }
 
 
 def test_readiness_returns_503_and_leaks_nothing(settings_factory: SettingsFactory) -> None:
@@ -50,10 +60,25 @@ def test_readiness_returns_503_and_leaks_nothing(settings_factory: SettingsFacto
     assert response.status_code == 503
     assert response.json() == {
         "status": "not_ready",
-        "checks": {"config": True, "database": False},
+        "checks": {"config": True, "database": False, "policy_self_checks": True},
     }
     for forbidden in ("firewall_dev_only", "postgresql", "asyncpg", "Traceback"):
         assert forbidden not in response.text
+
+
+def test_readiness_returns_503_when_policy_self_checks_fail(
+    settings_factory: SettingsFactory,
+) -> None:
+    app = create_app(settings_factory())
+    override_database_ready(app, ready=True)
+    override_policy_self_checks(app, ok=False)
+    with TestClient(app) as client:
+        response = client.get("/health/ready")
+    assert response.status_code == 503
+    assert response.json() == {
+        "status": "not_ready",
+        "checks": {"config": True, "database": True, "policy_self_checks": False},
+    }
 
 
 @pytest.mark.parametrize("env", ["development", "test"])

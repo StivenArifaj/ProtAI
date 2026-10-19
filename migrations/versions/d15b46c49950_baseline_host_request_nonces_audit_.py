@@ -15,7 +15,6 @@ Tables (blueprint sections 9.2, 16.2; ADR-002, ADR-005):
 from __future__ import annotations
 
 import sqlalchemy as sa
-
 from alembic import op
 
 revision: str = "d15b46c49950"
