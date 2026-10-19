@@ -57,6 +57,7 @@ the integration deny test initially asserted a non-existent `data_class` field o
 | V47 | `uv run --frozen mypy src` + `ruff check src tests` + `ruff format --check src tests` | PASS — clean (55 source files, strict); folded into V44 |
 | V48 | `uv run --frozen alembic current` → `upgrade head` → `downgrade -1` → `upgrade head` → `check` (dev DB) | PASS — `c7f1a2b3d4e5` applies, downgrades, and re-applies; "No new upgrade operations detected" |
 | V49 | Manual `InputDefenseService` smoke (benign / attack / quoted / external email / zero-width / Cyrillic homoglyph) | PASS — PASS / REJECT (direct) / FLAG (quoted) / QUARANTINE (untrusted) / REJECT (obfuscated+direct) / FLAG (homoglyph only); confirms documented honest limits |
+| V50 | Post-commit re-run: `bash scripts/check.sh` after `faafe13`/`3bd5c69`/`1fe5588` | PASS — exit 0, all 8 steps; 600 tests; Gitleaks 8.30.1 dir+git "no leaks found" (22 commits scanned) |
 
 Development-time findings fixed and regression-tested during Phase 3 (recorded for
 honesty): the jailbreak rule initially missed the plural "jailbreaks" (pattern widened to

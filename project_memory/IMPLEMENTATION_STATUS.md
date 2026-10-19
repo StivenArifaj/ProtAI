@@ -25,8 +25,9 @@ baseline `41e10da` (Phase 0a) + Phase 0b commits `0aa11d9`…`d180b89` + docs/me
 Phase 2 commits `5725256` (contracts/registry/adapters/facts/fixtures), `11740bd`
 (risk/audit/gateway + unit tests), `0b935be` (app wiring + no-bypass/integration tests),
 `75bd59a` (ADR-009 + docs/memory refresh), `04b9eb2`/`c7a0f8d` (status + post-commit
-gate records), plus Phase 3 commits recorded in the Phase 3 completion record. No remote
-configured.
+gate records) + Phase 3 commits `faafe13` (input defense/context/session implementation +
+tests), `3bd5c69` (ADR-010 + docs), `1fe5588` (memory refresh + phase completion record),
+and the status/post-commit gate record commit. No remote configured.
 
 ## What exists (all VERIFIED)
 
@@ -122,7 +123,7 @@ All PASS — full commands and results in [TESTING_AND_VERIFICATION.md](TESTING_
   security).
 - `uv run --frozen mypy src` → clean, 55 source files; `ruff check`/`format` clean.
 - `bash scripts/check.sh` → exit 0, 8 steps; Gitleaks 8.30.1 dir+git "no leaks found"
-  (19 commits).
+  (22 commits scanned post-commit; V50).
 - Phase 3 targeted suites → **64 passed** (normalization/heuristics/config/context/
   sessions/failure semantics); Phase 3 integration → **13 passed** (startup wiring +
   refusals; binding, guessed-ID, counters, TTL/max-age, rotation vs real PostgreSQL).
