@@ -22,8 +22,11 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
+from ai_security.api.middleware import HostAuthMiddleware
 from ai_security.api.routes_health import router as health_router
+from ai_security.persistence.audit_repository import V1_CHAIN_ID, AuditChainRepository
 from ai_security.persistence.database import Database
+from ai_security.persistence.nonce_repository import SqlAlchemyNonceRepository
 from ai_security.settings import Settings
 
 APP_VERSION = "0.1.0"
@@ -53,6 +56,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     app.state.settings = resolved
     app.state.database = database
+    # Host-auth enforcement for every /v1/* request (path-based, fail closed), with the
+    # replay store and audit chain bound per application instance. Tests may replace
+    # app.state.nonce_registrar to simulate store behavior.
+    app.state.nonce_registrar = SqlAlchemyNonceRepository(database.session_factory)
+    app.state.audit_chain = AuditChainRepository(database.session_factory, chain_id=V1_CHAIN_ID)
+    app.add_middleware(HostAuthMiddleware, settings=resolved)
     app.include_router(health_router)
     return app
 

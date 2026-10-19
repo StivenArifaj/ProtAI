@@ -202,3 +202,16 @@ def verify_host_request(
         audience=record.audience,
         allowed_tenants=tuple(record.allowed_tenants),
     )
+
+
+def verified_nonce(headers: Sequence[tuple[bytes, bytes]]) -> str:
+    """Extract the nonce header for replay registration.
+
+    Callers hold a context returned by ``verify_host_request``, so the header has
+    already been validated; this re-reads it to avoid duplicating header parsing in the
+    middleware.
+    """
+    return _decode_ascii(
+        _single_header(headers, HEADER_NONCE.lower().encode("ascii")),
+        HostAuthRejection.malformed_nonce,
+    )

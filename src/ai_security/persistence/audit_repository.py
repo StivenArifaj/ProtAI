@@ -46,6 +46,9 @@ from .models import AuditEvent
 #: worker processes serialize through PostgreSQL. Never change without an ADR.
 AUDIT_CHAIN_LOCK_KEY = 3_141_592_653_589_793
 
+#: The single v1 chain id used by every deployed database (blueprint section 16.2).
+V1_CHAIN_ID = "v1"
+
 
 class AuditAppendError(RuntimeError):
     """The audit append failed; callers must not proceed with protected side effects."""
