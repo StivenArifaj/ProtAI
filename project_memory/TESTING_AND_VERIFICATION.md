@@ -2,7 +2,7 @@
 
 Rules: never claim a result that was not produced by a command actually run. Fresh
 re-runs and historical records are kept in separate tables. Evidence IDs (V1–V29 for
-0a/0b; V30–V35 for Phase 1; V36+ for Phase 2) are referenced from
+0a/0b; V30–V35 for Phase 1; V36–V42 for Phase 2; V43+ for Phase 3) are referenced from
 [IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md) and the phase records.
 
 ## How to verify (documented commands)
@@ -10,7 +10,7 @@ re-runs and historical records are kept in separate tables. Evidence IDs (V1–V
 | Command | What it checks | Expected |
 |---|---|---|
 | `uv sync --frozen` | lockfile/install consistency | installs with no resolution drift |
-| `uv run pytest` | unit/integration/security tests | 520 passed (DB-backed integration skips cleanly if PostgreSQL is unreachable) |
+| `uv run pytest` | unit/integration/security tests | 600 passed (DB-backed integration skips cleanly if PostgreSQL is unreachable) |
 | `bash scripts/check.sh` | full local gate (8 steps) | exit 0; prints "All checks passed." |
 | `uv run alembic upgrade head` | migrations (needs §5.4 env; host `db`→`127.0.0.1`) | applies baseline to an empty DB; second run reports already at head |
 | `docker compose config -q` | Compose file syntax | exit 0 |
@@ -45,6 +45,28 @@ authorization — a security test now proves a non-authorization value raises
 `MockEmailAdapter` requires `super().__init__()` (its store is an instance attribute);
 the integration deny test initially asserted a non-existent `data_class` field on
 `RiskAssessment` (the field lives in the audit payload, value `PUBLIC`).
+
+## Fresh evidence (2026-10-19, Phase 3 session)
+
+| ID | Command / check | Result |
+|---|---|---|
+| V43 | `uv run --frozen pytest -q` | PASS — **600 passed** (517 unit + 60 integration + 23 security), incl. DB-backed session-state tests against Compose PostgreSQL |
+| V44 | `bash scripts/check.sh` | PASS — exit 0, all 8 steps; ruff format/lint clean (136 files); mypy clean (55 source files); 600 tests; Gitleaks 8.30.1 dir+git "no leaks found" (19 commits scanned); prohibited patterns clean; `compare_digest` confined |
+| V45 | `uv run --frozen pytest -q tests/unit/test_input_normalization.py tests/unit/test_input_heuristics.py tests/unit/test_input_defense_config.py tests/unit/test_context_labels.py tests/unit/test_sessions.py tests/security/test_input_defense_failure.py` | PASS — 64 passed (normalization signals, attack/benign matrix, strict config, labels/rendering, expiry math, non-PASS failure semantics) |
+| V46 | `uv run --frozen pytest -q tests/integration/test_input_defense_wiring.py tests/integration/test_session_security_state.py` | PASS — 13 passed (app wiring + invalid-config refusals; binding/guessed-ID/counters/TTL/max-age/rotation against real PostgreSQL) |
+| V47 | `uv run --frozen mypy src` + `ruff check src tests` + `ruff format --check src tests` | PASS — clean (55 source files, strict); folded into V44 |
+| V48 | `uv run --frozen alembic current` → `upgrade head` → `downgrade -1` → `upgrade head` → `check` (dev DB) | PASS — `c7f1a2b3d4e5` applies, downgrades, and re-applies; "No new upgrade operations detected" |
+| V49 | Manual `InputDefenseService` smoke (benign / attack / quoted / external email / zero-width / Cyrillic homoglyph) | PASS — PASS / REJECT (direct) / FLAG (quoted) / QUARANTINE (untrusted) / REJECT (obfuscated+direct) / FLAG (homoglyph only); confirms documented honest limits |
+
+Development-time findings fixed and regression-tested during Phase 3 (recorded for
+honesty): the jailbreak rule initially missed the plural "jailbreaks" (pattern widened to
+`jailbreak(?:ing|ed|s)?`); mypy rejected `InstrumentedAttribute[int]` where
+`ColumnElement[int]` was declared for the bounded-counter helper (typed the parameter as
+`InstrumentedAttribute[int]` and cast the zero-delta return); the max-age integration
+test initially jumped six days without refreshing `last_seen_at`, which correctly expired
+the session by the 24 h inactivity rule (test now simulates daily activity); the
+normalization test initially counted scalar JSON depth incorrectly (implementation was
+right; test corrected to 3).
 
 ## Fresh evidence (2026-10-19, Phase 1 session)
 
@@ -120,14 +142,15 @@ iterations, at the ruff format and lint steps. Removing the file restored exit 0
 The Phase 0b gate additionally fails if Gitleaks is missing or version-mismatched
 (deliberate pin, 8.30.1).
 
-## Test inventory (520 tests)
+## Test inventory (600 tests)
 
 Unit (`tests/unit/`):
 
-- `test_settings.py` (55) — 0a validation + masking + docs flag; 0b host-auth key
+- `test_settings.py` (58) — 0a validation + masking + docs flag; 0b host-auth key
   schemas, duplicate rejection, sample-secret refusal, resolver guard, TTL/tolerance
   relation, `policy_self_checks_path`; 1 `policy_path`/`risk_thresholds_path` defaults,
-  overrides, empty-path rejection.
+  overrides, empty-path rejection; 3 input-defense path/session TTL defaults, TTL ≤
+  max-age, positive windows.
 - `test_constant_time.py` (16) — equality helpers incl. unequal-length and hex paths.
 - `test_canonical_json.py` (17) — canonical text/bytes stability and edge cases.
 - `test_hash_chain.py` (17) — ADR-002 formula, genesis, fixed vectors, hex conversion.
@@ -159,6 +182,15 @@ Unit (`tests/unit/`):
 - `test_risk_engine.py` (9) — `risk-v1` weights, cap at 100, external-destination
   requirement, factor codes, version reporting.
 - `test_gateway.py` (20) — see the Phase 2 completion record for the full scenario list.
+- `test_input_normalization.py` (12) — copy-only normalization, zero-width/control/
+  escape/Base64/NFKC/mixed-script signals, iterative JSON depth, invalid UTF-8.
+- `test_input_heuristics.py` (20) — attack matrix, quoted/educational downgrade,
+  external-only untrusted-instruction rules, benign hard negatives, determinism/offsets.
+- `test_input_defense_config.py` (9) — repo config completeness, duplicate keys,
+  missing/unknown codes, PASS mapping refusal, invalid content types, parameter stripping.
+- `test_context_labels.py` (7) — trust labels, external email forced untrusted,
+  deterministic rendering, duplicate/empty/blank refusals.
+- `test_sessions.py` (5) — opaque IDs, TTL/max-age expiry math, counter/session constants.
 
 Security (`tests/security/`):
 
@@ -166,6 +198,9 @@ Security (`tests/security/`):
   never execute (spy adapter byte equality on the sink); no execution without a
   successfully recorded decision; result withheld on outcome-audit failure; direct
   adapter invocation without a gateway authorization fails closed.
+- `test_input_defense_failure.py` (11) — oversize/unsupported/invalid-encoding stop before
+  heuristics; detector/normalizer/classifier faults yield `DETECTOR_UNAVAILABLE`
+  (never PASS, no raw content in reports); trust label preserved; no invocation surface.
 
 Integration (`tests/integration/`):
 

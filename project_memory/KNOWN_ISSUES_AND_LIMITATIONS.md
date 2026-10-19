@@ -1,7 +1,7 @@
 # Known Issues and Limitations
 
 Severity: **High** (blocks security goals) / **Medium** / **Low**. Status labels follow
-[README.md](README.md) ("RESOLVED (0b)"/"RESOLVED (1)"/"RESOLVED (2)" mark items closed in Phase 0b/1/2). "Section"
+[README.md](README.md) ("RESOLVED (0b)"/"RESOLVED (1)"/"RESOLVED (2)"/"RESOLVED (3)" mark items closed in Phase 0b/1/2/3). "Section"
 refers to the master blueprint v1.2. The canonical long-form list (with phase pointers) is
 [../docs/KNOWN_LIMITATIONS.md](../docs/KNOWN_LIMITATIONS.md) (items 1–24); this file adds
 severity, status, and next actions. Keep both consistent.
@@ -12,11 +12,11 @@ severity, status, and next actions. Keep both consistent.
 |---|---|---|---|---|---|
 | 1 | Host authentication: **implemented** for the `/v1/*` path prefix (HMAC + timestamp + atomic nonce replay + size bounds, fail-closed); no `/v1/*` routes exist yet; principal resolution beyond dev/test fails closed | High | **PARTIAL (0b/1)** | §9, §21 | Later phase (principal metadata), Phase 8 (routes) |
 | 2 | Execution is mock-only and in-process: registry, gateway, execution authorization, `risk-v1`, and mock adapters exist and are tested, but there are no real connectors and no sandbox; approvals and manifest/intent binding are still missing | High | **PARTIAL (2)** | §§10–13 | Phases 4–5 (binding/approvals), Phase 10 (isolation) |
-| 3 | No input/output protection: no injection detection, provenance labels, intent extraction, DLP, or egress policy | High | NOT IMPLEMENTED | §§3, 8, 15 | Phases 3–6 |
+| 3 | Input defense exists but is advisory and not consumed: deterministic heuristics, typed non-PASS failure semantics, trust labels, and session signals are implemented (Phase 3/ADR-010), but no `/v1` route or model path uses them; intent extraction, DLP, and egress policy are still missing | High | **PARTIAL (3)** | §§3, 8, 15 | Phases 4–6 (consumers), Phase 8 (routes) |
 | 4 | Audit: append repository + ADR-002 lock protocol + fixed vectors exist and are tested; the gateway emits the Phase 2 event subset (decision/outcome) into the chain; the full taxonomy, retention, and verifier are missing | High | **PARTIAL (0b/2)** | §16 | Phase 7 |
 | 5 | No AI SOC analytics | Medium | NOT IMPLEMENTED | §17 | Phase 10 |
 | 6 | No rate limiting or request deadlines; request-size bound exists (64 KiB, 413) | Medium | **PARTIAL (0b)** | §18.2 | Phase 8 |
-| 7 | Persisted state: only `host_request_nonces` and `audit_events` via Alembic baseline; no session/approval storage; no pruning job for nonce/audit rows | High | **PARTIAL (0b)** | §§13, 20.2 | Phases 0b–7 (retention task) |
+| 7 | Persisted state: `host_request_nonces`, `audit_events`, and `session_security_state` (Phase 3) apply via Alembic; no approval storage; no pruning job (expired session rows are deleted lazily only on access; nonce/audit rows persist) | High | **PARTIAL (0b/3)** | §§13, 20.2 | Phases 5/7 (approvals, retention task) |
 
 ## Environment and tooling gaps
 
@@ -45,6 +45,9 @@ severity, status, and next actions. Keep both consistent.
 | 32 | Execution authorization is an in-process guardrail, not a sandbox: malicious in-process code could bypass private internals | High | BY DESIGN (2) | §14.2 | Phase 10 |
 | 33 | Concurrency bounds and the in-memory sink are per process/event loop; no cross-worker coordination | Medium | BY DESIGN (2) | §18.2 | Later operational phase |
 | 34 | `risk-v1` weights uncalibrated; factor set minimal (no identity/session/history factors) | Low | BY DESIGN (2) | §11.3–11.4 | Phases 5/9 |
+| 36 | Detector heuristics are modest: English-pattern based, homoglyphs are flagged but not normalized before matching, quoted/educational content can still raise FLAG, and PASS means "no configured finding matched", not "safe" | Medium | BY DESIGN (3) | §7.3 | Phase 9 evaluation; expand patterns/normalization deliberately with tests |
+| 37 | Trust labels, detector findings, and session signals have no consumer yet (no routes/model); session state is not an authorization or scoring input | Medium | BY DESIGN (3) | §§7.4, 8 | Phases 4/5 (intent/model), Phase 8 (routes) |
+| 38 | Abandoned session rows persist until touched (lazy expiry only); no scheduled pruning | Low | BY DESIGN (3) | §20.2 | Later operational phase (retention job) |
 
 ## Behavioral notes (expected behavior, not defects)
 

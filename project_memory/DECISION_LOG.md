@@ -24,6 +24,7 @@ the index; never silently rewrite the historical rationale.
 | ADR-007 | Policy decision matrix mirrored in docs/config + startup self-checks | Phase 1 (scaffolding in 0b) | [../docs/adr/ADR-007-policy-matrix-self-checks.md](../docs/adr/ADR-007-policy-matrix-self-checks.md) |
 | ADR-008 | Deterministic policy engine with strict typed contracts + versioned policy bundle | Phase 1 | [../docs/adr/ADR-008-policy-engine-typed-contracts.md](../docs/adr/ADR-008-policy-engine-typed-contracts.md) |
 | ADR-009 | Tool registry, execution authorization, and the enforced gateway | Phase 2 | [../docs/adr/ADR-009-tool-registry-and-enforced-gateway.md](../docs/adr/ADR-009-tool-registry-and-enforced-gateway.md) |
+| ADR-010 | Advisory input threat defense, trust labels, and session signals | Phase 3 | [../docs/adr/ADR-010-advisory-input-defense-and-session-signals.md](../docs/adr/ADR-010-advisory-input-defense-and-session-signals.md) |
 
 ## Implementation decisions (Phase 0a, within blueprint constraints)
 
@@ -100,3 +101,17 @@ the index; never silently rewrite the historical rationale.
 | ADR format enrichment ("alternatives considered" / "tests/verification" sections) | Still open; ADR-008 was created with the established Status/Context/Decision/Consequences/References shape | next ADR |
 | `risk_score` fact source | **DECIDED (2, ADR-009):** computed by the versioned `risk-v1` engine in the gateway (side-effect/destination/registration-data-class factors); never caller-supplied. Factor expansion + approvals in Phase 5; calibration in Phase 9 | done (calibration later) |
 | Policy hot-reload (atomic reload per §10.6) | Open; readiness detects drift today, process keeps startup bundle | Not scheduled (documented limitation) |
+
+## Implementation decisions (Phase 3, within blueprint constraints; contract in ADR-010)
+
+| Decision | Rationale | Recorded in |
+|---|---|---|
+| Detector output is advisory and is not wired into `PolicyEvaluationRequest`, the engine, or the gateway | Invariant #10 must hold by construction: a missed attack cannot widen permissions, and a finding cannot grant them; routes/model consumption arrive later | ADR-010; `input_defense/service.py`; security tests |
+| Every `FindingCode` must be dispositioned; no mapping to PASS; duplicate keys/unknown codes refuse startup | Detection failure/oversize/invalid input must never be reported clean; config sloppiness fails closed | `input_defense/config.py`, `config/input_defense.yaml`; config tests |
+| Intake order size → content type → UTF-8 → JSON structure → normalization → heuristics → optional classifier | Prevents decoding/parsing hostile input before bounds; each violation becomes a typed finding | `input_defense/service.py`, `normalize.py`; failure tests |
+| Normalization is copy-only; JSON depth is iterative | Original content is never mutated/stored; hostile nesting cannot exhaust the Python stack | `input_defense/normalize.py`; normalization tests |
+| Ten versioned regex rules; quoted/educational/defensive contexts downgrade to `QUOTED_INSTRUCTION_CONTEXT`; assistant-directed rules only for external/tool content | Honest heuristic behavior without overclaiming intent detection; avoid treating documentation as an attack | `input_defense/heuristics.py`; heuristic tests |
+| Six structured trust labels; external content forced `EXTERNAL_UNTRUSTED` even for authenticated requesters; duplicate/empty segments refused | Provenance must survive assembly and rendering; authentication of the requester does not trust quoted external content | `input_defense/context_labels.py`; label tests |
+| Session store requires `(tenant_id, subject_id)` on every operation; mismatch = not found; 24 h/7 d lazy expiry; bounded counters; rotation never inherits | Invariant #23 without side channels; no raw prompts/findings stored; session state is not yet an authorization input | `persistence/session_repository.py`; migration `c7f1a2b3d4e5`; DB tests |
+| Shared strict YAML helper (`security/safe_yaml.py`) used by policy and input-defense loaders | One duplicate-key-safe parser; keeps the gate's prohibition on `yaml.load` intact | `security/safe_yaml.py`, `policy/loader.py`, `input_defense/config.py` |
+| Optional `LocalClassifier` protocol exists but is not configured/wired | Leaves room for Phase 4+ model-assisted detection without granting detector authority or adding a dependency now | `input_defense/service.py`; ADR-010 |

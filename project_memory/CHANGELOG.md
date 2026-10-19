@@ -4,6 +4,23 @@ Concise, dated history of project activity. Newest first.
 
 ## 2026-10-19
 
+- **Phase 3 (input threat defense and provenance) implemented and verified** (same day as
+  0a-3): shared strict YAML helper (`security/safe_yaml.py`, reused by the policy loader);
+  advisory input-defense package (`input_defense/{models,config,normalize,heuristics,
+  service,context_labels,sessions}.py`) with strict exhaustive-disposition config
+  (`config/input_defense.yaml`, duplicate-key rejection, no PASS mapping), bounded intake,
+  copy-only normalization (zero-width/control/escape/Base64/NFKC/mixed-script signals,
+  iterative JSON depth), 10 versioned heuristic rules with quoted-context downgrade,
+  typed non-PASS failure semantics (`DETECTOR_UNAVAILABLE`), structured trust-labelled
+  context assembly, and session-signal math; tenant/subject-bound
+  `session_security_state` repository + migration `c7f1a2b3d4e5` (bounded counters, 24 h
+  inactivity/7 d absolute lazy expiry, signal-free rotation); settings
+  (`INPUT_DEFENSE_PATH`, `SESSION_SIGNAL_TTL_SECONDS`, `SESSION_MAX_AGE_SECONDS`);
+  `create_app` exposes `app.state.input_defense_config`/`input_defense_service`/
+  `session_security`. Contract recorded in ADR-010. Evidence V43+ in
+  [TESTING_AND_VERIFICATION.md](TESTING_AND_VERIFICATION.md) — **600 tests** (517 unit +
+  60 integration + 23 security), 8-step gate green. Phase record:
+  [phases/PHASE_3_COMPLETE.md](phases/PHASE_3_COMPLETE.md).
 - **Phase 2 (tool registry and enforced gateway) implemented and verified** (same day as
   0a/0b/1): strict `ToolArguments`/`ToolResult` + sentinel-guarded, digest-bound
   `ExecutionAuthorization` (`tools/base.py`); immutable validated `ToolRegistration` +
