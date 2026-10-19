@@ -56,6 +56,7 @@ the integration deny test initially asserted a non-existent `data_class` field o
 | V53 | `uv run --frozen mypy src` + `ruff check src tests` + `ruff format --check src tests` | PASS — strict mypy clean (60 source files); ruff clean; 151 files already formatted |
 | V54 | `uv run --frozen pytest -q` + `bash scripts/check.sh` | PASS — **661 passed** (568 unit + 64 integration + 29 security); gate exit 0, all 8 steps; Gitleaks 8.30.1 dir+git "no leaks found" (23 commits scanned); prohibited patterns clean; `compare_digest` confined |
 | V55 | Manual `IntentManifestService` smoke (demo summarize/read, forward, greeting) | PASS — ACTIVE with resolved UTC window; ACTIVE; REJECTED (no manifest); REQUIRES_CLARIFICATION (no manifest) |
+| V56 | Post-commit re-run: `bash scripts/check.sh` after `2943593`/`74c502f`/`786cb08` | PASS — exit 0, all 8 steps; 661 tests; 151 files formatted; mypy 60 source files; Gitleaks 8.30.1 dir+git "no leaks found" (26 commits scanned) |
 
 Development-time findings fixed and regression-tested during Phase 4 (recorded for
 honesty): the integration test first used `app.state.intent_tracker`, but the app state key

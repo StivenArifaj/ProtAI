@@ -29,9 +29,9 @@ Phase 2 commits `5725256` (contracts/registry/adapters/facts/fixtures), `11740bd
 `75bd59a` (ADR-009 + docs/memory refresh), `04b9eb2`/`c7a0f8d` (status + post-commit
 gate records) + Phase 3 commits `faafe13` (input defense/context/session implementation +
 tests), `3bd5c69` (ADR-010 + docs), `1fe5588` (memory refresh + phase completion record),
-and the status/post-commit gate record commit `30c0f41`. Phase 4 implementation/tests,
-docs, and memory are committed after this line is updated (hashes recorded in
-PHASE_4_COMPLETE.md and CHANGELOG.md). No remote configured.
+and the status/post-commit gate record commit `30c0f41`; Phase 4 commits `2943593`
+(implementation/tests), `74c502f` (ADR-011/docs), `786cb08` (memory/completion), and
+the final V56 status record commit. No remote configured.
 
 ## What exists (all VERIFIED)
 
@@ -138,8 +138,8 @@ All PASS — full commands and results in [TESTING_AND_VERIFICATION.md](TESTING_
 - `uv run --frozen mypy src` → clean, 60 source files; `ruff check`/`format` clean
   (151 files already formatted).
 - `bash scripts/check.sh` → exit 0, 8 steps; Gitleaks 8.30.1 dir+git "no leaks found"
-  (23 commits scanned pre-commit; V54). Post-commit gate recorded as V56 after the Phase
-  4 commits.
+  (23 commits scanned pre-commit; V54). Post-commit gate V56: same 661 tests, 151
+  files, 60 source files, exit 0, Gitleaks clean across 26 commits.
 - Phase 4 targeted suites → **56 passed** (50 intent unit + 6 security); app wiring +
   settings → **63 passed** (4 integration + 59 unit), incl. end-to-end allow/limit,
   ambiguity, and wrong-request denial against real PostgreSQL.

@@ -15,8 +15,9 @@ Concise, dated history of project activity. Newest first.
   `intent_usage_tracker`/`intent_manifest_service`, adds `INTENT_MANIFEST_TTL_SECONDS`,
   and constructs the gateway with the tracker. Contract recorded in ADR-011. Evidence
   V51+ in [TESTING_AND_VERIFICATION.md](TESTING_AND_VERIFICATION.md) — **661 tests**
-  (568 unit + 64 integration + 29 security), 8-step gate green. Phase record:
-  [phases/PHASE_4_COMPLETE.md](phases/PHASE_4_COMPLETE.md).
+  (568 unit + 64 integration + 29 security), 8-step gate green. Commits `2943593`
+  (implementation/tests), `74c502f` (ADR-011/docs), `786cb08` (memory/completion).
+  Phase record: [phases/PHASE_4_COMPLETE.md](phases/PHASE_4_COMPLETE.md).
 - **Phase 3 (input threat defense and provenance) implemented and verified** (same day as
   0a-3): shared strict YAML helper (`security/safe_yaml.py`, reused by the policy loader);
   advisory input-defense package (`input_defense/{models,config,normalize,heuristics,

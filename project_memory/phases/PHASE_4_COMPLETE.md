@@ -4,8 +4,8 @@
 **Blueprint:** v1.2 §§8-9, 11.1, 12.3, 20.2 #3/#5, §21 Phase 4
 **ADR:** [../../docs/adr/ADR-011-server-issued-intent-manifests.md](../../docs/adr/ADR-011-server-issued-intent-manifests.md)
 **Evidence:** V51-V56 in [../TESTING_AND_VERIFICATION.md](../TESTING_AND_VERIFICATION.md)
-**Commits:** `2943593` (implementation/tests/gateway), `74c502f` (ADR-011/docs);
-memory commit and post-commit gate record follow.
+**Commits:** `2943593` (implementation/tests/gateway), `74c502f` (ADR-011/docs),
+`786cb08` (memory/completion); final V56 status record commit follows.
 
 ## Definition of Done — verdict
 
@@ -101,7 +101,8 @@ Totals: **661 passed** (568 unit + 64 integration + 29 security).
 - V54 full suite + `bash scripts/check.sh`: **661 passed**; exit 0; 8/8 steps; Gitleaks
   8.30.1 clean at 23 commits.
 - V55 manual service smoke: ACTIVE/ACTIVE/REJECTED/REQUIRES_CLARIFICATION as expected.
-- V56 post-commit gate: recorded in the memory commit after Phase 4 commits.
+- V56 post-commit gate: PASS — exit 0, all 8 steps; 661 tests; 151 files formatted;
+  mypy 60 source files; Gitleaks 8.30.1 dir+git clean across 26 commits.
 
 ## Next
 
