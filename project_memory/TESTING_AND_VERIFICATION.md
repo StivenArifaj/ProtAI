@@ -36,6 +36,7 @@ Failure behavior: `check.sh` exits non-zero and prints `CHECK FAILED: <reason>`.
 | V39 | `uv run --frozen pytest tests/integration/test_gateway_end_to_end.py tests/integration/test_gateway_wiring.py -q` | PASS — 5 passed (durable decision→outcome order + linkage + result digest + payload non-leakage; denied egress leaves sink unchanged; audit outage → `BLOCK`/`audit_unavailable`; startup refuses unregistered policy tool) |
 | V40 | `uv run --frozen pytest tests/unit/test_policy_self_checks.py tests/integration/test_policy_self_checks_wiring.py -q` | PASS — 41 passed; fixture file now 21 fixtures incl. the 7 mandated names |
 | V41 | `uv run --frozen mypy src` + `ruff check src/ tests/` + `ruff format --check src tests` | PASS — clean (45 source files, strict) |
+| V42 | Post-commit re-run: `uv run --frozen pytest -q` + `bash scripts/check.sh` | PASS — 520 passed; gate exit 0, all 8 steps; Gitleaks "no leaks found" (18 commits scanned) |
 
 Development-time findings fixed and regression-tested during Phase 2 (recorded for
 honesty): `verify_execution_authorization` originally accepted any object passed as the
