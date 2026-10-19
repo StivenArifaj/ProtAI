@@ -25,6 +25,7 @@ the index; never silently rewrite the historical rationale.
 | ADR-008 | Deterministic policy engine with strict typed contracts + versioned policy bundle | Phase 1 | [../docs/adr/ADR-008-policy-engine-typed-contracts.md](../docs/adr/ADR-008-policy-engine-typed-contracts.md) |
 | ADR-009 | Tool registry, execution authorization, and the enforced gateway | Phase 2 | [../docs/adr/ADR-009-tool-registry-and-enforced-gateway.md](../docs/adr/ADR-009-tool-registry-and-enforced-gateway.md) |
 | ADR-010 | Advisory input threat defense, trust labels, and session signals | Phase 3 | [../docs/adr/ADR-010-advisory-input-defense-and-session-signals.md](../docs/adr/ADR-010-advisory-input-defense-and-session-signals.md) |
+| ADR-011 | Server-issued, sealed intent manifests and concrete action constraints | Phase 4 | [../docs/adr/ADR-011-server-issued-intent-manifests.md](../docs/adr/ADR-011-server-issued-intent-manifests.md) |
 
 ## Implementation decisions (Phase 0a, within blueprint constraints)
 
@@ -115,3 +116,19 @@ the index; never silently rewrite the historical rationale.
 | Session store requires `(tenant_id, subject_id)` on every operation; mismatch = not found; 24 h/7 d lazy expiry; bounded counters; rotation never inherits | Invariant #23 without side channels; no raw prompts/findings stored; session state is not yet an authorization input | `persistence/session_repository.py`; migration `c7f1a2b3d4e5`; DB tests |
 | Shared strict YAML helper (`security/safe_yaml.py`) used by policy and input-defense loaders | One duplicate-key-safe parser; keeps the gate's prohibition on `yaml.load` intact | `security/safe_yaml.py`, `policy/loader.py`, `input_defense/config.py` |
 | Optional `LocalClassifier` protocol exists but is not configured/wired | Leaves room for Phase 4+ model-assisted detection without granting detector authority or adding a dependency now | `input_defense/service.py`; ADR-010 |
+
+## Implementation decisions (Phase 4, within blueprint constraints; contract in ADR-011)
+
+| Decision | Rationale | Recorded in |
+|---|---|---|
+| Extractors return validated proposals; only `IntentManifestService` issues manifests | Model output is untrusted; issuance must apply registry/policy validation and server bindings before authority exists | ADR-011; `tests/unit/test_intent_service.py` |
+| Sealed frozen dataclass with a module-private sentinel instead of a caller-constructible model | Direct/forged construction must be impossible in-process; no transport contract exists yet | ADR-011; `tests/unit/test_intent_models.py` |
+| Goal stored only as SHA-256 digest | Minimize sensitive text retention while still binding the manifest to the request purpose | ADR-011; manifest model tests |
+| Exact-match constraints only (no wildcards/prefixes/ranges/floats) | A constraint language that cannot express broad scope cannot accidentally widen policy | ADR-011; validator tests |
+| `max_uses` reserved after policy `ALLOW` and before decision audit; reservations survive later audit failure | Never consume authority for an action policy would deny; conservative on partial failure (no side effect occurred) | ADR-011; gateway tests |
+| Optional `intent_tracker` on the gateway; app always supplies it | Preserves Phase 2 in-process tests without weakening production wiring | ADR-011; `tests/integration/test_intent_wiring.py` |
+| Mock extractor recognizes exactly two demo scenarios and rejects send/forward/delete/upload/share | Honest demo behavior; avoids pretending a mock understands general language | ADR-011; extractor/service tests |
+| `LocalModelIntentExtractor` injected-client interface, bounded 65,536-byte output, duplicate-key and unknown-field rejection, 2 retries default | Pin the untrusted boundary now; a real provider stays Phase 8 and cannot set version/bindings | ADR-011; extractor tests |
+| Relative dates resolve only from the host-signed principal timezone; missing/invalid timezone fails closed | Prompt/model/IP/header time sources are attacker-influenced; DST correctness is testable | ADR-011; time-window tests |
+| `IntentUsageTracker` in-memory with 10,000 live-manifest cap | Simple fail-closed enforcement for a single-process app; shared state is a later operational concern | ADR-011; `docs/KNOWN_LIMITATIONS.md` |
+| No `/v1` manifest transport or signed serialization in Phase 4 | The blueprint assigns routes/providers to Phase 8; an in-process sealed object avoids inventing a transport contract | ADR-011; known limitations |

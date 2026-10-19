@@ -5,7 +5,7 @@ blueprint. Full narrative and the per-request lifecycle: [../docs/ARCHITECTURE.m
 (mark status per component there as well). **Nothing under "Target v1" may be claimed as
 existing.**
 
-## Implemented today (Phases 0a–3 — VERIFIED 2026-10-19)
+## Implemented today (Phases 0a–4 — VERIFIED 2026-10-19)
 
 Components:
 
@@ -19,7 +19,8 @@ Components:
   tolerance 60 s, nonce TTL 300 s (≥2×tolerance), request bound 64 KiB;
   `POLICY_SELF_CHECKS_PATH`, `POLICY_PATH`, `RISK_THRESHOLDS_PATH`, and
   `INPUT_DEFENSE_PATH` (Phase 3) with defaults under `config/`; session TTL 86400 s with
-  max age 604800 s (validator enforces TTL ≤ max age).
+  max age 604800 s (validator enforces TTL ≤ max age); `INTENT_MANIFEST_TTL_SECONDS`
+  default 300 s, bounded 1–3600 s (Phase 4).
 - `ai_security.security` (`constant_time.py`, `canonical_json.py`, `urls.py`,
   `safe_yaml.py`) and `ai_security.audit.hash_chain`: `hmac.compare_digest` wrappers
   (confinement enforced by the gate), canonical JSON bytes, destination
@@ -57,8 +58,9 @@ Components:
   calls, ADR-008); `risk-v1` deterministic scoring (side-effect/destination/registration
   data class, capped, factor codes audited); and the single `invoke_tool` gateway
   chokepoint (bindings → strict validation → derived resources/destination → adapter
-  resource check → risk → deadline → engine → digest-bound authorization → audit-first
-  → bounded execution → typed outcome, ADR-009).
+  resource check → risk → deadline → engine → **manifest verification/constraint match**
+  (Phase 4) → digest-bound authorization → audit-first → bounded execution → typed
+  outcome, ADR-009/011).
 - `ai_security.tools` (`base.py`, `registry.py`, `mock_{email,files,external_sink,text}.py`):
   canonical `SideEffectClass` + strict `ToolArguments`/`ToolResult`; sentinel-guarded,
   digest-bound `ExecutionAuthorization`; immutable validated registrations with
@@ -66,6 +68,16 @@ Components:
   deterministic in-memory adapters that verify the digest immediately before the side
   effect.
 - `ai_security.data_security.classification`: canonical `DataClass` enum (exactly once).
+- `ai_security.intent` (`models`, `extractors`, `service`, `validator`, `time_window`):
+  Phase 4 server-only intent pipeline. `IntentManifestService` validates extractor
+  proposals against registry/policy and issues a sentinel-sealed manifest bound to the
+  request/principal/tenant/policy version+hash with expiry and a goal digest. The mock
+  extractor supports two demo scenarios (rejects send/forward/delete/upload/share,
+  clarifies the rest); `LocalModelIntentExtractor` is a strict injected-client interface
+  (65,536-byte bound, duplicate-key/unknown-field rejection, ≤3 attempts, timeout/outage
+  mapping) with no provider wired. Exact action/resource/destination/parameter
+  constraints and bounded uses are enforced by the gateway after policy `ALLOW`;
+  trusted-timezone `TODAY`/`THIS_WEEK` resolve to UTC (DST-tested). No transport/routes.
 - `ai_security.input_defense` (`models`, `config`, `normalize`, `heuristics`, `service`,
   `context_labels`, `sessions`) + `../config/input_defense.yaml`: **advisory** detection.
   Strict exhaustive-disposition config (every `FindingCode` mapped, no PASS mapping,
@@ -81,10 +93,11 @@ Components:
   plus module-level `app`. Startup refuses bad configuration, dev-resolver misuse,
   policy-configuration errors, self-check mismatch, registry/policy inconsistency, and
   invalid/incomplete input-defense config; builds `Database` + nonce registrar + audit
-  chain + registry + gateway + input-defense service + session store; adds the
-  middleware; `/docs`, `/redoc`, `/openapi.json` only in `development`/`test`.
-  `app.state` exposes `tool_registry`, `tool_gateway`, `input_defense_config`,
-  `input_defense_service`, `session_security`.
+  chain + registry + intent service/tracker + gateway + input-defense service + session
+  store; the gateway is constructed with the intent tracker; adds the middleware;
+  `/docs`, `/redoc`, `/openapi.json` only in `development`/`test`. `app.state` exposes
+  `tool_registry`, `tool_gateway`, `input_defense_config`, `input_defense_service`,
+  `session_security`, `intent_usage_tracker`, `intent_manifest_service`.
 - `ai_security.api.routes_health`: `GET /health/live` → 200 `{"status":"alive"}`;
   `GET /health/ready` → 200/503 with `checks: {config, database, policy_self_checks}`
   plus `policy_version`/`policy_hash`; only booleans and version metadata, never
@@ -107,9 +120,11 @@ uvicorn → FastAPI app
 
 Data: PostgreSQL 17 holds the three tables; nonces are registered per signed request and
 gateway calls write decision/outcome events (in tests and in-process callers). The policy
-engine produces decisions consumed only by the gateway; the input-defense service and
-session store are available on `app.state` but no route or model path consumes them yet.
-Nothing in a live request path uses detector findings or trust labels.
+engine produces decisions consumed only by the gateway; a valid intent manifest is
+required by the app-built gateway and is compared with the derived action before
+execution (manifest uses are tracked in memory). The input-defense service and session
+store are available on `app.state` but no route or model path consumes them yet. Nothing
+in a live request path uses detector findings or trust labels.
 
 ## Target v1 (blueprint §§3–4) — NOT IMPLEMENTED
 
@@ -117,7 +132,7 @@ Logical flow (abbreviated; full diagram in [../docs/ARCHITECTURE.md](../docs/ARC
 
 ```text
 Host app → HMAC-authenticated /v1/* → intake bounds + provenance labels
-  → input signals → typed intent → agent runtime (optional)
+  → input signals → typed intent (implemented in-process, no route) → agent runtime (optional)
   → firewall gateway: principal/session binding, tool + strict schema, hard policy,
     intent constraints, egress/data classification, deterministic risk
     → ALLOW | BLOCK | ASK_USER → controlled adapter execution

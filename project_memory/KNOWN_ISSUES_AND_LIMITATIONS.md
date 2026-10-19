@@ -1,9 +1,10 @@
 # Known Issues and Limitations
 
 Severity: **High** (blocks security goals) / **Medium** / **Low**. Status labels follow
-[README.md](README.md) ("RESOLVED (0b)"/"RESOLVED (1)"/"RESOLVED (2)"/"RESOLVED (3)" mark items closed in Phase 0b/1/2/3). "Section"
-refers to the master blueprint v1.2. The canonical long-form list (with phase pointers) is
-[../docs/KNOWN_LIMITATIONS.md](../docs/KNOWN_LIMITATIONS.md) (items 1–24); this file adds
+[README.md](README.md) ("RESOLVED (0b)"/"RESOLVED (1)"/"RESOLVED (2)"/"RESOLVED (3)"/
+"RESOLVED (4, in-process)" mark items closed in Phase 0b/1/2/3/4). "Section" refers to the
+master blueprint v1.2. The canonical long-form list (with phase pointers) is
+[../docs/KNOWN_LIMITATIONS.md](../docs/KNOWN_LIMITATIONS.md) (items 1–32); this file adds
 severity, status, and next actions. Keep both consistent.
 
 ## Security controls absent (High — do not claim otherwise)
@@ -11,12 +12,12 @@ severity, status, and next actions. Keep both consistent.
 | # | Issue | Severity | Status | Blueprint | Next action |
 |---|---|---|---|---|---|
 | 1 | Host authentication: **implemented** for the `/v1/*` path prefix (HMAC + timestamp + atomic nonce replay + size bounds, fail-closed); no `/v1/*` routes exist yet; principal resolution beyond dev/test fails closed | High | **PARTIAL (0b/1)** | §9, §21 | Later phase (principal metadata), Phase 8 (routes) |
-| 2 | Execution is mock-only and in-process: registry, gateway, execution authorization, `risk-v1`, and mock adapters exist and are tested, but there are no real connectors and no sandbox; approvals and manifest/intent binding are still missing | High | **PARTIAL (2)** | §§10–13 | Phases 4–5 (binding/approvals), Phase 10 (isolation) |
-| 3 | Input defense exists but is advisory and not consumed: deterministic heuristics, typed non-PASS failure semantics, trust labels, and session signals are implemented (Phase 3/ADR-010), but no `/v1` route or model path uses them; intent extraction, DLP, and egress policy are still missing | High | **PARTIAL (3)** | §§3, 8, 15 | Phases 4–6 (consumers), Phase 8 (routes) |
+| 2 | Execution is mock-only and in-process: registry, gateway, execution authorization, `risk-v1`, manifest enforcement, and mock adapters exist and are tested, but there are no real connectors and no sandbox; approvals are still missing | High | **PARTIAL (2-4)** | §§10–13 | Phase 5 (approvals), Phase 10 (isolation) |
+| 3 | Input defense exists but is advisory and not consumed: deterministic heuristics, typed non-PASS failure semantics, trust labels, and session signals are implemented (Phase 3/ADR-010), but no `/v1` route or model path uses them; intent extraction is in-process with a mock extractor; DLP and egress policy are still missing | High | **PARTIAL (3-4)** | §§3, 8, 15 | Phases 5–6 (consumers), Phase 8 (routes/provider) |
 | 4 | Audit: append repository + ADR-002 lock protocol + fixed vectors exist and are tested; the gateway emits the Phase 2 event subset (decision/outcome) into the chain; the full taxonomy, retention, and verifier are missing | High | **PARTIAL (0b/2)** | §16 | Phase 7 |
 | 5 | No AI SOC analytics | Medium | NOT IMPLEMENTED | §17 | Phase 10 |
 | 6 | No rate limiting or request deadlines; request-size bound exists (64 KiB, 413) | Medium | **PARTIAL (0b)** | §18.2 | Phase 8 |
-| 7 | Persisted state: `host_request_nonces`, `audit_events`, and `session_security_state` (Phase 3) apply via Alembic; no approval storage; no pruning job (expired session rows are deleted lazily only on access; nonce/audit rows persist) | High | **PARTIAL (0b/3)** | §§13, 20.2 | Phases 5/7 (approvals, retention task) |
+| 7 | Persisted state: `host_request_nonces`, `audit_events`, and `session_security_state` (Phase 3) apply via Alembic; no approval storage and no intent-use table (Phase 4 uses an in-memory tracker); no pruning job (expired session rows are deleted lazily only on access; nonce/audit rows persist) | High | **PARTIAL (0b/3/4)** | §§13, 20.2 | Phases 5/7 (approvals, retention task); later operational phase (shared intent-use store) |
 
 ## Environment and tooling gaps
 
@@ -34,20 +35,25 @@ severity, status, and next actions. Keep both consistent.
 | 21 | `HostPrincipalResolver` fails closed (raises) until a later phase provides key→principal metadata; signed requests reach no principal | Medium | BY DESIGN (0b/1) | Later phase |
 | 22 | Interim policy evaluator (`policy/interim_matrix.py`) was scaffolding, not the real engine | Medium | **RESOLVED (1)** — deleted; the deterministic engine + fixture suite replaced it | None (readiness drift detection retained) |
 | 23 | `check.sh` fails on any Gitleaks version ≠ 8.30.1 (deliberate pin) | Low | BY DESIGN | Update pin deliberately if the scanner is upgraded |
-| 25 | Engine consumes upstream-supplied facts; since Phase 2 the gateway produces them (registry capability, validated arguments/resource IDs, canonical destination, `risk-v1` score). `manifest`/intent facts do not exist yet | Medium | **RESOLVED (2, partially)** — remaining: manifest/intent facts | Phase 4 |
+| 25 | Engine consumes upstream-supplied facts; the gateway produces them (registry capability, validated arguments/resource IDs, canonical destination, `risk-v1` score). Intent manifests deliberately do **not** enter policy facts; they narrow execution after policy | Medium | **RESOLVED (2/4)** — intent is enforced as a post-policy constraint, not an engine fact | None |
 | 26 | No policy hot-reload: the process keeps its startup-loaded bundle; readiness detects file drift (503) but does not reload | Low | BY DESIGN (1) | Phase 2+ (not scheduled) |
 | 27 | Destination allowlisting is exact-match only (no wildcards); non-ASCII paths/queries and IPv6 zone IDs are rejected | Low | BY DESIGN (1) | Revisit when wildcard matching semantics are documented |
 | 28 | Risk thresholds 40/80 are experimental defaults, not empirically calibrated | Low | BY DESIGN (1) | Phase 9 (evaluation/calibration) |
 
 | 29 | No approvals: `ASK_USER` returns a typed no-execution result; no approval storage/consumption | Medium | BY DESIGN (2) | §13 | Phase 5 |
-| 30 | No manifest/intent binding: the gateway validates principal/request/args/resources/destination/deadline only | Medium | BY DESIGN (2) | §11.1–11.2 | Phase 4 |
+| 30 | Manifest/intent binding exists **in-process only** with a mock extractor; no `/v1` route issues/transports a manifest and no signed serialization exists | Medium | **RESOLVED (4, in-process)** | §11.1–11.2 | Phase 8 (route/transport/provider) |
 | 31 | Content-level DLP absent: data class is a registration-declared fact; no canary/pattern inspection of payloads | High | BY DESIGN (2) | §15 | Phase 6 |
 | 32 | Execution authorization is an in-process guardrail, not a sandbox: malicious in-process code could bypass private internals | High | BY DESIGN (2) | §14.2 | Phase 10 |
 | 33 | Concurrency bounds and the in-memory sink are per process/event loop; no cross-worker coordination | Medium | BY DESIGN (2) | §18.2 | Later operational phase |
 | 34 | `risk-v1` weights uncalibrated; factor set minimal (no identity/session/history factors) | Low | BY DESIGN (2) | §11.3–11.4 | Phases 5/9 |
 | 36 | Detector heuristics are modest: English-pattern based, homoglyphs are flagged but not normalized before matching, quoted/educational content can still raise FLAG, and PASS means "no configured finding matched", not "safe" | Medium | BY DESIGN (3) | §7.3 | Phase 9 evaluation; expand patterns/normalization deliberately with tests |
-| 37 | Trust labels, detector findings, and session signals have no consumer yet (no routes/model); session state is not an authorization or scoring input | Medium | BY DESIGN (3) | §§7.4, 8 | Phases 4/5 (intent/model), Phase 8 (routes) |
+| 37 | Trust labels, detector findings, and session signals have no consumer yet (no routes/model); session state is not an authorization or scoring input. Intent manifests are consumed by the app gateway but no route/provider produces them | Medium | BY DESIGN (3-4) | §§7.4, 8 | Phase 5 (session/risk factors), Phase 8 (routes/model) |
 | 38 | Abandoned session rows persist until touched (lazy expiry only); no scheduled pruning | Low | BY DESIGN (3) | §20.2 | Later operational phase (retention job) |
+| 39 | Intent manifests are sentinel-sealed in-process objects, not signed tokens; no route may accept a client-carried manifest without a signing/transport contract | Medium | BY DESIGN (4) | §11.1 | Phase 8 |
+| 40 | App uses the two-scenario mock intent extractor; general NLU and real local-model accuracy are unmeasured | Medium | BY DESIGN (4) | §8 | Phase 8 (provider), Phase 9 (evaluation) |
+| 41 | Intent `max_uses` tracking is per process/in memory (10,000 manifest cap, fail-closed); multi-worker instances enforce independently | Medium | BY DESIGN (4) | §11.1 | Later operational phase |
+| 42 | Manifest request binding uses a server-assigned `request_id` but no request-body digest; the Phase 8 route must generate unique ids and cannot let clients choose them | Low | BY DESIGN (4) | §11.1 | Phase 8 |
+| 43 | Intent constraints are exact-match only (no wildcards/ranges/floats); coarse extractor proposals may require clarification | Low | BY DESIGN (4) | §11.1 | Revisit only with documented semantics/tests |
 
 ## Behavioral notes (expected behavior, not defects)
 

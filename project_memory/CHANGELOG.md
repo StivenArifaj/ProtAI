@@ -4,6 +4,19 @@ Concise, dated history of project activity. Newest first.
 
 ## 2026-10-19
 
+- **Phase 4 (intent extraction and action validation) implemented and verified** (same
+  day as 0a-3): new `intent/` package with a server-only manifest issuer, two-scenario
+  mock extractor, strict local-model adapter interface (bounded/duplicate-key-safe JSON,
+  bounded retries, outage/timeout mapping), sentinel-sealed request/principal/tenant/
+  policy-bound manifests with short expiry and goal digest, exact action/resource/
+  destination/parameter constraints with bounded uses, and trusted-timezone
+  `TODAY`/`THIS_WEEK` resolution (DST-tested). Gateway gains manifest verification,
+  exact constraint comparison, and post-policy use reservation; app wiring exposes
+  `intent_usage_tracker`/`intent_manifest_service`, adds `INTENT_MANIFEST_TTL_SECONDS`,
+  and constructs the gateway with the tracker. Contract recorded in ADR-011. Evidence
+  V51+ in [TESTING_AND_VERIFICATION.md](TESTING_AND_VERIFICATION.md) — **661 tests**
+  (568 unit + 64 integration + 29 security), 8-step gate green. Phase record:
+  [phases/PHASE_4_COMPLETE.md](phases/PHASE_4_COMPLETE.md).
 - **Phase 3 (input threat defense and provenance) implemented and verified** (same day as
   0a-3): shared strict YAML helper (`security/safe_yaml.py`, reused by the policy loader);
   advisory input-defense package (`input_defense/{models,config,normalize,heuristics,

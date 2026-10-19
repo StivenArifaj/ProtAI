@@ -2,15 +2,16 @@
 
 Rules: never claim a result that was not produced by a command actually run. Fresh
 re-runs and historical records are kept in separate tables. Evidence IDs (V1–V29 for
-0a/0b; V30–V35 for Phase 1; V36–V42 for Phase 2; V43+ for Phase 3) are referenced from
-[IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md) and the phase records.
+0a/0b; V30–V35 for Phase 1; V36–V42 for Phase 2; V43–V50 for Phase 3; V51+ for Phase 4)
+are referenced from [IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md) and the phase
+records.
 
 ## How to verify (documented commands)
 
 | Command | What it checks | Expected |
 |---|---|---|
 | `uv sync --frozen` | lockfile/install consistency | installs with no resolution drift |
-| `uv run pytest` | unit/integration/security tests | 600 passed (DB-backed integration skips cleanly if PostgreSQL is unreachable) |
+| `uv run pytest` | unit/integration/security tests | 661 passed (DB-backed integration skips cleanly if PostgreSQL is unreachable) |
 | `bash scripts/check.sh` | full local gate (8 steps) | exit 0; prints "All checks passed." |
 | `uv run alembic upgrade head` | migrations (needs §5.4 env; host `db`→`127.0.0.1`) | applies baseline to an empty DB; second run reports already at head |
 | `docker compose config -q` | Compose file syntax | exit 0 |
@@ -45,6 +46,26 @@ authorization — a security test now proves a non-authorization value raises
 `MockEmailAdapter` requires `super().__init__()` (its store is an instance attribute);
 the integration deny test initially asserted a non-existent `data_class` field on
 `RiskAssessment` (the field lives in the audit payload, value `PUBLIC`).
+
+## Fresh evidence (2026-10-19, Phase 4 session)
+
+| ID | Command / check | Result |
+|---|---|---|
+| V51 | `uv run --frozen pytest -q tests/unit/test_intent_models.py tests/unit/test_intent_extractors.py tests/unit/test_intent_validation.py tests/unit/test_intent_service.py tests/security/test_intent_no_grant.py` | PASS — **56 passed** (50 intent unit: sealing/binding/expiry, strict extractor output/retry/outage, exact constraint + tracker + DST/math, service clarification/issuance/limits; 6 security no-grant tests) |
+| V52 | `uv run --frozen pytest -q tests/integration/test_intent_wiring.py tests/unit/test_settings.py` | PASS — **63 passed** (4 app-wiring tests incl. end-to-end allow/limit/clarification/wrong-request against real PostgreSQL; 59 settings tests incl. TTL default/bounds) |
+| V53 | `uv run --frozen mypy src` + `ruff check src tests` + `ruff format --check src tests` | PASS — strict mypy clean (60 source files); ruff clean; 151 files already formatted |
+| V54 | `uv run --frozen pytest -q` + `bash scripts/check.sh` | PASS — **661 passed** (568 unit + 64 integration + 29 security); gate exit 0, all 8 steps; Gitleaks 8.30.1 dir+git "no leaks found" (23 commits scanned); prohibited patterns clean; `compare_digest` confined |
+| V55 | Manual `IntentManifestService` smoke (demo summarize/read, forward, greeting) | PASS — ACTIVE with resolved UTC window; ACTIVE; REJECTED (no manifest); REQUIRES_CLARIFICATION (no manifest) |
+
+Development-time findings fixed and regression-tested during Phase 4 (recorded for
+honesty): the integration test first used `app.state.intent_tracker`, but the app state key
+is `intent_usage_tracker` (`AttributeError` caught and test corrected); repeated
+`asyncio.run` calls in one test left SQLAlchemy pool connections bound to closed loops
+(`RuntimeWarning: coroutine 'Connection._cancel' was never awaited`) — fixed by running all
+gateway calls in one `async def scenario()` and awaiting `app.state.database.dispose()`;
+the local-model timeout test initially passed `timeout_seconds=0.01`, below the
+constructor's 0.1 s minimum (corrected to 0.1); the service module briefly carried an
+unused `IntentManifest` import (removed for ruff/mypy).
 
 ## Fresh evidence (2026-10-19, Phase 3 session)
 
@@ -143,15 +164,15 @@ iterations, at the ruff format and lint steps. Removing the file restored exit 0
 The Phase 0b gate additionally fails if Gitleaks is missing or version-mismatched
 (deliberate pin, 8.30.1).
 
-## Test inventory (600 tests)
+## Test inventory (661 tests)
 
 Unit (`tests/unit/`):
 
-- `test_settings.py` (58) — 0a validation + masking + docs flag; 0b host-auth key
+- `test_settings.py` (59) — 0a validation + masking + docs flag; 0b host-auth key
   schemas, duplicate rejection, sample-secret refusal, resolver guard, TTL/tolerance
   relation, `policy_self_checks_path`; 1 `policy_path`/`risk_thresholds_path` defaults,
   overrides, empty-path rejection; 3 input-defense path/session TTL defaults, TTL ≤
-  max-age, positive windows.
+  max-age, positive windows; Phase 4 intent-manifest TTL default/bounds.
 - `test_constant_time.py` (16) — equality helpers incl. unequal-length and hex paths.
 - `test_canonical_json.py` (17) — canonical text/bytes stability and edge cases.
 - `test_hash_chain.py` (17) — ADR-002 formula, genesis, fixed vectors, hex conversion.
@@ -192,6 +213,15 @@ Unit (`tests/unit/`):
 - `test_context_labels.py` (7) — trust labels, external email forced untrusted,
   deterministic rendering, duplicate/empty/blank refusals.
 - `test_sessions.py` (5) — opaque IDs, TTL/max-age expiry math, counter/session constants.
+- `test_intent_models.py` (14) — sentinel sealing/forgery, strict payloads/constraints,
+  request/principal/tenant/policy binding, expiry/not-yet-valid, status consistency,
+  resolved-time invariants.
+- `test_intent_extractors.py` (13) — mock scenarios, strict local-model JSON, duplicate
+  keys/unknown fields/oversize, retries, provider outage/timeout, unsafe destination.
+- `test_intent_validation.py` (10) — exact action/resource/destination/parameter matching,
+  tracker uses/expiry/capacity/purge, DST TODAY, THIS_WEEK, timezone validation.
+- `test_intent_service.py` (13) — issuance/bindings/digest/TTL, relative dates, missing
+  timezone, ambiguity/rejection, unenforceable constraints, outage/malformed, limits.
 
 Security (`tests/security/`):
 
@@ -202,6 +232,9 @@ Security (`tests/security/`):
 - `test_input_defense_failure.py` (11) — oversize/unsupported/invalid-encoding stop before
   heuristics; detector/normalizer/classifier faults yield `DETECTOR_UNAVAILABLE`
   (never PASS, no raw content in reports); trust label preserved; no invocation surface.
+- `test_intent_no_grant.py` (6) — forged/missing/expired/wrong-principal/wrong-request
+  manifests, other action/resource/parameter, unlisted destination, use limit, and
+  legacy no-tracker fail-closed all deny without execution.
 
 Integration (`tests/integration/`):
 
@@ -226,6 +259,9 @@ Integration (`tests/integration/`):
   `audit_unavailable`.
 - `test_gateway_wiring.py` (2) — `create_app` exposes a validated registry + gateway
   (`ChainAuditRecorder`); startup refuses a policy tool with no registration.
+- `test_intent_wiring.py` (4) — app exposes intent service/tracker and the gateway uses
+  that tracker; TTL applied; end-to-end allow + use exhaustion; clarification and
+  wrong-request manifest denial (real PostgreSQL).
 - `conftest.py` + `db_helpers.py` — auto-create `firewall_test`, run Alembic, skip
   cleanly when PostgreSQL is unreachable; NullPool harness for asyncio.run tests.
 
