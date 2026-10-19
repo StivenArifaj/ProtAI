@@ -171,6 +171,27 @@ def test_policy_self_checks_path_defaults_and_overrides() -> None:
     assert overridden.policy_self_checks_path == "/etc/policy_checks.yaml"
 
 
+def test_policy_paths_default_and_override() -> None:
+    settings = make_settings()
+    assert settings.policy_path == "config/policies.yaml"
+    assert settings.risk_thresholds_path == "config/risk_thresholds.yaml"
+    overridden = make_settings(
+        policy_path="/etc/policies.yaml",
+        risk_thresholds_path="/etc/risk_thresholds.yaml",
+    )
+    assert overridden.policy_path == "/etc/policies.yaml"
+    assert overridden.risk_thresholds_path == "/etc/risk_thresholds.yaml"
+
+
+@pytest.mark.parametrize(
+    "field",
+    ["policy_path", "risk_thresholds_path", "policy_self_checks_path"],
+)
+def test_empty_policy_paths_are_rejected(field: str) -> None:
+    with pytest.raises(ValidationError):
+        make_settings(**{field: ""})
+
+
 # --- Host-auth key configuration (blueprint sections 5.4, 9.2) ---
 
 

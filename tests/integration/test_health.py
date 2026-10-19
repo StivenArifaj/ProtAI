@@ -9,7 +9,8 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from ai_security.api.app import create_app
-from ai_security.api.dependencies import database_ready, policy_self_checks_ok
+from ai_security.api.dependencies import database_ready, policy_readiness
+from ai_security.policy.self_checks import PolicyReadinessReport
 from ai_security.settings import Settings
 
 SettingsFactory = Callable[..., Settings]
@@ -22,11 +23,19 @@ def override_database_ready(app: FastAPI, *, ready: bool) -> None:
     app.dependency_overrides[database_ready] = _ready
 
 
-def override_policy_self_checks(app: FastAPI, *, ok: bool) -> None:
-    async def _ok() -> bool:
-        return ok
+def override_policy_readiness(app: FastAPI, report: PolicyReadinessReport) -> None:
+    async def _report() -> PolicyReadinessReport:
+        return report
 
-    app.dependency_overrides[policy_self_checks_ok] = _ok
+    app.dependency_overrides[policy_readiness] = _report
+
+
+def assert_policy_metadata(payload: dict[str, object]) -> None:
+    assert payload["policy_version"] == "dev-1"
+    policy_hash = payload["policy_hash"]
+    assert isinstance(policy_hash, str)
+    assert len(policy_hash) == 64
+    int(policy_hash, 16)  # hexadecimal
 
 
 @pytest.fixture
@@ -46,10 +55,14 @@ def test_liveness_returns_alive(client: TestClient) -> None:
 def test_readiness_returns_ready_when_all_checks_pass(client: TestClient) -> None:
     response = client.get("/health/ready")
     assert response.status_code == 200
-    assert response.json() == {
-        "status": "ready",
-        "checks": {"config": True, "database": True, "policy_self_checks": True},
+    payload = response.json()
+    assert payload["status"] == "ready"
+    assert payload["checks"] == {
+        "config": True,
+        "database": True,
+        "policy_self_checks": True,
     }
+    assert_policy_metadata(payload)
 
 
 def test_readiness_returns_503_and_leaks_nothing(settings_factory: SettingsFactory) -> None:
@@ -58,10 +71,14 @@ def test_readiness_returns_503_and_leaks_nothing(settings_factory: SettingsFacto
     with TestClient(app) as client:
         response = client.get("/health/ready")
     assert response.status_code == 503
-    assert response.json() == {
-        "status": "not_ready",
-        "checks": {"config": True, "database": False, "policy_self_checks": True},
+    payload = response.json()
+    assert payload["status"] == "not_ready"
+    assert payload["checks"] == {
+        "config": True,
+        "database": False,
+        "policy_self_checks": True,
     }
+    assert_policy_metadata(payload)
     for forbidden in ("firewall_dev_only", "postgresql", "asyncpg", "Traceback"):
         assert forbidden not in response.text
 
@@ -71,14 +88,38 @@ def test_readiness_returns_503_when_policy_self_checks_fail(
 ) -> None:
     app = create_app(settings_factory())
     override_database_ready(app, ready=True)
-    override_policy_self_checks(app, ok=False)
+    override_policy_readiness(
+        app, PolicyReadinessReport(ok=False, policy_version="dev-1", policy_hash="ab" * 32)
+    )
     with TestClient(app) as client:
         response = client.get("/health/ready")
     assert response.status_code == 503
-    assert response.json() == {
-        "status": "not_ready",
-        "checks": {"config": True, "database": True, "policy_self_checks": False},
+    payload = response.json()
+    assert payload["status"] == "not_ready"
+    assert payload["checks"] == {
+        "config": True,
+        "database": True,
+        "policy_self_checks": False,
     }
+    assert payload["policy_version"] == "dev-1"
+    assert payload["policy_hash"] == "ab" * 32
+
+
+def test_readiness_reports_no_policy_metadata_when_policy_config_is_invalid(
+    settings_factory: SettingsFactory,
+) -> None:
+    app = create_app(settings_factory())
+    override_database_ready(app, ready=True)
+    override_policy_readiness(
+        app, PolicyReadinessReport(ok=False, policy_version=None, policy_hash=None)
+    )
+    with TestClient(app) as client:
+        response = client.get("/health/ready")
+    assert response.status_code == 503
+    payload = response.json()
+    assert payload["checks"]["policy_self_checks"] is False
+    assert payload["policy_version"] is None
+    assert payload["policy_hash"] is None
 
 
 @pytest.mark.parametrize("env", ["development", "test"])

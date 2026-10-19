@@ -1,8 +1,9 @@
 """Shared FastAPI dependencies.
 
-The settings accessor, the readiness database probe, and the readiness policy
-self-check probe. Both probes are exposed as dependencies so tests can override them
-without a live database or fixture file.
+The settings accessor, the readiness database probe, and the readiness policy report
+(ADR-007: policy version/hash metadata plus live self-check evaluation). Both probes are
+exposed as dependencies so tests can override them without a live database or fixture
+file.
 """
 
 from __future__ import annotations
@@ -13,7 +14,7 @@ from typing import Annotated
 from fastapi import Depends, Request
 
 from ai_security.persistence.database import Database
-from ai_security.policy.self_checks import policy_self_checks_pass
+from ai_security.policy.self_checks import PolicyReadinessReport, evaluate_policy_readiness
 from ai_security.settings import Settings
 
 
@@ -34,6 +35,12 @@ async def database_ready(database: Annotated[Database, Depends(get_database)]) -
     return await database.healthy()
 
 
-async def policy_self_checks_ok(settings: Annotated[Settings, Depends(get_settings)]) -> bool:
-    """Readiness dependency: re-evaluates the ADR-007 fixtures on every probe."""
-    return policy_self_checks_pass(Path(settings.policy_self_checks_path))
+async def policy_readiness(
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> PolicyReadinessReport:
+    """Readiness dependency: re-evaluates policy documents + ADR-007 fixtures live."""
+    return evaluate_policy_readiness(
+        Path(settings.policy_path),
+        Path(settings.risk_thresholds_path),
+        Path(settings.policy_self_checks_path),
+    )

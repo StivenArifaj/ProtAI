@@ -1,11 +1,13 @@
 """Application settings with fail-closed validation.
 
-Implemented scope: ``APP_ENV``, ``LOG_LEVEL``, ``DATABASE_URL`` (Phase 0a) and the
-Phase 0b security-foundation settings that actually have consumers: the principal
+Implemented scope: ``APP_ENV``, ``LOG_LEVEL``, ``DATABASE_URL`` (Phase 0a), the
+Phase 0b security-foundation settings that actually have consumers (the principal
 resolver selection, the host-authentication key configuration, timestamp tolerance and
-nonce TTL, and the request-size bound. Later-phase variables (model provider, session
-signals, audit raw-content mode) are introduced together with the controls that consume
-them, so this module never pretends to validate configuration it does not use.
+nonce TTL, the request-size bound), and the Phase 1 policy document paths loaded at
+startup (``POLICY_PATH``, ``RISK_THRESHOLDS_PATH``, ``POLICY_SELF_CHECKS_PATH``).
+Later-phase variables (model provider, session signals, audit raw-content mode) are
+introduced together with the controls that consume them, so this module never pretends
+to validate configuration it does not use.
 
 Validation rules enforced here:
 
@@ -197,6 +199,8 @@ class Settings(BaseSettings):
     host_auth_timestamp_tolerance_seconds: int = Field(default=60, gt=0)
     host_auth_nonce_ttl_seconds: int = Field(default=300, gt=0)
     request_max_bytes: int = Field(default=65536, gt=0)
+    policy_path: str = Field(default="config/policies.yaml", min_length=1)
+    risk_thresholds_path: str = Field(default="config/risk_thresholds.yaml", min_length=1)
     policy_self_checks_path: str = Field(default="config/policy_self_checks.yaml", min_length=1)
 
     _host_auth_keys: dict[str, HostAuthKey] = PrivateAttr(default_factory=dict)
