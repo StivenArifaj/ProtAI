@@ -1,13 +1,19 @@
-"""Policy self-check fixtures: loader, runner, and pass/fail reporting (ADR-007).
+"""Policy self-check fixtures evaluated against the real policy engine (ADR-007).
 
 ``config/policy_self_checks.yaml`` holds deterministic, side-effect-free evaluation
 fixtures derived from ``docs/POLICY_DECISION_MATRIX.md``. Startup and readiness evaluate
-them against the active decision path; any mismatch fails startup/readiness (deliberate
-fail-fast on policy/documentation drift).
+them against the loaded policy documents (``config/policies.yaml`` +
+``config/risk_thresholds.yaml``) and the real engine; any mismatch fails
+startup/readiness (deliberate fail-fast on policy drift).
 
-Loading is strict: safe YAML only, unknown keys rejected, enum values exact, duplicate
-fixture names rejected, and a missing/malformed file is a configuration error — never a
-silent pass.
+A fixture may carry a strictly validated ``tool_policy`` override to express matrix
+rows the starter policy deliberately does not enable (blueprint section 10.5's
+"dedicated test scenario", e.g. external egress). The override is validated by the same
+``ToolPolicy`` model as production policy and only affects that one evaluation.
+
+Loading is strict: safe YAML only, duplicate keys rejected, unknown keys rejected, enum
+values exact, duplicate fixture names rejected, and a missing/malformed file is a
+configuration error — never a silent pass.
 """
 
 from __future__ import annotations
@@ -18,7 +24,10 @@ from pathlib import Path
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from .interim_matrix import Decision, PolicyInput, evaluate
+from ai_security.firewall.decision import DecisionReason, FirewallDecision
+from ai_security.firewall.policy_engine import PolicyEngine, PolicyEvaluationRequest
+from ai_security.policy.loader import PolicyConfigError, load_policy_bundle
+from ai_security.policy.models import PolicyBundle, ToolPolicy
 
 
 class PolicySelfCheckError(RuntimeError):
@@ -32,9 +41,9 @@ class PolicySelfCheckConfigError(PolicySelfCheckError):
 @dataclass(frozen=True)
 class PolicySelfCheckFailure:
     fixture: str
-    expected: Decision
-    actual: Decision
-    reason: str  # the evaluator's actual reason code
+    expected: FirewallDecision
+    actual: FirewallDecision
+    reason: DecisionReason  # the engine's actual reason code
 
 
 class PolicySelfCheckFixture(BaseModel):
@@ -42,9 +51,10 @@ class PolicySelfCheckFixture(BaseModel):
 
     name: str = Field(min_length=1, max_length=128)
     description: str | None = None
-    case: PolicyInput
-    expected_decision: Decision
-    expected_reason: str | None = None
+    case: PolicyEvaluationRequest
+    tool_policy: ToolPolicy | None = None
+    expected_decision: FirewallDecision
+    expected_reason: DecisionReason | None = None
 
 
 class PolicySelfCheckFile(BaseModel):
@@ -53,64 +63,113 @@ class PolicySelfCheckFile(BaseModel):
     fixtures: list[PolicySelfCheckFixture] = Field(min_length=1)
 
 
-def load_policy_self_checks(path: Path) -> list[PolicySelfCheckFixture]:
+def load_policy_self_checks(path: str | Path) -> list[PolicySelfCheckFixture]:
     """Load and strictly validate the fixture file."""
+    fixture_path = Path(path)
     try:
-        raw_text = path.read_text(encoding="utf-8")
+        raw_text = fixture_path.read_text(encoding="utf-8")
     except OSError as exc:
         raise PolicySelfCheckConfigError(
-            f"policy self-check file {path} cannot be read: {exc}"
+            f"policy self-check file {fixture_path} cannot be read: {exc}"
         ) from exc
     try:
         data = yaml.safe_load(raw_text)
     except yaml.YAMLError as exc:
         raise PolicySelfCheckConfigError(
-            f"policy self-check file {path} is not valid YAML"
+            f"policy self-check file {fixture_path} is not valid YAML"
         ) from exc
     try:
         document = PolicySelfCheckFile.model_validate(data)
     except ValidationError as exc:
         raise PolicySelfCheckConfigError(
-            f"policy self-check file {path} failed strict validation: {exc.error_count()} error(s)"
+            f"policy self-check file {fixture_path} failed strict validation: "
+            f"{exc.error_count()} error(s)"
         ) from exc
     seen: set[str] = set()
     for fixture in document.fixtures:
         if fixture.name in seen:
             raise PolicySelfCheckConfigError(
-                f"policy self-check file {path} contains duplicate fixture name {fixture.name!r}"
+                f"policy self-check file {fixture_path} contains duplicate fixture name "
+                f"{fixture.name!r}"
             )
         seen.add(fixture.name)
     return document.fixtures
 
 
-def run_policy_self_checks(fixtures: list[PolicySelfCheckFixture]) -> list[PolicySelfCheckFailure]:
-    """Evaluate every fixture; return all mismatches (empty list = pass)."""
+def run_policy_self_checks(
+    fixtures: list[PolicySelfCheckFixture], bundle: PolicyBundle
+) -> list[PolicySelfCheckFailure]:
+    """Evaluate every fixture against the bundle; return all mismatches (empty = pass)."""
     failures: list[PolicySelfCheckFailure] = []
     for fixture in fixtures:
-        decision = evaluate(fixture.case)
+        scoped = bundle
+        if fixture.tool_policy is not None:
+            scoped = bundle.with_tool_policy(fixture.case.tool_id, fixture.tool_policy)
+        record = PolicyEngine(scoped).evaluate(fixture.case)
         reason_mismatch = (
-            fixture.expected_reason is not None and decision.reason != fixture.expected_reason
+            fixture.expected_reason is not None and record.reason != fixture.expected_reason
         )
-        if decision.decision is not fixture.expected_decision or reason_mismatch:
+        if record.decision != fixture.expected_decision or reason_mismatch:
             failures.append(
                 PolicySelfCheckFailure(
                     fixture=fixture.name,
                     expected=fixture.expected_decision,
-                    actual=decision.decision,
-                    reason=decision.reason,
+                    actual=record.decision,
+                    reason=record.reason,
                 )
             )
     return failures
 
 
-def check_policy_self_checks(path: str | Path) -> list[PolicySelfCheckFailure]:
-    """Load and evaluate the fixture file (raises ``PolicySelfCheckConfigError`` if invalid)."""
-    return run_policy_self_checks(load_policy_self_checks(Path(path)))
+def check_policy_self_checks(
+    policies_path: str | Path, risk_thresholds_path: str | Path, fixtures_path: str | Path
+) -> list[PolicySelfCheckFailure]:
+    """Load policy documents + fixtures and evaluate (raises ``PolicyConfigError``/
+    ``PolicySelfCheckConfigError`` when either configuration is invalid)."""
+    bundle = load_policy_bundle(policies_path, risk_thresholds_path)
+    fixtures = load_policy_self_checks(fixtures_path)
+    return run_policy_self_checks(fixtures, bundle)
 
 
-def policy_self_checks_pass(path: str | Path) -> bool:
-    """Readiness-shaped probe: never raises; invalid/missing configuration is a failure."""
+def policy_self_checks_pass(
+    policies_path: str | Path, risk_thresholds_path: str | Path, fixtures_path: str | Path
+) -> bool:
+    """Never-raising probe: invalid/missing configuration is a failure."""
     try:
-        return not check_policy_self_checks(path)
-    except PolicySelfCheckConfigError:
+        return not check_policy_self_checks(policies_path, risk_thresholds_path, fixtures_path)
+    except (PolicyConfigError, PolicySelfCheckConfigError):
         return False
+
+
+@dataclass(frozen=True)
+class PolicyReadinessReport:
+    """Readiness-shaped policy report (ADR-007: expose version/hash in health metadata)."""
+
+    ok: bool
+    policy_version: str | None
+    policy_hash: str | None
+
+
+def evaluate_policy_readiness(
+    policies_path: str | Path, risk_thresholds_path: str | Path, fixtures_path: str | Path
+) -> PolicyReadinessReport:
+    """Readiness probe: reload both documents + fixtures live; never raises.
+
+    Invalid policy configuration reports no version/hash; a valid policy with broken
+    fixtures or mismatches still reports the loaded version/hash with ``ok=False``.
+    """
+    try:
+        bundle = load_policy_bundle(policies_path, risk_thresholds_path)
+    except PolicyConfigError:
+        return PolicyReadinessReport(ok=False, policy_version=None, policy_hash=None)
+    try:
+        fixtures = load_policy_self_checks(fixtures_path)
+    except PolicySelfCheckConfigError:
+        return PolicyReadinessReport(
+            ok=False, policy_version=bundle.version, policy_hash=bundle.combined_hash
+        )
+    return PolicyReadinessReport(
+        ok=not run_policy_self_checks(fixtures, bundle),
+        policy_version=bundle.version,
+        policy_hash=bundle.combined_hash,
+    )

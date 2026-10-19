@@ -1,0 +1,13 @@
+# Risk thresholds (blueprint v1.2 section 11.4).
+#
+# INITIAL EXPERIMENTAL DEFAULTS - not empirically validated security thresholds. They
+# apply only to actions that already passed every hard gate (hard deny, invalid
+# arguments, missing principal, failed egress control, outstanding approval). No
+# threshold may override a hard denial. Calibration arrives with the Phase 9
+# evaluation protocol.
+schema_version: 1
+version: "dev-1"
+
+thresholds:
+  ask_user_at_or_above: 40
+  block_at_or_above: 80

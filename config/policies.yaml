@@ -1,0 +1,26 @@
+# Starter policy (blueprint v1.2 section 10.5; ADR-007, ADR-008).
+#
+# Exact tool/action identifiers only; tools absent from this document are unknown and
+# denied. Side-effect classes are the canonical enum from tools/base.py. The initial
+# policy allows the demo read/summarize actions; mock_external_sink.write is registered
+# but external egress is disabled by default and is enabled only in the dedicated
+# self-check scenarios (config/policy_self_checks.yaml).
+#
+# Validation is strict (policy/loader.py): safe YAML only, duplicate keys rejected,
+# unknown fields/enums/invalid destinations refuse startup.
+schema_version: 1
+version: "dev-1"
+
+tools:
+  mock_email.search:
+    side_effect_class: READ_ONLY
+  mock_email.read:
+    side_effect_class: READ_ONLY
+  text.summarize:
+    side_effect_class: READ_ONLY
+  mock_files.read:
+    side_effect_class: READ_ONLY
+
+  mock_external_sink.write:
+    side_effect_class: EXTERNAL_MUTATION
+    external_egress_enabled: false
