@@ -11,13 +11,16 @@ destination allowlist, thresholds).
 Evaluation order (blueprint section 10.2, enforced and tested):
 
 1. principal resolved by the trusted adapter;
-2. tool/action exists in the policy/registry catalog (absent -> ``unknown_tool``);
-3. the declared side-effect class matches the policy record; arguments are valid;
-4. hard-deny facts block regardless of score or approval;
-5. resource scope and permission;
-6. destination bounds (canonical exact match; no wildcards in v1);
-7. the decision matrix rows (blueprint section 10.3) with configured thresholds;
-8. a ``DecisionRecord`` carrying decision, stable reason code, and policy version/hash.
+2. the proposal/request binding is valid (mismatch -> ``binding_mismatch``);
+3. tool/action exists in the policy/registry catalog (absent -> ``unknown_tool``);
+4. the declared side-effect class matches the policy record; arguments are valid;
+5. hard-deny facts block regardless of score or approval;
+6. an expired proposal deadline blocks (``deadline_exceeded``);
+7. resource scope and permission;
+8. destination bounds (consistency, canonical exact match, registered capability; no
+   wildcards in v1);
+9. the decision matrix rows (blueprint section 10.3) with configured thresholds;
+10. a ``DecisionRecord`` carrying decision, stable reason code, and policy version/hash.
 
 Fail-closed rules: any unknown/invalid state, malformed destination, or inconsistent
 evidence yields ``BLOCK``; risk thresholds apply only to otherwise eligible actions; a
@@ -45,11 +48,13 @@ RISK_SCORE_MAX = 100
 class PolicyEvaluationRequest(BaseModel):
     """The action description plus upstream facts for one policy evaluation.
 
-    ``principal_resolved``/``arguments_valid``/``hard_deny``/``resource_authorized``/
-    ``risk_score`` are facts produced by earlier layers (Phase 2+ registry, validator,
-    scope checks, risk engine). Policy-derived facts (tool membership, explicit
-    permission, approval eligibility, egress enablement, destination allowlist) are
-    never accepted from this request — they come from the loaded policy bundle.
+    ``principal_resolved``/``binding_valid``/``arguments_valid``/``hard_deny``/
+    ``deadline_exceeded``/``resource_authorized``/``destination_consistent``/
+    ``destination_registered``/``risk_score`` are facts produced by earlier layers
+    (Phase 2+ gateway, registry, validator, scope checks, risk engine). Policy-derived
+    facts (tool membership, explicit permission, approval eligibility, egress
+    enablement, destination allowlist) are never accepted from this request — they come
+    from the loaded policy bundle.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -60,9 +65,13 @@ class PolicyEvaluationRequest(BaseModel):
     risk_score: int = Field(ge=RISK_SCORE_MIN, le=RISK_SCORE_MAX, strict=True)
 
     principal_resolved: bool = True
+    binding_valid: bool = True
     arguments_valid: bool = True
     hard_deny: bool = False
+    deadline_exceeded: bool = False
     resource_authorized: bool = True
+    destination_consistent: bool = True
+    destination_registered: bool = True
 
     destination: str | None = Field(default=None, min_length=1, max_length=2048)
 
@@ -95,28 +104,40 @@ class PolicyEngine:
         if not request.principal_resolved:
             return block, DecisionReason.principal_not_resolved
 
-        # 2. tool/action must exist in the catalog; absent = unknown = deny.
+        # 2. the proposal must be bound to this verified request/context.
+        if not request.binding_valid:
+            return block, DecisionReason.binding_mismatch
+
+        # 3. tool/action must exist in the catalog; absent = unknown = deny.
         tool_policy = self._bundle.tool_policy(request.tool_id)
         if tool_policy is None:
             return block, DecisionReason.unknown_tool
 
-        # 3. the proposal's declared class must match the registered class; arguments
+        # 4. the proposal's declared class must match the registered class; arguments
         #    must have passed the tool's strict schema.
         if tool_policy.side_effect_class is not request.side_effect_class:
             return block, DecisionReason.side_effect_class_mismatch
         if not request.arguments_valid:
             return block, DecisionReason.invalid_arguments
 
-        # 4. hard-deny facts dominate every score and approval.
+        # 5. hard-deny facts dominate every score and approval.
         if request.hard_deny:
             return block, DecisionReason.hard_denied
 
-        # 5. resource scope and permission.
+        # 6. an already-expired proposal deadline is a hard constraint.
+        if request.deadline_exceeded:
+            return block, DecisionReason.deadline_exceeded
+
+        # 7. resource scope and permission.
         if not request.resource_authorized:
             return block, DecisionReason.resource_not_authorized
 
-        # 6. destination bounds: only EXTERNAL_MUTATION may carry a destination, and it
-        #    must canonicalize; anything else is a malformed action (fail closed).
+        # 8. destination bounds: the declared destination must be consistent with the
+        #    validated call, only EXTERNAL_MUTATION may carry one, it must canonicalize,
+        #    and it must be within the tool's registered destination capability. Any
+        #    other state is a malformed action (fail closed).
+        if not request.destination_consistent:
+            return block, DecisionReason.invalid_destination
         canonical_destination: str | None = None
         if request.destination is not None:
             if request.side_effect_class is not SideEffectClass.external_mutation:
@@ -125,8 +146,10 @@ class PolicyEngine:
                 canonical_destination = canonicalize_destination(request.destination)
             except DestinationCanonicalizationError:
                 return block, DecisionReason.invalid_destination
+            if not request.destination_registered:
+                return block, DecisionReason.destination_not_allowlisted
 
-        # 7. matrix rows for otherwise fully eligible actions.
+        # 9. matrix rows for otherwise fully eligible actions.
         return self._apply_matrix(tool_policy, request, canonical_destination)
 
     # -- matrix rows (section 10.3) ---------------------------------------------------

@@ -472,6 +472,64 @@ MATRIX_CASES: list[
         BLOCK,
         DecisionReason.invalid_destination,
     ),
+    # Phase 2 gateway facts (ADR-009)
+    (
+        "binding-mismatch",
+        {},
+        read_case(data_class="PUBLIC", risk_score=0, binding_valid=False),
+        BLOCK,
+        DecisionReason.binding_mismatch,
+    ),
+    (
+        "binding-mismatch-precedes-unknown-tool",
+        {},
+        read_case(
+            tool_id="shell.exec",
+            side_effect_class="DESTRUCTIVE",
+            data_class="RESTRICTED",
+            risk_score=0,
+            binding_valid=False,
+        ),
+        BLOCK,
+        DecisionReason.binding_mismatch,
+    ),
+    (
+        "deadline-exceeded",
+        {},
+        read_case(data_class="PUBLIC", risk_score=0, deadline_exceeded=True),
+        BLOCK,
+        DecisionReason.deadline_exceeded,
+    ),
+    (
+        "deadline-exceeded-precedes-resource-scope",
+        {},
+        read_case(
+            data_class="PUBLIC", risk_score=0, deadline_exceeded=True, resource_authorized=False
+        ),
+        BLOCK,
+        DecisionReason.deadline_exceeded,
+    ),
+    (
+        "hard-deny-precedes-expired-deadline",
+        {READ_TOOL: read_policy(approval_eligible=True)},
+        read_case(data_class="PUBLIC", risk_score=0, hard_deny=True, deadline_exceeded=True),
+        BLOCK,
+        DecisionReason.hard_denied,
+    ),
+    (
+        "destination-inconsistent",
+        {EXTERNAL_TOOL: ENABLED_EGRESS},
+        external_case(destination_consistent=False),
+        BLOCK,
+        DecisionReason.invalid_destination,
+    ),
+    (
+        "destination-outside-registered-capability",
+        {EXTERNAL_TOOL: ENABLED_EGRESS},
+        external_case(destination_registered=False),
+        BLOCK,
+        DecisionReason.destination_not_allowlisted,
+    ),
 ]
 
 

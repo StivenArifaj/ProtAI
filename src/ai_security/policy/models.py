@@ -28,13 +28,13 @@ from ai_security.security.urls import (
     DestinationCanonicalizationError,
     canonicalize_destination,
 )
-from ai_security.tools.base import SideEffectClass
+from ai_security.tools.base import STABLE_ID_PATTERN, SideEffectClass
 
 SCHEMA_VERSION = 1
 
 # Tool/action identifiers: 1-128 chars, alphanumeric start/end, ``. _ -`` inside.
 # Anchored so the pattern is a full match under pydantic's search-semantics `pattern=`.
-TOOL_ID_PATTERN = r"^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,126}[A-Za-z0-9])?$"
+TOOL_ID_PATTERN = STABLE_ID_PATTERN
 
 
 class Thresholds(BaseModel):

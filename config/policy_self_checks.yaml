@@ -231,3 +231,61 @@ fixtures:
       destination: https://sink.internal.example/collect
     expected_decision: BLOCK
     expected_reason: confidential_egress_blocked
+
+  # Phase 2 gateway facts (blueprint sections 12.3, 6.1; ADR-009). These fixtures are
+  # engine-level rows for facts the gateway produces before evaluation.
+
+  - name: binding-mismatch-denial
+    description: the proposal is not bound to the verified request/context -> BLOCK.
+    case:
+      tool_id: mock_email.read
+      side_effect_class: READ_ONLY
+      data_class: INTERNAL
+      risk_score: 5
+      binding_valid: false
+    expected_decision: BLOCK
+    expected_reason: binding_mismatch
+
+  - name: deadline-exceeded-denial
+    description: the proposal deadline already passed -> BLOCK regardless of risk.
+    case:
+      tool_id: mock_email.read
+      side_effect_class: READ_ONLY
+      data_class: INTERNAL
+      risk_score: 0
+      deadline_exceeded: true
+    expected_decision: BLOCK
+    expected_reason: deadline_exceeded
+
+  - name: inconsistent-destination-denial
+    description: declared destination metadata disagrees with the validated call -> BLOCK.
+    tool_policy:
+      side_effect_class: EXTERNAL_MUTATION
+      external_egress_enabled: true
+      allowed_destinations: ["https://sink.internal.example/collect"]
+    case:
+      tool_id: mock_external_sink.write
+      side_effect_class: EXTERNAL_MUTATION
+      data_class: PUBLIC
+      risk_score: 10
+      destination: https://sink.internal.example/collect
+      destination_consistent: false
+    expected_decision: BLOCK
+    expected_reason: invalid_destination
+
+  - name: unregistered-destination-capability
+    description: destination is policy-allowlisted but outside the tool's registered
+      destination capability -> BLOCK (never executed).
+    tool_policy:
+      side_effect_class: EXTERNAL_MUTATION
+      external_egress_enabled: true
+      allowed_destinations: ["https://sink.internal.example/collect"]
+    case:
+      tool_id: mock_external_sink.write
+      side_effect_class: EXTERNAL_MUTATION
+      data_class: PUBLIC
+      risk_score: 10
+      destination: https://sink.internal.example/collect
+      destination_registered: false
+    expected_decision: BLOCK
+    expected_reason: destination_not_allowlisted

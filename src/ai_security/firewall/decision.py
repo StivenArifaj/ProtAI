@@ -30,11 +30,13 @@ class DecisionReason(StrEnum):
     events). Renaming or removing one is a breaking change.
     """
 
-    # Hard constraints (evaluation-order steps 1-5, section 10.2)
+    # Hard constraints (evaluation-order steps 1-6, section 10.2)
     principal_not_resolved = "principal_not_resolved"
+    binding_mismatch = "binding_mismatch"
     unknown_tool = "unknown_tool"
     invalid_arguments = "invalid_arguments"
     hard_denied = "hard_denied"
+    deadline_exceeded = "deadline_exceeded"
     resource_not_authorized = "resource_not_authorized"
     side_effect_class_mismatch = "side_effect_class_mismatch"
     invalid_destination = "invalid_destination"
@@ -62,6 +64,11 @@ class DecisionReason(StrEnum):
     approval_not_eligible = "approval_not_eligible"
     explicit_permission_required = "explicit_permission_required"
     risk_too_high = "risk_too_high"
+
+    # Operational overrides produced by the gateway (fail closed, section 16.4).
+    # These may only ever downgrade a decision to BLOCK; they never grant execution.
+    policy_evaluation_error = "policy_evaluation_error"
+    audit_unavailable = "audit_unavailable"
 
 
 class DecisionRecord(BaseModel):
