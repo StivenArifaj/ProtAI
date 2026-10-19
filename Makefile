@@ -1,10 +1,13 @@
-.PHONY: check test up down logs
+.PHONY: check test migrate up down logs
 
 check:
 	bash scripts/check.sh
 
 test:
 	uv run pytest
+
+migrate:
+	uv run --frozen alembic upgrade head
 
 up:
 	docker compose up -d db

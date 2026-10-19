@@ -27,6 +27,11 @@ services:
       APP_ENV: development
       LOG_LEVEL: INFO
       DATABASE_URL: postgresql+asyncpg://firewall:firewall_dev_only@db:5432/firewall
+      # Disposable local development host-auth key (32 bytes: "firewall-dev-host-auth-
+      # secret-32b"). The leading underscore key id marks it as non-production. Generate
+      # a fresh secret for any non-development environment; the settings validator
+      # refuses the shipped all-zero sample secret outside development/test.
+      HOST_AUTH_KEYS_JSON: '{"_dev-key": {"secret_b64": "ZmlyZXdhbGwtZGV2LWhvc3QtYXV0aC1zZWNyZXQtMzJi", "host_id": "dev-host", "audience": "ai-agent-security-gateway", "allowed_tenants": ["dev-tenant"]}}'
     ports:
       # Host port 8080 by default: port 8000 is commonly taken by local emulators
       # (e.g., DynamoDB Local). The container itself still listens on 8000.

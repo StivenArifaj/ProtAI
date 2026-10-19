@@ -17,7 +17,13 @@ WORKDIR /app
 COPY pyproject.toml uv.lock README.md ./
 RUN uv sync --frozen --no-install-project --no-dev
 
+# src plus the runtime assets the app reads at startup and migrations it is expected to
+# run (policy self-check fixtures are required at startup; alembic.ini/migrations make
+# `alembic upgrade head` runnable inside the container, e.g. `make migrate` in compose).
 COPY src ./src
+COPY config ./config
+COPY migrations ./migrations
+COPY alembic.ini ./
 RUN uv sync --frozen --no-dev
 
 RUN groupadd --gid 10001 app \

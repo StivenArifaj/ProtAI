@@ -1,0 +1,15 @@
+# Gitleaks configuration (used by scripts/check.sh).
+#
+# Extends the default ruleset with a deliberately narrow allowlist: the documented,
+# disposable development host-auth key shipped in docker-compose.yml (32 bytes,
+# "firewall-dev-host-auth-secret-32b"). That value is public by design, valid only for
+# APP_ENV=development, and never usable against a real deployment; the settings
+# validator additionally refuses the shipped all-zero sample secret outside
+# development/test. Nothing else is allowlisted.
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Disposable development-only host-auth key in docker-compose.yml"
+regexTarget = "match"
+regexes = ['ZmlyZXdhbGwtZGV2LWhvc3QtYXV0aC1zZWNyZXQtMzJi']
