@@ -1,19 +1,19 @@
 # Implementation State
 
-Last updated: 2026-10-19 (Phase 2, blueprint v1.2).
+Last updated: 2026-10-19 (Phase 3, blueprint v1.2).
 
 Phases 0a (repository foundation), 0b (security foundation), 1 (typed contracts and
-deterministic policy engine), and 2 (tool registry and enforced gateway) are **complete
-and verified**; the Docker Compose path was verified in 0b. Phase 2 adds the typed tool
-registry with startup consistency checks, four deterministic mock adapters, the
-gateway-issued execution authorization (canonical action digest), the `risk-v1`
-deterministic scoring engine, the single `invoke_tool` chokepoint with bindings,
-validation, deadlines, per-tool concurrency, timeouts and result bounds, the audit
-recorder interface over the ADR-002 chain, and wiring in `create_app`. The gateway is the
-only execution path (in-process/in tests; `create_app` exposes it on `app.state`). It does
-**not** implement `/v1` routes, approvals, manifest/intent binding, content DLP, real
-connectors, process isolation, rate limiting, or the full audit taxonomy/verifier. See
-`docs/SECURITY_INVARIANTS.md` and `docs/KNOWN_LIMITATIONS.md`.
+deterministic policy engine), 2 (tool registry and enforced gateway), and 3 (advisory
+input defense and context provenance) are **complete and verified**; the Docker Compose
+path was verified in 0b. Phase 3 adds strict/versioned detection configuration, bounded
+intake, copy-only normalization, deterministic injection heuristics, typed findings and
+non-PASS failure semantics, structured trust labels for context assembly, and a
+tenant/subject-bound session signal store with bounded counters and TTL/max-age expiry.
+Detection is **advisory only**: it has no path into policy facts, the engine, the gateway,
+or execution, and no `/v1` route exposes it yet. The codebase still does **not** implement
+`/v1` routes, approvals, manifest/intent binding, content DLP, real connectors, process
+isolation, rate limiting, model/provider integration, or the full audit taxonomy/verifier.
+See `docs/SECURITY_INVARIANTS.md` and `docs/KNOWN_LIMITATIONS.md`.
 
 ## What exists
 
@@ -23,25 +23,27 @@ connectors, process isolation, rate limiting, or the full audit taxonomy/verifie
 | Application | `src/ai_security/__init__.py`, `settings.py`, `api/{app,dependencies,routes_health,middleware}.py` | App factory + module-level `app`; validated settings (incl. `POLICY_PATH`/`RISK_THRESHOLDS_PATH`); `/health/live`, `/health/ready` (config, database, policy_self_checks + `policy_version`/`policy_hash`); host-auth ASGI middleware on `/v1/*` |
 | Security primitives | `security/{constant_time,canonical_json,urls}.py`, `audit/hash_chain.py` | `hmac.compare_digest` wrappers (confined by the gate); canonical JSON bytes; ADR-002 hash formula + fixed vectors; destination canonicalization (IDNA, percent-encoding, https-only) |
 | Identity | `identity/{models,signing,host_auth,resolver,adapters}.py` | `Principal` (strict, frozen); HMAC signing/verification (exact `v1` message, full rejection surface); `DevPrincipalResolver` guard + fail-closed `HostPrincipalResolver`; test-only `TestPrincipalResolver` (not selectable via settings/factory) |
-| Persistence | `persistence/{database,models,nonce_repository,audit_repository}.py` | Async engine/session; atomic nonce upsert (`ON CONFLICT ... WHERE ... RETURNING`); ADR-002 advisory-lock audit append |
-| Migrations | `alembic.ini`, `migrations/env.py`, `migrations/versions/d15b46c49950_*.py` | Baseline: `host_request_nonces`, `audit_events`; `make migrate`; idempotent; `alembic check` clean |
+| Persistence | `persistence/{database,models,nonce_repository,audit_repository,session_repository}.py` | Async engine/session; atomic nonce upsert (`ON CONFLICT ... WHERE ... RETURNING`); ADR-002 advisory-lock audit append; tenant/subject-bound session signals with bounded counters, lazy expiry, and signal-free rotation |
+| Migrations | `alembic.ini`, `migrations/env.py`, `migrations/versions/{d15b46c49950,c7f1a2b3d4e5}_*.py` | Baseline: `host_request_nonces`, `audit_events`; Phase 3: `session_security_state` (constraints + binding/last-seen indexes); `make migrate`; upgrade/downgrade/upgrade verified; `alembic check` clean |
 | Typed contracts | `tools/base.py` (`SideEffectClass`, `ToolArguments`/`ToolResult`, `ExecutionAuthorization`, `compute_action_digest`, adapters protocol), `data_security/classification.py` (`DataClass`), `firewall/decision.py` (`FirewallDecision`/`DecisionReason`/`DecisionRecord`) | Canonical enums defined exactly once (blueprint §4/§6.1); stable reason-code vocabulary (extended with `binding_mismatch`, `deadline_exceeded`, `policy_evaluation_error`, `audit_unavailable`); sentinel-guarded authorization; strict schemas (`extra="forbid"`, `strict=True`) |
 | Tool registry + mock adapters | `tools/registry.py`, `tools/mock_{email,files,external_sink,text}.py` | Immutable validated registrations; exact `(tool_id, action_id)` resolution; startup consistency vs policy (one-directional: policy→capability required; extra registrations stay policy-disabled); deterministic in-memory adapters with ownership checks and digest verification |
+| Input defense + provenance | `input_defense/{models,config,normalize,heuristics,service,context_labels,sessions}.py`, `security/safe_yaml.py`, `config/input_defense.yaml` | Advisory only: strict config (every finding code mapped, no PASS mapping), byte/type/UTF-8 intake, copy-only normalization, versioned heuristics with quoted-context downgrade, typed `IntakeReport` with digests/offsets, six trust labels + deterministic JSON context, optional diagnostic classifier, typed `DETECTOR_UNAVAILABLE` failures |
 | Gateway + risk engine | `firewall/{gateway,models,risk_engine}.py` | Single `invoke_tool` chokepoint; binding/validation/resource/destination/deadline/engine checks; decision audited before execution; timeouts + per-process concurrency + result bounds; typed outcomes; `risk-v1` scoring (side-effect/destination/data-class factors) |
 | Audit emission | `audit/{models,writer}.py` | Phase-2 event subset (`POLICY_EVALUATED`, `TOOL_EXECUTION_COMPLETED`, `TOOL_EXECUTION_FAILED`); schema v1; `AuditRecorder` protocol + `ChainAuditRecorder` over the ADR-002 repository; payload-safe references only |
 | Policy engine | `firewall/policy_engine.py`, `policy/{models,loader,self_checks}.py`, `config/{policies,risk_thresholds,policy_self_checks}.yaml` | Deterministic §10.2 evaluation order over validated facts; safe YAML (duplicate-key rejection); versioned bundle with content hashes; 21 fixtures (incl. 7 mandated names and the Phase 2 binding/deadline/inconsistent facts) evaluated at startup + readiness; replaces `policy/interim_matrix.py` (deleted) |
-| Tests | `tests/conftest.py`, `tests/unit/*` (16 test files + `_tool_auth.py` helper), `tests/integration/*` (9 test files + helpers), `tests/security/*` | **520 tests** (461 unit, 47 integration, 12 security): the Phase 1 suites plus action digests, registry validation, mock adapters, risk engine, gateway failure modes, no-bypass security invariants, real-PostgreSQL gateway end-to-end, and app wiring |
+| Tests | `tests/conftest.py`, `tests/unit/*` (22 test files + `_tool_auth.py` helper), `tests/integration/*` (10 test files + `conftest.py`/`db_helpers.py`), `tests/security/*` (2 test files) | **600 tests** (517 unit, 60 integration, 23 security): prior suites plus normalization/heuristics/config/context-label/session math, detector-failure security tests, startup wiring, and real-PostgreSQL session-state tests |
 | Quality gate | `scripts/check.sh` | 8 steps: lockfile, ruff format, ruff lint, mypy, pytest, pinned Gitleaks (dir+git), prohibited-pattern greps, constant-time confinement |
 | Containers | `Dockerfile`, `docker-compose.yml` | Digest-pinned bases; non-root uid 10001; COPY `config/ migrations/ alembic.ini`; Compose `api` carries the disposable dev `HOST_AUTH_KEYS_JSON` |
-| Docs | `docs/*` (8 files), `docs/adr/ADR-001..009` | Status columns honest; ADR-008 records the Phase 1 engine contract, ADR-009 the Phase 2 registry/gateway contract; matrix doc reflects gateway-enforced facts |
-| Git | baseline `41e10da`; 0b commits `0aa11d9`…`d180b89`; docs `c95f2a6`; Phase 1 commits `cffdd62`, `eaae462`, `b91729b` | Repository under git since 2026-10-19; linear history on `main` |
+| Docs | `docs/*` (9 files), `docs/adr/ADR-001..010` | Status columns honest; ADR-008 records the Phase 1 engine contract, ADR-009 the Phase 2 registry/gateway contract, ADR-010 the Phase 3 advisory-detection/session contract; matrix doc reflects gateway-enforced facts |
+| Git | baseline `41e10da`; 0b commits `0aa11d9`…`d180b89`; docs `c95f2a6`; Phase 1 commits `cffdd62`, `eaae462`, `b91729b`; Phase 2 commits `5725256`…`c7a0f8d` | Repository under git since 2026-10-19; linear history on `main`; Phase 3 commits follow this document update |
 | Spec | `AI_Agent_Security_Platform_Master_Blueprint_v1.2.md`, `archive/..._v1.0_superseded.md` | v1.2 authoritative; v1.0 archived |
 
-Deliberately deferred beyond Phase 2: input defense/provenance (Phase 3), manifest/intent
-binding (Phase 4), approvals and factor expansion (Phase 5), content DLP/canary (Phase 6),
-full audit taxonomy + verifier (Phase 7), `/v1/*` routes + agent runtime + rate limiting
-(Phase 8), evaluation (Phase 9), isolation/SOC/SBOM (Phase 10). `evaluation/` and
-`data_security/` beyond `classification.py` do not exist yet.
+Deliberately deferred beyond Phase 3: manifest/intent binding and semantic intent
+(Phase 4), approvals and factor expansion (Phase 5), content DLP/canary (Phase 6), full
+audit taxonomy + verifier (Phase 7), `/v1/*` routes + agent runtime + rate limiting
+(Phase 8), evaluation (Phase 9), isolation/SOC/SBOM (Phase 10). Detection is not yet
+consumed by routes or the model context; `evaluation/` and `data_security/` beyond
+`classification.py` do not exist yet.
 
 ## Decisions taken during Phase 0b implementation (within blueprint constraints)
 
@@ -174,6 +176,37 @@ full audit taxonomy + verifier (Phase 7), `/v1/*` routes + agent runtime + rate 
   validation requires resource/destination argument annotations to be exactly `str`
   (a non-str annotation could smuggle mismatched resource IDs past derivation).
 
+## Decisions taken during Phase 3 implementation (within blueprint constraints; ADR-010)
+
+- **Advisory, not authoritative**: the detector returns evidence only; it never feeds
+  `PolicyEvaluationRequest`, the engine, or the gateway, exposes no execution surface, and
+  cannot widen permissions. This is what makes invariant #10 true by construction rather
+  than by accidental coupling.
+- **Disposition configuration is exhaustive and monotonic**: every `FindingCode` must be
+  mapped; any mapping to PASS is rejected; duplicate YAML keys and unknown codes refuse
+  startup. Detection failure (`DETECTOR_UNAVAILABLE`) is therefore never clean.
+- **Intake order** is size → content type → UTF-8 decode → JSON structure → normalization
+  → heuristics → optional classifier; each stage's violations become typed findings, and
+  oversize/type/encoding failures never reach heuristics.
+- **Copy-only normalization**: the original string/bytes are never mutated; zero-width,
+  control, escape, Base64, NFKC, and mixed-script signals are returned separately. JSON
+  depth uses an iterative walk (no recursion limit attack).
+- **Heuristics are versioned, deterministic, and provenance-bearing**: ten named rules
+  (`input-heuristics-v1`), offsets only (no raw content in findings), quoted/educational/
+  defensive contexts downgrade to `QUOTED_INSTRUCTION_CONTEXT` (FLAG), and assistant-
+  directed rules apply only to `EXTERNAL_UNTRUSTED`/`TOOL_RESULT`.
+- **Trust labels are structural**: six canonical labels; email/external content is
+  `EXTERNAL_UNTRUSTED` even for an authenticated requester; duplicate/empty segment sets
+  are refused; rendering is sorted JSON carrying the label.
+- **Session state is opt-in and bound**: `(tenant_id, subject_id)` is required for every
+  operation; mismatch = not found; 24 h inactivity and 7 d absolute expiry with lazy
+  deletion; `LEAST(...)` clamps counters at 1,000,000; rotation never inherits signals;
+  no prompts or findings are stored; the state is not an authorization input in Phase 3.
+- **Shared strict YAML**: duplicate-key detection lives in `security/safe_yaml.py` and is
+  reused by the policy loader; parsing still uses `yaml.safe_load` (gate-compatible).
+- **Optional classifier is not wired**: the protocol exists for Phase 4+ experimentation;
+  faults/timeouts produce `DETECTOR_UNAVAILABLE`, preserving fail-closed behavior.
+
 ## Phase 0a verification record (actual runs, 2026-10-19; historical)
 
 Environment: macOS (darwin), uv 0.13.1, CPython 3.12.15, Docker 29.3.1 / Compose
@@ -287,11 +320,39 @@ Rows 36+ continue the numbered record. Full evidence:
 | Policy engine remains the sole `ALLOW` producer; gateway may only downgrade | PASS — the gateway constructs no ALLOW; audit/deadline/evaluation overrides are BLOCK/DENIED; `ASK_USER` never executes |
 | Full suite + gate green; docs/memory/ADR updated | PASS — rows 36-41; ADR-009; this file; `SECURITY_INVARIANTS`, `POLICY_DECISION_MATRIX`, `KNOWN_LIMITATIONS`, memory refresh |
 
+## Phase 3 verification record (actual runs, 2026-10-19)
+
+Rows 42+ continue the numbered record. Full evidence:
+`project_memory/TESTING_AND_VERIFICATION.md` (V43+).
+
+| # | Command | Result |
+|---|---|---|
+| 42 | `uv run --frozen pytest -q` | PASS — **600 passed** (517 unit + 60 integration + 23 security; DB-backed integration against the Compose PostgreSQL) |
+| 43 | `bash scripts/check.sh` | PASS — exit 0, all 8 steps; ruff format/lint clean (136 files); mypy 55 source files; Gitleaks 8.30.1 dir+git: 19 commits, no leaks found |
+| 44 | Phase 3 targeted suites (`test_input_normalization`, `test_input_heuristics`, `test_input_defense_config`, `test_context_labels`, `test_sessions`, `test_input_defense_failure`) | PASS — 64 passed (detector behavior, quoted-context downgrade, strict config, failure semantics) |
+| 45 | Phase 3 integration suites (`test_input_defense_wiring`, `test_session_security_state`) | PASS — 13 passed (startup wiring + refusal; binding, guessed-ID, bounded counters, TTL/max-age expiry, rotation isolation against real PostgreSQL) |
+| 46 | `uv run --frozen alembic upgrade head` → `downgrade -1` → `upgrade head` → `check` | PASS — `c7f1a2b3d4e5` applies, downgrades, and re-applies cleanly; "No new upgrade operations detected" |
+| 47 | Manual service smoke (benign/attack/quoted/external/zero-width/homoglyph) | PASS — PASS / REJECT / FLAG / QUARANTINE / REJECT(OBFUSCATED+DIRECT) / FLAG(HOMOGLYPH_INDICATORS) with documented honest limits |
+
+## Definition of Done checklist (blueprint section 21, Phase 3)
+
+| DoD item | Status |
+|---|---|
+| Injection attempts on user input and external/tool content raise typed findings | **PASS** — 10 versioned heuristic rules; unit matrix covers direct override, secret/system-prompt extraction, developer mode, jailbreak, external-only assistant-directed instructions; findings carry codes, offsets, and versions |
+| Benign and quoted/educational mentions are not treated as attacks | PASS — qualification windows downgrade to `QUOTED_INSTRUCTION_CONTEXT` (FLAG); benign hard-negative parametrized cases raise no findings |
+| Detector/provider outage never fails open | PASS — every intake/detector/normalizer/classifier fault yields `DETECTOR_UNAVAILABLE` with the configured non-PASS disposition; no finding code can map to PASS; oversize/unsupported/invalid-encoding rejected before heuristics |
+| Trust labels are attached and preserved through context assembly | PASS — six canonical labels; external email forced to `EXTERNAL_UNTRUSTED` for authenticated requesters; duplicate/empty segment sets refused; deterministic JSON rendering includes the label |
+| Session signals are bound, bounded, and expire | PASS — every operation requires `(tenant_id, subject_id)` with mismatch = not found; 24 h inactivity/7 d absolute expiry with lazy deletion; counters clamped at 1,000,000; rotation inherits nothing (real-PostgreSQL tests) |
+| Detection cannot influence authorization or execution | PASS — no import/wiring path into policy facts, engine, or gateway; service exposes no invocation method (asserted); invariants #10/#11/#15/#23 updated honestly in `docs/SECURITY_INVARIANTS.md` |
+| Strict configuration refuses startup when invalid or incomplete | PASS — duplicate keys, missing/unknown finding codes, invalid content types, and PASS mappings all refuse startup (unit + app-wiring tests) |
+| Quality gate green; docs/memory/ADR updated | PASS — rows 42-47; ADR-010; this file; `SECURITY_INVARIANTS`, `KNOWN_LIMITATIONS`, `THREAT_MODEL`, `ARCHITECTURE`, README, memory refresh |
+
 ## How to continue (next session)
 
-Phase 3 — Input threat defense, trust labels, and context provenance (blueprint
-section 21, sections 7-9): deterministic injection/canary detection on tool outputs and
-user input, trust labels, and context provenance records feeding the policy facts. Read
-blueprint sections 7-8; keep the ADR-007/ADR-008 fixture contract, the ADR-009 gateway
-contract, and every existing test green. Invariants #10, #11, #15, #16, #23 become
-testable there.
+Phase 4 — Intent extraction and action validation (blueprint section 21, sections 8-9):
+parse structured intents, bind them to tool/action/resource targets, and validate plan
+consistency before execution while keeping the deterministic policy engine as the sole
+`ALLOW` producer. Read blueprint sections 8-9; keep the ADR-007/ADR-008 fixture contract,
+the ADR-009 gateway contract, ADR-010's advisory-detection boundary, and every existing
+test green. Invariants #10, #11, #15, #16, #23 remain at their recorded status; do not
+claim end-to-end enforcement before the routes and model context consume these layers.

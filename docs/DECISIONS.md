@@ -4,7 +4,8 @@ This index links to one file per ADR under `docs/adr/`. It intentionally contain
 summaries; the full decision text lives in each ADR (blueprint section 21). ADR-001
 through ADR-007 are required to be recorded before Phase 1 and were all recorded here on
 2026-10-19; ADR-008 records the Phase 1 policy-engine contract; ADR-009 records the
-Phase 2 registry/gateway contract.
+Phase 2 registry/gateway contract; ADR-010 records the Phase 3 advisory input-defense,
+trust-label, and session-signal contract.
 
 | ADR | Title | Status | Implementation phase |
 |---|---|---|---|
@@ -17,6 +18,7 @@ Phase 2 registry/gateway contract.
 | [ADR-007](adr/ADR-007-policy-matrix-self-checks.md) | Policy decision matrix mirrored in docs/config with startup self-checks | Accepted | Phase 1 (self-check scaffolding in Phase 0b) |
 | [ADR-008](adr/ADR-008-policy-engine-typed-contracts.md) | Deterministic policy engine with strict typed contracts and versioned policy bundle | Accepted | Phase 1 |
 | [ADR-009](adr/ADR-009-tool-registry-and-enforced-gateway.md) | Tool registry, execution authorization, and the enforced gateway | Accepted | Phase 2 |
+| [ADR-010](adr/ADR-010-advisory-input-defense-and-session-signals.md) | Advisory input threat defense, trust labels, and session signals | Accepted | Phase 3 |
 
 ## Adding a new ADR
 

@@ -1,6 +1,6 @@
 # Known Limitations
 
-As of **Phase 2 (tool registry and enforced gateway, 2026-10-19)**. This list must be
+As of **Phase 3 (advisory input defense and context provenance, 2026-10-19)**. This list must be
 updated every phase; anything not explicitly implemented must remain listed here or in
 `docs/IMPLEMENTATION_STATE.md`.
 
@@ -13,14 +13,21 @@ updated every phase; anything not explicitly implemented must remain listed here
    sandbox. The digest-bound authorization is an in-process guardrail against accidental
    bypass; malicious in-process code could still forge calls through private internals.
    Process isolation is Phase 10.
-2. **No input/output protection.** No prompt-injection detection, provenance labelling,
-   intent extraction, content-level DLP/canary inspection, or output sanitization exists.
-   Destination decisions are enforced for registered mock tools; content classification
-   is a registration-declared fact, not inspection.
+2. **Input defense is advisory, heuristic, and not consumed.** Phase 3 adds deterministic
+   injection detection, trust labels, and session signals, but nothing in a request path
+   uses them yet: there are no `/v1` routes or model calls, so detection cannot block,
+   quarantine, or re-rank anything. Detection accuracy is modest (regex heuristics over
+   normalized text): homoglyphs are detected as indicators but not converted before
+   matching, coverage is English-pattern based, quoted/educational content can still
+   raise FLAG findings, and novel/paraphrased or non-text attacks can be missed. Content-
+   level DLP/canary inspection and output sanitization remain Phase 6/8; content
+   classification is a registration-declared fact, not inspection.
 3. **Approvals are not implemented.** `ASK_USER` is returned as a typed no-execution
    result; no approval request is stored or consumable until Phase 5. The starter policy
    enables no approval-eligible tool.
-4. **Manifest/intent binding is not implemented.** The gateway validates principal,
+4. **Manifest/intent binding is not implemented.** Semantic intent extraction and plan
+   validation (Phase 4) are absent; trust labels and detector findings currently have no
+   consumer. The gateway validates principal,
    request, arguments, resource IDs, destination, and deadline; it does not yet bind a
    `manifest` or intent/action constraints (Phase 4).
 5. **Audit coverage is a Phase 2 subset.** The gateway emits `POLICY_EVALUATED` and
@@ -73,11 +80,12 @@ updated every phase; anything not explicitly implemented must remain listed here
     the scan runs when the operator runs the gate. `.gitleaks.toml` allowlists exactly
     the one documented disposable Compose dev key.
 18. **No SBOM.** CycloneDX artifact generation is Phase 10.
-19. **Minimal schema.** The only tables are `host_request_nonces` and `audit_events`
-    (Alembic baseline `d15b46c49950`). No pruning/retention job runs; the nonce and audit
-    tables grow until an operational cleanup lands (expired nonces technically
-    re-register, but stale rows remain). The Phase 2 event payloads live inside
-    `audit_events.canonical_event_bytes`, not in a queryable typed table.
+19. **Minimal schema.** The tables are `host_request_nonces`, `audit_events` (baseline
+    `d15b46c49950`), and `session_security_state` (Phase 3, `c7f1a2b3d4e5`). Expired
+    session rows are deleted lazily on access, so abandoned bindings can persist
+    indefinitely until touched by an operation; there is no scheduled retention job. The
+    nonce and audit tables likewise grow until operational cleanup lands. Event payloads
+    live inside `audit_events.canonical_event_bytes`, not a queryable typed table.
 20. **No CI configuration.** `scripts/check.sh` (8 steps) is the gate.
 
 ## Verification gaps in this environment
@@ -98,3 +106,10 @@ updated every phase; anything not explicitly implemented must remain listed here
 25. Audit append failure after an already-executed mock side effect yields outcome
     `AUDIT_FAILED` with no result returned; the side effect is not rolled back (the sink is
     in-memory mock state). Real compensating actions are out of scope for v1.
+26. Detector verdicts are evidence, not truth: `REJECT` on a heuristic hit can be a false
+    positive (quoted content is downgraded, but other contextual uses are not fully
+    modeled), and `PASS` never means "safe" — it means "no configured finding matched".
+    The `dev-1` disposition config is intentionally conservative and editable.
+27. Session signals are counters only and are not yet an authorization or scoring input;
+    multi-turn escalation logic (used by risk/session factors) is later-phase work. The
+    store is available on `app.state` but no route authenticates a session identifier yet.

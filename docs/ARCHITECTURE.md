@@ -1,10 +1,11 @@
 # Architecture
 
-Status: **implemented through Phase 2.** This document describes the intended v1
+Status: **implemented through Phase 3.** This document describes the intended v1
 architecture from blueprint v1.2 (sections 3-4) and marks what actually exists today.
-Host authentication, the deterministic policy engine, and the mock-tool gateway exist and
-are tested; input defense, intent binding, approvals, DLP, real connectors, and the audit
-verifier do not. Only components marked Implemented below may be cited as controls.
+Host authentication, the deterministic policy engine, the mock-tool gateway, and advisory
+input threat detection with trust labels and session signals exist and are tested; intent
+binding, approvals, DLP, real connectors, and the audit verifier do not. The Phase 3
+detector is advisory: it is not yet consumed by any request path. Only components marked Implemented below may be cited as controls.
 
 ## Logical flow (target v1)
 
@@ -77,19 +78,19 @@ enforcement is not an agent security system (blueprint section 3.2).
 | `src/ai_security/settings.py` | Validated configuration | **Implemented:** fail-closed validation incl. host keys, replay window, request bound, policy/threshold/self-check paths |
 | `identity/` (HMAC host auth, resolver) | Authenticate host, verify principal | **Implemented (0b/1):** exact signing message, full rejection surface, atomic nonce store, dev guard, test-only principal adapter; typed host-assertion contract pending |
 | `security/` (canonical JSON, constant-time, URLs) | Canonical bytes, comparisons, destinations | **Implemented (0b/1):** ADR-002 canonical JSON, constant-time helpers, destination canonicalization |
-| `input_defense/` | Heuristics, detector, provenance | Not implemented (Phase 3) |
+| `input_defense/` | Heuristics, detector, provenance | **Implemented (3, advisory):** strict versioned config, bounded intake, copy-only normalization, 10 versioned heuristic rules, typed findings with non-PASS failure semantics, trust-labelled context assembly, session-signal math; not yet wired into routes or model context |
 | `intent/` | Intent manifest, constraints | Not implemented (Phase 4) |
 | `agent/` (+ providers) | Runtime, mock/local models | Not implemented (Phase 4/8) |
 | `firewall/` | Gateway, policy engine, risk engine, approvals | **Implemented (1-2):** decision/engine/risk (`risk-v1`) + the single `invoke_tool` gateway with audit-first ordering, bindings, deadlines, bounds; approvals and manifest facts Phase 4/5 |
 | `tools/` (registry + mock adapters) | Tool capability layer | **Implemented (2):** validated registry + startup consistency, digest-bound execution authorization, deterministic in-memory email/files/sink/text adapters |
 | `data_security/` | Classification, DLP, egress | **Partial:** canonical `DataClass` enum; classification is registration-declared; content DLP Phase 6 |
 | `audit/` | Hash-chained audit events | **Partial (0b/2):** ADR-002 append protocol, hash chain, Phase-2 decision/outcome emitter; full taxonomy/verifier/retention Phase 7 |
-| `persistence/` | SQLAlchemy async repositories | **Implemented (0b):** engine/session, nonce + audit repositories |
+| `persistence/` | SQLAlchemy async repositories | **Implemented (0b/3):** engine/session, nonce + audit repositories, `session_security_state` repository (binding, bounded counters, lazy expiry, rotation) |
 | `soc/` | Alert-only analytics | Not implemented (Phase 10) |
-| `config/*.yaml` | Policies, thresholds, self-checks | **Implemented (1-2):** `policies.yaml`, `risk_thresholds.yaml`, 21-fixture `policy_self_checks.yaml` |
-| `migrations/`, `alembic.ini` | Alembic schema management | **Implemented (0b):** baseline migration, idempotent upgrade |
+| `config/*.yaml` | Policies, thresholds, self-checks | **Implemented (1-3):** `policies.yaml`, `risk_thresholds.yaml`, 21-fixture `policy_self_checks.yaml`, exhaustive-disposition `input_defense.yaml` |
+| `migrations/`, `alembic.ini` | Alembic schema management | **Implemented (0b/3):** baseline + `session_security_state` migrations; upgrade/downgrade verified; `alembic check` clean |
 | `evaluation/` | Dataset, metrics, reports | Not implemented (Phase 9) |
-| `docs/adr/` | Decision records | **Implemented:** ADR-001..009 recorded |
+| `docs/adr/` | Decision records | **Implemented:** ADR-001..010 recorded |
 
 ## Import boundaries (enforced from Phase 1 onward; check.sh enforces prohibited patterns)
 
