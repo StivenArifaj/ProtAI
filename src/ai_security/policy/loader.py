@@ -18,8 +18,9 @@ from __future__ import annotations
 import hashlib
 from pathlib import Path
 
-import yaml
 from pydantic import BaseModel, ValidationError
+
+from ai_security.security.safe_yaml import SafeYamlError, parse_unique_yaml
 
 from .models import PoliciesDocument, PolicyBundle, RiskThresholdsDocument
 
@@ -28,47 +29,12 @@ class PolicyConfigError(RuntimeError):
     """A policy document is missing, malformed, or invalid (fail closed)."""
 
 
-def _find_duplicate_key(node: yaml.Node, seen_nodes: set[int]) -> str | None:
-    """Return the first duplicated mapping key below ``node``, if any (cycle-safe)."""
-    if id(node) in seen_nodes:
-        return None
-    seen_nodes.add(id(node))
-    if isinstance(node, yaml.MappingNode):
-        seen_keys: set[str] = set()
-        for key_node, value_node in node.value:
-            if isinstance(key_node, yaml.ScalarNode):
-                key_value = str(key_node.value)
-                if key_value in seen_keys:
-                    return key_value
-                seen_keys.add(key_value)
-            duplicate = _find_duplicate_key(value_node, seen_nodes)
-            if duplicate is not None:
-                return duplicate
-    elif isinstance(node, yaml.SequenceNode):
-        for item in node.value:
-            duplicate = _find_duplicate_key(item, seen_nodes)
-            if duplicate is not None:
-                return duplicate
-    return None
-
-
 def _load_yaml_text(text: str, path: Path) -> object:
     """Parse YAML text with duplicate-key rejection, then ``yaml.safe_load``."""
     try:
-        node = yaml.compose(text)
-    except yaml.YAMLError as exc:
-        raise PolicyConfigError(f"policy file {path} is not valid YAML") from exc
-    if node is not None:
-        duplicate = _find_duplicate_key(node, set())
-        if duplicate is not None:
-            raise PolicyConfigError(
-                f"policy file {path} contains duplicate key {duplicate!r} in a mapping "
-                "(policy documents must not repeat keys)"
-            )
-    try:
-        return yaml.safe_load(text)
-    except yaml.YAMLError as exc:
-        raise PolicyConfigError(f"policy file {path} is not valid YAML") from exc
+        return parse_unique_yaml(text)
+    except SafeYamlError as exc:
+        raise PolicyConfigError(f"policy file {path}: {exc}") from exc
 
 
 def _load_yaml_document[ModelT: BaseModel](path: Path, model: type[ModelT]) -> tuple[ModelT, str]:

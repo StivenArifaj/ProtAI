@@ -363,3 +363,22 @@ def test_parse_host_auth_keys_function_validates_directly() -> None:
     assert set(keys) == {"test-key"}
     with pytest.raises(ValueError, match="at least one key id"):
         parse_host_auth_keys("{}")
+
+
+def test_input_defense_and_session_defaults_match_the_blueprint() -> None:
+    settings = make_settings()
+    assert settings.input_defense_path == "config/input_defense.yaml"
+    assert settings.session_signal_ttl_seconds == 86400
+    assert settings.session_max_age_seconds == 604800
+
+
+def test_session_ttl_must_not_exceed_max_age() -> None:
+    with pytest.raises(ValidationError, match="SESSION_SIGNAL_TTL_SECONDS"):
+        make_settings(session_signal_ttl_seconds=604801, session_max_age_seconds=604800)
+
+
+def test_session_windows_must_be_positive() -> None:
+    with pytest.raises(ValidationError):
+        make_settings(session_signal_ttl_seconds=0)
+    with pytest.raises(ValidationError):
+        make_settings(session_max_age_seconds=0)

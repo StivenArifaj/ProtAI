@@ -18,7 +18,9 @@ Since Phase 1 the factory also loads and validates the policy documents
 self-checks against the real engine before serving traffic. Since Phase 2 it also
 builds the mock tool registry (proving it is consistent with the loaded policy) and the
 enforced ``ToolGateway`` bound to the audit chain; both are exposed on ``app.state``
-for the (later) API routes and for in-process callers. No ``/v1`` routes exist yet.
+for the (later) API routes and for in-process callers. Since Phase 3 it also loads the
+strict input-defense configuration, exposes the detection service, and constructs the
+session security-state repository. No ``/v1`` routes exist yet.
 """
 
 from __future__ import annotations
@@ -34,9 +36,12 @@ from ai_security.api.routes_health import router as health_router
 from ai_security.audit.writer import ChainAuditRecorder
 from ai_security.firewall.gateway import ToolGateway
 from ai_security.firewall.policy_engine import PolicyEngine
+from ai_security.input_defense.config import load_input_defense_config
+from ai_security.input_defense.service import InputDefenseService
 from ai_security.persistence.audit_repository import V1_CHAIN_ID, AuditChainRepository
 from ai_security.persistence.database import Database
 from ai_security.persistence.nonce_repository import SqlAlchemyNonceRepository
+from ai_security.persistence.session_repository import SessionSecurityRepository
 from ai_security.policy.loader import load_policy_bundle
 from ai_security.policy.self_checks import (
     PolicySelfCheckError,
@@ -114,6 +119,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         registry=registry,
         engine=PolicyEngine(policy_bundle),
         recorder=ChainAuditRecorder(app.state.audit_chain),
+    )
+    # Phase 3: the input-defense configuration is validated at startup (invalid or
+    # incomplete dispositions refuse startup) and the detection service plus the
+    # tenant/subject-bound session signal store are exposed on app.state for the
+    # (later) API routes and for in-process callers. Detection never authorizes tools.
+    app.state.input_defense_config = load_input_defense_config(resolved.input_defense_path)
+    app.state.input_defense_service = InputDefenseService(app.state.input_defense_config)
+    app.state.session_security = SessionSecurityRepository(
+        database.session_factory,
+        ttl_seconds=resolved.session_signal_ttl_seconds,
+        max_age_seconds=resolved.session_max_age_seconds,
     )
     app.add_middleware(HostAuthMiddleware, settings=resolved)
     app.include_router(health_router)

@@ -11,8 +11,10 @@ from datetime import datetime
 
 from sqlalchemy import (
     BigInteger,
+    CheckConstraint,
     DateTime,
     Identity,
+    Index,
     LargeBinary,
     String,
     Text,
@@ -70,3 +72,38 @@ class AuditEvent(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+
+
+class SessionSecurityState(Base):
+    """Bounded multi-turn detection signals (blueprint section 7.4).
+
+    Keyed by the internal CSPRNG session id; the ``(tenant_id, subject_id)`` binding is
+    re-checked on every read and write, and a lookup that fails the binding is treated
+    as not found. Only counters and timestamps are stored — no raw prompts or model
+    context. Expiry (24 h inactivity TTL, 7 d maximum lifetime) is enforced by the
+    repository, including lazy cleanup on read.
+    """
+
+    __tablename__ = "session_security_state"
+    __table_args__ = (
+        Index("ix_session_security_state_binding", "tenant_id", "subject_id"),
+        CheckConstraint("override_attempts >= 0", name="ck_session_override_nonnegative"),
+        CheckConstraint(
+            "privilege_escalation_signals >= 0",
+            name="ck_session_privilege_nonnegative",
+        ),
+        CheckConstraint("blocked_tool_proposals >= 0", name="ck_session_blocked_nonnegative"),
+        CheckConstraint("threat_findings >= 0", name="ck_session_findings_nonnegative"),
+    )
+
+    session_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(Text, nullable=False)
+    subject_id: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    last_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, index=True
+    )
+    override_attempts: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    privilege_escalation_signals: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    blocked_tool_proposals: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    threat_findings: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)

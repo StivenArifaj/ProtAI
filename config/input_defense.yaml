@@ -1,0 +1,35 @@
+# Input threat defense configuration (blueprint sections 7.2, 7.5; Phase 3).
+# Loaded and strictly validated at startup; invalid, incomplete, duplicate-key, or
+# non-UTF-8 files refuse startup. The detector estimates suspicious patterns; it is not
+# a safety proof and never authorizes a tool call.
+
+schema_version: 1
+version: dev-1
+
+limits:
+  max_bytes: 65536
+  max_json_depth: 32
+  evaluation_timeout_ms: 2000
+
+content_types:
+  - text/plain
+  - text/markdown
+  - application/json
+  - message/rfc822
+
+# Every FindingCode must be mapped and no code may map to PASS (fail closed).
+dispositions:
+  DIRECT_OVERRIDE_PATTERN: REJECT
+  SECRET_EXTRACTION_REQUEST: REJECT
+  UNTRUSTED_INSTRUCTION: QUARANTINE
+  OBFUSCATED_CONTENT: FLAG
+  QUOTED_INSTRUCTION_CONTEXT: FLAG
+  OVERSIZE_INPUT: REJECT
+  UNSUPPORTED_CONTENT_TYPE: REJECT
+  INVALID_ENCODING: REJECT
+  CONTROL_CHARACTERS: FLAG
+  HOMOGLYPH_INDICATORS: FLAG
+  EXCESSIVE_ENCODING: FLAG
+  INVALID_STRUCTURE: REJECT
+  NESTING_TOO_DEEP: REJECT
+  DETECTOR_UNAVAILABLE: REJECT

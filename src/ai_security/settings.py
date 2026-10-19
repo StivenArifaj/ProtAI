@@ -202,6 +202,9 @@ class Settings(BaseSettings):
     policy_path: str = Field(default="config/policies.yaml", min_length=1)
     risk_thresholds_path: str = Field(default="config/risk_thresholds.yaml", min_length=1)
     policy_self_checks_path: str = Field(default="config/policy_self_checks.yaml", min_length=1)
+    input_defense_path: str = Field(default="config/input_defense.yaml", min_length=1)
+    session_signal_ttl_seconds: int = Field(default=86400, gt=0)
+    session_max_age_seconds: int = Field(default=604800, gt=0)
 
     _host_auth_keys: dict[str, HostAuthKey] = PrivateAttr(default_factory=dict)
 
@@ -250,6 +253,15 @@ class Settings(BaseSettings):
             raise ValueError(
                 "PRINCIPAL_RESOLVER=dev is refused outside development/test "
                 "(blueprint section 9.3, ADR-001)"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _session_ttl_within_max_age(self) -> Settings:
+        if self.session_signal_ttl_seconds > self.session_max_age_seconds:
+            raise ValueError(
+                "SESSION_SIGNAL_TTL_SECONDS must not exceed SESSION_MAX_AGE_SECONDS "
+                "(blueprint section 7.4: 24 h inactivity TTL, 7 d maximum lifetime)"
             )
         return self
 
