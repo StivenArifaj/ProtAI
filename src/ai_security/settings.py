@@ -205,6 +205,7 @@ class Settings(BaseSettings):
     input_defense_path: str = Field(default="config/input_defense.yaml", min_length=1)
     session_signal_ttl_seconds: int = Field(default=86400, gt=0)
     session_max_age_seconds: int = Field(default=604800, gt=0)
+    intent_manifest_ttl_seconds: int = Field(default=300, ge=1, le=3600)
 
     _host_auth_keys: dict[str, HostAuthKey] = PrivateAttr(default_factory=dict)
 

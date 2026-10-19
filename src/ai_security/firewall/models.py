@@ -26,6 +26,7 @@ from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator
 from ai_security.firewall.decision import DecisionReason, FirewallDecision
 from ai_security.firewall.risk_engine import RiskAssessment
 from ai_security.identity.models import Principal
+from ai_security.intent.models import IntentManifest
 from ai_security.policy.models import TOOL_ID_PATTERN
 from ai_security.tools.base import STABLE_ID_PATTERN, ToolResult
 
@@ -126,6 +127,7 @@ class ToolExecutor(Protocol):
         principal: Principal,
         request_context: RequestContext,
         proposal: ProposedToolCall,
+        manifest: IntentManifest | None = None,
     ) -> ToolInvocationResult:
         """Evaluate and (only on ALLOW) execute one proposed action."""
         ...

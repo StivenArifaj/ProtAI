@@ -20,7 +20,10 @@ builds the mock tool registry (proving it is consistent with the loaded policy) 
 enforced ``ToolGateway`` bound to the audit chain; both are exposed on ``app.state``
 for the (later) API routes and for in-process callers. Since Phase 3 it also loads the
 strict input-defense configuration, exposes the detection service, and constructs the
-session security-state repository. No ``/v1`` routes exist yet.
+session security-state repository. Since Phase 4 it issues request/principal/policy-
+bound intent manifests and the wired gateway requires a valid manifest plus its
+concrete constraints (and per-constraint use limits) before policy/execution. No
+``/v1`` routes exist yet.
 """
 
 from __future__ import annotations
@@ -38,6 +41,9 @@ from ai_security.firewall.gateway import ToolGateway
 from ai_security.firewall.policy_engine import PolicyEngine
 from ai_security.input_defense.config import load_input_defense_config
 from ai_security.input_defense.service import InputDefenseService
+from ai_security.intent.extractors import MockIntentExtractor
+from ai_security.intent.service import IntentManifestService
+from ai_security.intent.validator import IntentUsageTracker
 from ai_security.persistence.audit_repository import V1_CHAIN_ID, AuditChainRepository
 from ai_security.persistence.database import Database
 from ai_security.persistence.nonce_repository import SqlAlchemyNonceRepository
@@ -115,10 +121,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         ),
     )
     app.state.tool_registry = registry
+    # Phase 4: manifests are issued only by this service (mock extractor in Phase 4;
+    # the local-model adapter interface is ready for Phase 8 provider wiring). The
+    # gateway is constructed with the tracker so production execution requires a
+    # verified, unexpired manifest and reserves each constraint's bounded uses.
+    app.state.intent_usage_tracker = IntentUsageTracker()
+    app.state.intent_manifest_service = IntentManifestService(
+        extractor=MockIntentExtractor(),
+        registry=registry,
+        bundle=policy_bundle,
+        manifest_ttl_seconds=resolved.intent_manifest_ttl_seconds,
+    )
     app.state.tool_gateway = ToolGateway(
         registry=registry,
         engine=PolicyEngine(policy_bundle),
         recorder=ChainAuditRecorder(app.state.audit_chain),
+        intent_tracker=app.state.intent_usage_tracker,
     )
     # Phase 3: the input-defense configuration is validated at startup (invalid or
     # incomplete dispositions refuse startup) and the detection service plus the

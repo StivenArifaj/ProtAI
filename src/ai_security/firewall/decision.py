@@ -65,6 +65,14 @@ class DecisionReason(StrEnum):
     explicit_permission_required = "explicit_permission_required"
     risk_too_high = "risk_too_high"
 
+    # Intent-manifest failures (Phase 4, blueprints sections 8 and 12.3). The manifest
+    # can only narrow what policy allows; these never grant execution.
+    intent_manifest_invalid = "intent_manifest_invalid"
+    intent_requires_clarification = "intent_requires_clarification"
+    intent_action_not_allowed = "intent_action_not_allowed"
+    intent_constraint_violation = "intent_constraint_violation"
+    intent_limit_exceeded = "intent_limit_exceeded"
+
     # Operational overrides produced by the gateway (fail closed, section 16.4).
     # These may only ever downgrade a decision to BLOCK; they never grant execution.
     policy_evaluation_error = "policy_evaluation_error"

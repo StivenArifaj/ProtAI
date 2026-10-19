@@ -61,6 +61,16 @@ from ai_security.firewall.risk_engine import (
     assess_risk,
 )
 from ai_security.identity.models import Principal
+from ai_security.intent.models import (
+    IntentManifest,
+    IntentManifestError,
+    verify_intent_manifest,
+)
+from ai_security.intent.validator import (
+    IntentConstraintViolation,
+    IntentUsageTracker,
+    validate_intent_constraints,
+)
 from ai_security.persistence.audit_repository import AppendedAuditEvent
 from ai_security.security.canonical_json import (
     CanonicalJSONError,
@@ -94,6 +104,7 @@ class ToolGateway:
         recorder: AuditRecorder,
         clock: Callable[[], datetime] | None = None,
         component_version: str = __version__,
+        intent_tracker: IntentUsageTracker | None = None,
     ) -> None:
         self._registry = registry
         self._engine = engine
@@ -101,6 +112,11 @@ class ToolGateway:
         self._recorder = recorder
         self._clock = clock if clock is not None else (lambda: datetime.now(UTC))
         self._component_version = component_version
+        # Phase 4: when a tracker is supplied, every call must present a sealed,
+        # request/principal/policy-bound manifest and satisfy its concrete constraints.
+        # App wiring always supplies one; the Phase 2 in-process tests construct the
+        # gateway without this optional layer (documented legacy/test mode).
+        self._intent_tracker = intent_tracker
         self._limiters: WeakKeyDictionary[
             asyncio.AbstractEventLoop, dict[str, asyncio.Semaphore]
         ] = WeakKeyDictionary()
@@ -111,6 +127,7 @@ class ToolGateway:
         principal: Principal,
         request_context: RequestContext,
         proposal: ProposedToolCall,
+        manifest: IntentManifest | None = None,
     ) -> ToolInvocationResult:
         """Evaluate and, only on ``ALLOW``, execute the proposed action."""
         now = self._now()
@@ -119,6 +136,57 @@ class ToolGateway:
             principal=principal, request_context=request_context, proposal=proposal
         ):
             decision = self._decision(FirewallDecision.block, DecisionReason.binding_mismatch)
+            sequence = await self._record_decision_event(
+                request_context=request_context,
+                principal=principal,
+                proposal=proposal,
+                decision=decision,
+            )
+            return self._result(
+                proposal, decision, InvocationOutcome.denied, None, None, sequence, None
+            )
+
+        if self._intent_tracker is not None:
+            if manifest is None:
+                decision = self._decision(
+                    FirewallDecision.block, DecisionReason.intent_manifest_invalid
+                )
+                sequence = await self._record_decision_event(
+                    request_context=request_context,
+                    principal=principal,
+                    proposal=proposal,
+                    decision=decision,
+                )
+                return self._result(
+                    proposal, decision, InvocationOutcome.denied, None, None, sequence, None
+                )
+            try:
+                verify_intent_manifest(
+                    manifest,
+                    request_id=request_context.request_id,
+                    principal_subject_id=principal.subject_id,
+                    tenant_id=principal.tenant_id,
+                    policy_version=self._bundle.version,
+                    policy_hash=self._bundle.combined_hash,
+                    now=now,
+                )
+            except IntentManifestError:
+                decision = self._decision(
+                    FirewallDecision.block, DecisionReason.intent_manifest_invalid
+                )
+                sequence = await self._record_decision_event(
+                    request_context=request_context,
+                    principal=principal,
+                    proposal=proposal,
+                    decision=decision,
+                )
+                return self._result(
+                    proposal, decision, InvocationOutcome.denied, None, None, sequence, None
+                )
+        elif manifest is not None:
+            decision = self._decision(
+                FirewallDecision.block, DecisionReason.intent_manifest_invalid
+            )
             sequence = await self._record_decision_event(
                 request_context=request_context,
                 principal=principal,
@@ -173,6 +241,35 @@ class ToolGateway:
                 proposal, decision, InvocationOutcome.denied, None, None, sequence, None
             )
 
+        if self._intent_tracker is not None and manifest is not None:
+            violation = validate_intent_constraints(
+                manifest,
+                tool_id=proposal.tool_id,
+                action_id=proposal.action_id,
+                arguments=arguments,
+                resource_ids=resource_ids,
+                destination=canonical_destination,
+            )
+            if violation is not None:
+                reason = (
+                    DecisionReason.intent_action_not_allowed
+                    if violation is IntentConstraintViolation.no_matching_action
+                    else DecisionReason.intent_constraint_violation
+                )
+                decision = self._decision(FirewallDecision.block, reason)
+                sequence = await self._record_decision_event(
+                    request_context=request_context,
+                    principal=principal,
+                    proposal=proposal,
+                    decision=decision,
+                    registration=registration,
+                    destination=canonical_destination,
+                    resource_ids=resource_ids,
+                )
+                return self._result(
+                    proposal, decision, InvocationOutcome.denied, None, None, sequence, None
+                )
+
         resource_authorized = self._resource_authorized(
             registered=registered,
             principal=principal,
@@ -217,6 +314,20 @@ class ToolGateway:
         )
 
         action_digest: str | None = None
+        if decision.decision is FirewallDecision.allow:
+            if (
+                self._intent_tracker is not None
+                and manifest is not None
+                and not self._intent_tracker.reserve(
+                    manifest=manifest,
+                    tool_id=proposal.tool_id,
+                    action_id=proposal.action_id,
+                    now=now,
+                )
+            ):
+                decision = self._decision(
+                    FirewallDecision.block, DecisionReason.intent_limit_exceeded
+                )
         if decision.decision is FirewallDecision.allow:
             try:
                 action_digest = self._digest(

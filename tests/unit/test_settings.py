@@ -382,3 +382,12 @@ def test_session_windows_must_be_positive() -> None:
         make_settings(session_signal_ttl_seconds=0)
     with pytest.raises(ValidationError):
         make_settings(session_max_age_seconds=0)
+
+
+def test_intent_manifest_ttl_is_short_lived_and_bounded() -> None:
+    assert make_settings().intent_manifest_ttl_seconds == 300
+    with pytest.raises(ValidationError):
+        make_settings(intent_manifest_ttl_seconds=0)
+    with pytest.raises(ValidationError):
+        make_settings(intent_manifest_ttl_seconds=3601)
+    assert make_settings(intent_manifest_ttl_seconds=60).intent_manifest_ttl_seconds == 60
