@@ -34,13 +34,21 @@ from enum import StrEnum
 from typing import Any
 from urllib.parse import unquote, urlsplit
 
-from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, SecretStr, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    PrivateAttr,
+    SecretStr,
+    field_validator,
+    model_validator,
+)
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 DATABASE_URL_REQUIRED_PREFIX = "postgresql+asyncpg://"
 # Publicly documented sample values; the validators below refuse them outside dev/test.
 SAMPLE_DATABASE_PASSWORD = "firewall_dev_only"  # noqa: S105
-SAMPLE_HOST_AUTH_SECRET_B64 = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+SAMPLE_HOST_AUTH_SECRET_B64 = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="  # noqa: S105
 SAMPLE_HOST_AUTH_SECRET_BYTES = b"\x00" * 32
 
 HOST_AUTH_SECRET_MIN_BYTES = 32
@@ -230,7 +238,10 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _refuse_dev_resolver_outside_dev(self) -> Settings:
-        if self.principal_resolver is PrincipalResolverKind.dev and not self.app_env.development_like:
+        if (
+            self.principal_resolver is PrincipalResolverKind.dev
+            and not self.app_env.development_like
+        ):
             raise ValueError(
                 "PRINCIPAL_RESOLVER=dev is refused outside development/test "
                 "(blueprint section 9.3, ADR-001)"

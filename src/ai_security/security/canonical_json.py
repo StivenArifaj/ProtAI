@@ -25,7 +25,9 @@ import unicodedata
 from typing import Any
 
 CanonicalJSONScalar = str | int | bool | None
-CanonicalJSONValue = CanonicalJSONScalar | list["CanonicalJSONValue"] | dict[str, "CanonicalJSONValue"]
+CanonicalJSONValue = (
+    CanonicalJSONScalar | list["CanonicalJSONValue"] | dict[str, "CanonicalJSONValue"]
+)
 
 
 class CanonicalJSONError(ValueError):
@@ -48,12 +50,16 @@ def _normalize(value: Any, path: str) -> CanonicalJSONValue:
         normalized: dict[str, CanonicalJSONValue] = {}
         for key, item in value.items():
             if not isinstance(key, str):
-                raise CanonicalJSONError(f"{path}: object keys must be strings, got {type(key).__name__}")
+                raise CanonicalJSONError(
+                    f"{path}: object keys must be strings, got {type(key).__name__}"
+                )
             normalized[unicodedata.normalize("NFC", key)] = _normalize(item, f"{path}.{key}")
         return normalized
     if isinstance(value, (list, tuple)):
         return [_normalize(item, f"{path}[{index}]") for index, item in enumerate(value)]
-    raise CanonicalJSONError(f"{path}: value of type {type(value).__name__} is not JSON-serializable")
+    raise CanonicalJSONError(
+        f"{path}: value of type {type(value).__name__} is not JSON-serializable"
+    )
 
 
 def canonical_json_text(payload: dict[str, Any]) -> str:

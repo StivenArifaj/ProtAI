@@ -23,17 +23,17 @@ def test_empty_object_vector() -> None:
 
 def test_unicode_is_emitted_as_utf8_without_ascii_escapes() -> None:
     encoded = canonical_json_bytes({"message": "héllo"})
-    assert encoded == '{"message":"héllo"}'.encode("utf-8")
+    assert encoded == '{"message":"héllo"}'.encode()
     assert b"\\u" not in encoded
 
 
 def test_strings_are_nfc_normalized() -> None:
     # "e" + combining acute normalizes to the single code point U+00E9.
-    assert canonical_json_bytes({"n": "e\u0301"}) == '{"n":"é"}'.encode("utf-8")
+    assert canonical_json_bytes({"n": "e\u0301"}) == '{"n":"é"}'.encode()
 
 
 def test_keys_are_nfc_normalized_too() -> None:
-    assert canonical_json_bytes({"e\u0301": 1}) == '{"é":1}'.encode("utf-8")
+    assert canonical_json_bytes({"e\u0301": 1}) == '{"é":1}'.encode()
 
 
 def test_nested_structures_are_canonicalized_recursively() -> None:

@@ -220,7 +220,7 @@ def test_host_auth_keys_reject_extra_field() -> None:
 
 def test_host_auth_keys_reject_non_base64_secret() -> None:
     with pytest.raises(ValidationError, match="strict Base64"):
-        make_settings(host_auth_keys_json=make_keys_json(secret_b64="not base64 !!!"))
+        make_settings(host_auth_keys_json=make_keys_json(secret_b64="not base64 !!!"))  # noqa: S106
 
 
 def test_host_auth_keys_reject_short_secret() -> None:
