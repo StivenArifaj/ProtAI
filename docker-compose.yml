@@ -1,0 +1,48 @@
+# Local development stack: API + PostgreSQL (blueprint section 21, Phase 0a).
+#
+# The credentials below are disposable local development values (blueprint section 5.4).
+# The application's settings validator refuses the sample database password whenever
+# APP_ENV is not development/test. Ports bind to 127.0.0.1 only; do not expose this
+# stack beyond the local machine.
+services:
+  db:
+    image: postgres:17.2-alpine
+    environment:
+      POSTGRES_USER: firewall
+      POSTGRES_PASSWORD: firewall_dev_only
+      POSTGRES_DB: firewall
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U firewall -d firewall"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build: .
+    environment:
+      APP_ENV: development
+      LOG_LEVEL: INFO
+      DATABASE_URL: postgresql+asyncpg://firewall:firewall_dev_only@db:5432/firewall
+    ports:
+      # Host port 8080 by default: port 8000 is commonly taken by local emulators
+      # (e.g., DynamoDB Local). The container itself still listens on 8000.
+      - "127.0.0.1:8080:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/live', timeout=2)"
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  db_data:
