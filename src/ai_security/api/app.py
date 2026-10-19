@@ -15,7 +15,10 @@ explicit settings instead.
 
 Since Phase 1 the factory also loads and validates the policy documents
 (``config/policies.yaml``, ``config/risk_thresholds.yaml``) and runs the ADR-007
-self-checks against the real engine before serving traffic.
+self-checks against the real engine before serving traffic. Since Phase 2 it also
+builds the mock tool registry (proving it is consistent with the loaded policy) and the
+enforced ``ToolGateway`` bound to the audit chain; both are exposed on ``app.state``
+for the (later) API routes and for in-process callers. No ``/v1`` routes exist yet.
 """
 
 from __future__ import annotations
@@ -28,6 +31,9 @@ from fastapi import FastAPI
 
 from ai_security.api.middleware import HostAuthMiddleware
 from ai_security.api.routes_health import router as health_router
+from ai_security.audit.writer import ChainAuditRecorder
+from ai_security.firewall.gateway import ToolGateway
+from ai_security.firewall.policy_engine import PolicyEngine
 from ai_security.persistence.audit_repository import V1_CHAIN_ID, AuditChainRepository
 from ai_security.persistence.database import Database
 from ai_security.persistence.nonce_repository import SqlAlchemyNonceRepository
@@ -38,6 +44,11 @@ from ai_security.policy.self_checks import (
     run_policy_self_checks,
 )
 from ai_security.settings import Settings
+from ai_security.tools.mock_email import MockEmailAdapter
+from ai_security.tools.mock_external_sink import MockExternalSinkAdapter, SinkStore
+from ai_security.tools.mock_files import MockFilesAdapter
+from ai_security.tools.mock_text import MockTextAdapter
+from ai_security.tools.registry import build_registry
 
 APP_VERSION = "0.1.0"
 
@@ -86,6 +97,24 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # app.state.nonce_registrar to simulate store behavior.
     app.state.nonce_registrar = SqlAlchemyNonceRepository(database.session_factory)
     app.state.audit_chain = AuditChainRepository(database.session_factory, chain_id=V1_CHAIN_ID)
+    # Phase 2: capability/policy consistency is proven at startup (fail closed) and the
+    # single execution path is wired to the audit chain. The in-memory mock sink is
+    # process-local by design (no network, no real side effect).
+    registry = build_registry(
+        policy_bundle,
+        (
+            MockEmailAdapter(),
+            MockFilesAdapter(),
+            MockExternalSinkAdapter(SinkStore()),
+            MockTextAdapter(),
+        ),
+    )
+    app.state.tool_registry = registry
+    app.state.tool_gateway = ToolGateway(
+        registry=registry,
+        engine=PolicyEngine(policy_bundle),
+        recorder=ChainAuditRecorder(app.state.audit_chain),
+    )
     app.add_middleware(HostAuthMiddleware, settings=resolved)
     app.include_router(health_router)
     return app
