@@ -41,7 +41,7 @@ the V56 status record commit `c018955`; Phase 5 commits `ad9e76a`
 `e586c81` (complete credential-value redaction), `98cfdde` (ADR-013/docs), `9e78933`
 (memory/completion), and the V66 status record `3024c29`; Phase 7 commits `0b60ba0`
 (implementation/tests/migration) and `d53b0ed` (ADR-014/docs), followed by the
-memory/completion commit and the final V71 status record. No remote configured.
+memory/completion commit `5ae9ebe` and the final V71 status record. No remote configured.
 
 ## What exists (all VERIFIED)
 
@@ -206,8 +206,10 @@ All PASS — full commands and results in [TESTING_AND_VERIFICATION.md](TESTING_
   7 approval privacy/consumption, 4 audit/log privacy, plus e2e lifecycle; V69).
 - Full `bash scripts/check.sh` (pre-commit) → exit 0, all 8 steps; **827 passed**;
   Gitleaks 8.30.1 dir+git "no leaks found" (37 commits scanned); prohibited-pattern and
-  constant-time-confinement checks clean (V70). The post-commit re-run is V71 in the
-  phase record and [TESTING_AND_VERIFICATION.md](TESTING_AND_VERIFICATION.md).
+  constant-time-confinement checks clean (V70).
+- Post-commit `bash scripts/check.sh` after `0b60ba0`/`d53b0ed`/`5ae9ebe` → PASS, exit 0,
+  all 8 steps; **827 passed**; Gitleaks 8.30.1 dir+git "no leaks found" (40 commits
+  scanned); prohibited-pattern and constant-time-confinement checks clean (V71).
 - Phase 6 evidence (V63–V66) retained.
 
 ## Environment (verified this session)

@@ -576,6 +576,7 @@ Rows 63+ continue the numbered record. Full evidence:
 | 65 | `uv run --frozen mypy`; `uv run --frozen ruff check .`; `uv run --frozen ruff format --check .` | PASS — mypy clean (65 source files); ruff lint clean; 173 files already formatted |
 | 66 | Targeted Phase 7 suites: `test_audit_schema.py`, `test_gateway.py`, `test_intent_service.py`, `test_audit_verifier.py`, `test_gateway_end_to_end.py`, `test_gateway_approval.py`, `test_audit_privacy.py` | PASS — **113 passed** (29 schema/taxonomy, 37 gateway lifecycle, 16 intent audit, 17 verifier/tamper, 7 approval privacy/consumption, 4 audit/log privacy, plus e2e lifecycle) |
 | 67 | `bash scripts/check.sh` (pre-commit) | PASS — exit 0, all 8 steps; 827 tests; ruff/mypy clean; Gitleaks 8.30.1 dir+git "no leaks found" (37 commits scanned); prohibited-pattern and constant-time greps clean |
+| 68 | Post-commit `bash scripts/check.sh` after `0b60ba0`/`d53b0ed`/`5ae9ebe` (V71) | PASS — exit 0, all 8 steps; 827 tests; ruff/mypy clean; Gitleaks 8.30.1 dir+git "no leaks found" (40 commits scanned); prohibited-pattern and constant-time greps clean |
 
 ## Definition of Done checklist (blueprint section 21, Phase 7)
 
@@ -586,8 +587,8 @@ Rows 63+ continue the numbered record. Full evidence:
 | Privacy tests show raw secrets absent from default logs | **PASS** — `tests/security/test_audit_privacy.py` runs canary, email, credential, private-key, and API-key shapes through egress denial, adapter failure, response suppression, and intent extraction at DEBUG logging; raw values are absent from serialized audit payloads and captured logs, while stable codes/digests remain. Approval integration tests also assert the one-time token and action content never appear in audit payloads |
 | Taxonomy covers §16.1 without faking producers | PASS — every §16.1 name (plus `APPROVAL_CONSUMED`) is a stable enum with event-specific required fields. Ingress/alerts event names are producerless until Phase 8/10; no placeholder events are emitted |
 | Mandatory audit events gate execution and release | PASS — a parametrized gateway test fails each mandatory append position: pre-execution failures return `BLOCK`/`audit_unavailable` with no adapter call; post-execution failures return `AUDIT_FAILED` and withhold the result. No lifecycle step can be skipped on a successful path |
-| Schema evolution preserves prior payloads and hash formula | PASS — `schema_version=1` remains; fields became event-type-conditional rather than invented; existing rows/bites are never rewritten. The metadata migration is additive/backfill-only, and tests keep the frozen ADR-002 vectors green |
-| All prior suites and the 8-step gate stay green; docs/memory/ADR updated | PASS — rows 63-67; **827** tests; mypy 65 files; ADR-014; `docs/AUDIT_RETENTION_AND_DATA_HANDLING.md`; this file; `SECURITY_INVARIANTS`, `KNOWN_LIMITATIONS`, `THREAT_MODEL`, `ARCHITECTURE`, `DECISIONS`, README, memory refresh; post-commit gate recorded below |
+| Schema evolution preserves prior payloads and hash formula | PASS — `schema_version=1` remains; fields became event-type-conditional rather than invented; existing rows/bytes are never rewritten. The metadata migration is additive/backfill-only, and tests keep the frozen ADR-002 vectors green |
+| All prior suites and the 8-step gate stay green; docs/memory/ADR updated | PASS — rows 63-68; **827** tests; mypy 65 files; ADR-014; `docs/AUDIT_RETENTION_AND_DATA_HANDLING.md`; this file; `SECURITY_INVARIANTS`, `KNOWN_LIMITATIONS`, `THREAT_MODEL`, `ARCHITECTURE`, `DECISIONS`, README, memory refresh; post-commit gate V71 green after `0b60ba0`/`d53b0ed`/`5ae9ebe` |
 
 ## How to continue (next session)
 

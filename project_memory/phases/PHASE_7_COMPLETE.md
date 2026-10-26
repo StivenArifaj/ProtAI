@@ -6,7 +6,7 @@
 **Retention guidance:** [../../docs/AUDIT_RETENTION_AND_DATA_HANDLING.md](../../docs/AUDIT_RETENTION_AND_DATA_HANDLING.md)
 **Evidence:** V67–V71 in [../TESTING_AND_VERIFICATION.md](../TESTING_AND_VERIFICATION.md)
 **Commits:** `0b60ba0` (implementation/tests/migration), `d53b0ed` (ADR-014/docs),
-this memory/completion commit, plus the final V71 status record commit.
+`5ae9ebe` (memory/completion), plus the final V71 status record commit.
 
 ## Definition of Done — verdict
 
@@ -148,9 +148,12 @@ this memory/completion commit, plus the final V71 status record commit.
 - V70: pre-commit `bash scripts/check.sh` — PASS, exit 0, all 8 steps; 827 tests;
   Gitleaks 8.30.1 dir+git "no leaks found" (37 commits scanned); prohibited-pattern and
   constant-time-confinement checks clean.
-- V71: post-commit `bash scripts/check.sh` after `0b60ba0`/`d53b0ed` and the memory
-  commit — recorded in [../TESTING_AND_VERIFICATION.md](../TESTING_AND_VERIFICATION.md)
-  and `docs/IMPLEMENTATION_STATE.md` (final status record).
+- V71: post-commit `bash scripts/check.sh` after `0b60ba0`/`d53b0ed`/memory
+  `5ae9ebe` — PASS, exit 0, all 8 steps; **827 passed**; ruff/mypy clean; Gitleaks
+  8.30.1 dir+git "no leaks found" (40 commits scanned); prohibited-pattern and
+  constant-time-confinement checks clean. Recorded in
+  [../TESTING_AND_VERIFICATION.md](../TESTING_AND_VERIFICATION.md) and
+  `docs/IMPLEMENTATION_STATE.md`.
 
 ## Next
 
