@@ -391,3 +391,13 @@ def test_intent_manifest_ttl_is_short_lived_and_bounded() -> None:
     with pytest.raises(ValidationError):
         make_settings(intent_manifest_ttl_seconds=3601)
     assert make_settings(intent_manifest_ttl_seconds=60).intent_manifest_ttl_seconds == 60
+
+
+def test_approval_ttl_is_bounded_and_defaults_to_fifteen_minutes() -> None:
+    assert make_settings().approval_ttl_seconds == 900
+    with pytest.raises(ValidationError):
+        make_settings(approval_ttl_seconds=59)
+    with pytest.raises(ValidationError):
+        make_settings(approval_ttl_seconds=86_401)
+    assert make_settings(approval_ttl_seconds=60).approval_ttl_seconds == 60
+    assert make_settings(approval_ttl_seconds=86_400).approval_ttl_seconds == 86_400

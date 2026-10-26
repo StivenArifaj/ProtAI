@@ -78,47 +78,58 @@ class AuditChainRepository:
         return self._chain_id
 
     async def append(self, event: Mapping[str, Any]) -> AppendedAuditEvent:
-        """Append one event payload as canonical bytes and return its chain identifiers."""
-        canonical_event_bytes = canonical_json_bytes(dict(event))
+        """Append one event in its own transaction and return its chain identifiers."""
         try:
             async with self._session_factory() as session:
                 async with session.begin():
-                    await session.execute(select(func.pg_advisory_xact_lock(AUDIT_CHAIN_LOCK_KEY)))
-                    latest = (
-                        await session.execute(
-                            select(AuditEvent.sequence_number, AuditEvent.event_hash)
-                            .where(AuditEvent.chain_id == self._chain_id)
-                            .order_by(AuditEvent.sequence_number.desc())
-                            .limit(1)
-                        )
-                    ).first()
-                    if latest is None:
-                        sequence_number = 1
-                        previous_hash_bytes = GENESIS_PREV_HASH
-                    else:
-                        sequence_number = latest.sequence_number + 1
-                        previous_hash_bytes = hex_to_hash(latest.event_hash)
-                    event_hash_bytes = compute_event_hash(
-                        chain_id=self._chain_id,
-                        sequence_number=sequence_number,
-                        previous_hash=previous_hash_bytes,
-                        canonical_event_bytes=canonical_event_bytes,
-                    )
-                    previous_hash_hex = hash_to_hex(previous_hash_bytes)
-                    event_hash_hex = hash_to_hex(event_hash_bytes)
-                    session.add(
-                        AuditEvent(
-                            chain_id=self._chain_id,
-                            sequence_number=sequence_number,
-                            canonical_event_bytes=canonical_event_bytes,
-                            previous_hash=previous_hash_hex,
-                            event_hash=event_hash_hex,
-                        )
-                    )
+                    return await self.append_in_session(session, event)
         except (SQLAlchemyError, OSError) as exc:
             raise AuditAppendError(
                 "audit append failed; protected side effects must not proceed (section 16.4)"
             ) from exc
+
+    async def append_in_session(
+        self, session: AsyncSession, event: Mapping[str, Any]
+    ) -> AppendedAuditEvent:
+        """Append within an existing transaction; the caller owns commit/rollback.
+
+        This is the only path other transactional workflows (approval decision and
+        consumption) may use so the protected state transition and its audit event commit
+        atomically. This module remains the only writer of ``audit_events``.
+        """
+        canonical_event_bytes = canonical_json_bytes(dict(event))
+        await session.execute(select(func.pg_advisory_xact_lock(AUDIT_CHAIN_LOCK_KEY)))
+        latest = (
+            await session.execute(
+                select(AuditEvent.sequence_number, AuditEvent.event_hash)
+                .where(AuditEvent.chain_id == self._chain_id)
+                .order_by(AuditEvent.sequence_number.desc())
+                .limit(1)
+            )
+        ).first()
+        if latest is None:
+            sequence_number = 1
+            previous_hash_bytes = GENESIS_PREV_HASH
+        else:
+            sequence_number = latest.sequence_number + 1
+            previous_hash_bytes = hex_to_hash(latest.event_hash)
+        event_hash_bytes = compute_event_hash(
+            chain_id=self._chain_id,
+            sequence_number=sequence_number,
+            previous_hash=previous_hash_bytes,
+            canonical_event_bytes=canonical_event_bytes,
+        )
+        previous_hash_hex = hash_to_hex(previous_hash_bytes)
+        event_hash_hex = hash_to_hex(event_hash_bytes)
+        session.add(
+            AuditEvent(
+                chain_id=self._chain_id,
+                sequence_number=sequence_number,
+                canonical_event_bytes=canonical_event_bytes,
+                previous_hash=previous_hash_hex,
+                event_hash=event_hash_hex,
+            )
+        )
         return AppendedAuditEvent(
             chain_id=self._chain_id,
             sequence_number=sequence_number,

@@ -209,7 +209,16 @@ def test_rejects_approval_required_without_approver_rule() -> None:
 
 def test_rejects_approver_rule_without_approval_required() -> None:
     with pytest.raises(ToolRegistryConfigError, match="only meaningful"):
-        replace(text_registration(), required_approver_rule="admin")
+        replace(text_registration(), required_approver_rule="role:admin")
+
+
+def test_rejects_malformed_approver_rule_at_registration() -> None:
+    with pytest.raises(ToolRegistryConfigError, match="invalid required_approver_rule"):
+        replace(
+            text_registration(),
+            approval_required=True,
+            required_approver_rule="admin",
+        )
 
 
 def test_rejects_adapter_version_mismatch() -> None:
@@ -256,7 +265,7 @@ def test_rejects_approval_required_registration_when_policy_is_not_eligible() ->
         tool_id="stub.read",
         action_id="read",
         approval_required=True,
-        required_approver_rule="admin",
+        required_approver_rule="role:admin",
     )
     bundle = starter_bundle().with_tool_policy(
         "stub.read", ToolPolicy(side_effect_class="READ_ONLY")

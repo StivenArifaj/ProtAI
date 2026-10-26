@@ -242,3 +242,19 @@ def test_bundle_with_tool_policy_overrides_without_mutating_original() -> None:
 def test_bundle_with_tool_policy_rejects_malformed_tool_id() -> None:
     with pytest.raises(ValueError):
         bundle().with_tool_policy("bad id", tool_policy())
+
+
+def test_self_approval_requires_approval_eligibility() -> None:
+    with pytest.raises(ValidationError, match="self_approval_allowed requires approval_eligible"):
+        tool_policy(side_effect_class="LOCAL_MUTATION", self_approval_allowed=True)
+    policy = tool_policy(
+        side_effect_class="LOCAL_MUTATION",
+        approval_eligible=True,
+        self_approval_allowed=True,
+    )
+    assert policy.self_approval_allowed is True
+
+
+def test_self_approval_defaults_to_disallowed() -> None:
+    policy = tool_policy(side_effect_class="LOCAL_MUTATION", approval_eligible=True)
+    assert policy.self_approval_allowed is False

@@ -10,7 +10,9 @@ from __future__ import annotations
 from datetime import datetime
 
 from sqlalchemy import (
+    JSON,
     BigInteger,
+    Boolean,
     CheckConstraint,
     DateTime,
     Identity,
@@ -107,3 +109,59 @@ class SessionSecurityState(Base):
     privilege_escalation_signals: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     blocked_tool_proposals: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     threat_findings: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+
+
+class ApprovalRequest(Base):
+    """Durable human-approval request bound to one canonical action (section 13.2).
+
+    Only the SHA-256 digest of the one-time approval token is stored; the plaintext is
+    returned once to the authenticated host at creation. The canonical action digest,
+    requester/tenant, policy version/hash, resources, destination, classes, risk
+    provenance, and approver rule are snapshotted at creation. The row moves from
+    ``pending`` to ``approved``/``denied`` at a verified decision and then to
+    ``consumed`` exactly once immediately before execution. No raw arguments, model
+    output, or approval secret is stored.
+    """
+
+    __tablename__ = "approval_requests"
+    __table_args__ = (
+        Index("ix_approval_requests_status_expiry", "status", "expires_at"),
+        Index("ix_approval_requests_requester", "tenant_id", "requester_subject_id"),
+        CheckConstraint(
+            "status IN ('pending', 'approved', 'denied', 'consumed', 'expired')",
+            name="ck_approval_status",
+        ),
+        CheckConstraint("risk_score >= 0 AND risk_score <= 100", name="ck_approval_risk_score"),
+    )
+
+    approval_id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    tenant_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    requester_subject_id: Mapped[str] = mapped_column(Text, nullable=False)
+    request_id: Mapped[str] = mapped_column(Text, nullable=False)
+    tool_id: Mapped[str] = mapped_column(Text, nullable=False)
+    action_id: Mapped[str] = mapped_column(Text, nullable=False)
+    action_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    resource_ids: Mapped[list[str]] = mapped_column(JSON, nullable=False)
+    destination: Mapped[str | None] = mapped_column(Text, nullable=True)
+    side_effect_class: Mapped[str] = mapped_column(Text, nullable=False)
+    data_class: Mapped[str] = mapped_column(Text, nullable=False)
+    risk_score: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    risk_version: Mapped[str] = mapped_column(String(32), nullable=False)
+    risk_factor_codes: Mapped[list[str]] = mapped_column(JSON, nullable=False)
+
+    policy_version: Mapped[str] = mapped_column(Text, nullable=False)
+    policy_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    required_approver_rule: Mapped[str] = mapped_column(Text, nullable=False)
+    self_approval_allowed: Mapped[bool] = mapped_column(Boolean, nullable=False)
+
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    token_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    token_consumed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    decided_by_subject_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    decided_by_tenant_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 
 from ai_security.audit.models import AuditEvent, AuditEventType
@@ -235,6 +235,50 @@ def custom_registration(
     )
 
 
+class TwoResourceArguments(ToolArguments):
+    first_id: str
+    second_id: str
+
+
+class TwoResourceAdapter:
+    """Read-only adapter with two resource-id arguments (dedup regression)."""
+
+    adapter_version = "custom-v1"
+
+    def __init__(self, registration: ToolRegistration) -> None:
+        self._registration = registration
+        self.seen_resource_ids: tuple[str, ...] | None = None
+
+    def registrations(self) -> tuple[ToolRegistration, ...]:
+        return (self._registration,)
+
+    def check_resource_access(self, **kwargs: object) -> bool:
+        resource_ids = kwargs.get("resource_ids")
+        assert isinstance(resource_ids, tuple)
+        self.seen_resource_ids = resource_ids
+        return True
+
+    async def execute(
+        self,
+        *,
+        tool_id: str,
+        action_id: str,
+        arguments: ToolArguments,
+        authorization: ExecutionAuthorization,
+    ) -> ToolResult:
+        if not isinstance(arguments, TwoResourceArguments):
+            raise ToolExecutionError("unexpected arguments")
+        verify_execution_authorization(
+            authorization,
+            tool_id=tool_id,
+            action_id=action_id,
+            arguments=arguments,
+            resource_ids=("res-1",),
+            destination=None,
+        )
+        return ValueResult(value="ok")
+
+
 def custom_bundle() -> PolicyBundle:
     return starter_bundle().with_tool_policy(
         "mock_custom.run", ToolPolicy(side_effect_class="READ_ONLY")
@@ -419,6 +463,35 @@ def test_declared_targets_must_match_the_validated_arguments() -> None:
         )
     )
     assert result.reason is DecisionReason.invalid_arguments
+
+
+def test_duplicate_derived_resource_ids_are_collapsed_before_risk_and_audit() -> None:
+    recorder = RecordingAuditRecorder()
+    registration = replace(
+        custom_registration(),
+        argument_schema=TwoResourceArguments,
+        resource_id_arguments=("first_id", "second_id"),
+        resource_prefixes=("res",),
+    )
+    adapter = TwoResourceAdapter(registration)
+    gateway, _ = make_gateway(bundle=custom_bundle(), recorder=recorder, extra_adapters=(adapter,))
+    result = asyncio.run(
+        gateway.invoke_tool(
+            principal=principal(),
+            request_context=context(),
+            proposal=proposal(
+                "mock_custom.run",
+                "run",
+                arguments={"first_id": "res-1", "second_id": "res-1"},
+                target_resources=("res-1",),
+            ),
+        )
+    )
+    assert result.outcome is InvocationOutcome.executed
+    assert result.risk is not None
+    assert "breadth_2_to_4_resources" not in result.risk.factor_codes
+    assert adapter.seen_resource_ids == ("res-1",)
+    assert recorder.events[0].resource_ids == ("res-1",)
 
 
 def test_cross_user_read_is_denied_by_the_resource_check() -> None:

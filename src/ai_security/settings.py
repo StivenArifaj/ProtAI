@@ -206,6 +206,7 @@ class Settings(BaseSettings):
     session_signal_ttl_seconds: int = Field(default=86400, gt=0)
     session_max_age_seconds: int = Field(default=604800, gt=0)
     intent_manifest_ttl_seconds: int = Field(default=300, ge=1, le=3600)
+    approval_ttl_seconds: int = Field(default=900, ge=60, le=86400)
 
     _host_auth_keys: dict[str, HostAuthKey] = PrivateAttr(default_factory=dict)
 

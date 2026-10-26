@@ -37,6 +37,7 @@ from dataclasses import dataclass
 from pydantic import BaseModel
 
 from ai_security.data_security.classification import DataClass
+from ai_security.identity.approver_rules import ApproverRuleError, parse_approver_rule
 from ai_security.policy.models import PolicyBundle
 from ai_security.security.urls import (
     DestinationCanonicalizationError,
@@ -238,6 +239,10 @@ def _validate_registration(registration: ToolRegistration) -> None:
                 "approval-required registrations must declare a control-free, non-empty "
                 f"required_approver_rule (max {_RULE_MAX_LENGTH} chars)"
             )
+        try:
+            parse_approver_rule(rule)
+        except ApproverRuleError as exc:
+            raise ToolRegistryConfigError(f"invalid required_approver_rule: {exc}") from exc
     elif registration.required_approver_rule is not None:
         raise ToolRegistryConfigError(
             "required_approver_rule is only meaningful when approval_required is true"

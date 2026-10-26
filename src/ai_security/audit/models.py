@@ -22,7 +22,7 @@ from ai_security.firewall.models import InvocationOutcome
 from ai_security.tools.base import STABLE_ID_PATTERN, SideEffectClass
 
 AUDIT_SCHEMA_VERSION: Literal[1] = 1
-COMPONENT: Literal["firewall.gateway"] = "firewall.gateway"
+COMPONENT: Literal["firewall.gateway", "firewall.approval"] = "firewall.gateway"
 
 _HEX64 = re.compile(r"[0-9a-f]{64}")
 _STABLE_ID = re.compile(STABLE_ID_PATTERN)
@@ -34,6 +34,10 @@ class AuditEventType(StrEnum):
     policy_evaluated = "POLICY_EVALUATED"
     tool_execution_completed = "TOOL_EXECUTION_COMPLETED"
     tool_execution_failed = "TOOL_EXECUTION_FAILED"
+    approval_requested = "APPROVAL_REQUESTED"
+    approval_decided = "APPROVAL_DECIDED"
+    approval_consumed = "APPROVAL_CONSUMED"
+    approval_expired = "APPROVAL_EXPIRED"
 
 
 class AuditEvent(BaseModel):
@@ -45,7 +49,7 @@ class AuditEvent(BaseModel):
     event_id: str = Field(pattern=r"^[0-9a-f]{32}$")
     event_type: AuditEventType
     occurred_at: datetime
-    component: Literal["firewall.gateway"] = COMPONENT
+    component: Literal["firewall.gateway", "firewall.approval"] = COMPONENT
     component_version: str = Field(min_length=1, max_length=64)
 
     request_id: str = Field(min_length=1, max_length=128)
@@ -69,6 +73,9 @@ class AuditEvent(BaseModel):
 
     destination: str | None = Field(default=None, min_length=1, max_length=2_048)
     resource_ids: tuple[str, ...] = ()
+
+    approval_id: str | None = Field(default=None, pattern=r"^[0-9a-f]{32}$")
+    approver_subject_id: str | None = Field(default=None, min_length=1, max_length=256)
 
     duration_ms: int | None = Field(default=None, ge=0, le=3_600_000)
     result_digest: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
@@ -99,13 +106,13 @@ class AuditEvent(BaseModel):
             raise ValueError("result_digest must be lowercase 64-character hex")
         return value
 
-    @field_validator("error_type")
+    @field_validator("error_type", "approver_subject_id")
     @classmethod
     def _error_type_is_a_class_name(cls, value: str | None) -> str | None:
         if value is not None and any(
             ord(character) < 0x20 or ord(character) == 0x7F for character in value
         ):
-            raise ValueError("error_type must not contain control characters")
+            raise ValueError("field must not contain control characters")
         return value
 
     def to_payload(self) -> dict[str, object]:

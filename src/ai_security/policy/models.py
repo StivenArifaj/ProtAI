@@ -80,6 +80,7 @@ class ToolPolicy(BaseModel):
     side_effect_class: SideEffectClass
     explicitly_permitted: bool = False
     approval_eligible: bool = False
+    self_approval_allowed: bool = False
     external_egress_enabled: bool = False
     allowed_destinations: tuple[str, ...] = ()
 
@@ -105,6 +106,10 @@ class ToolPolicy(BaseModel):
             and self.side_effect_class is not SideEffectClass.local_mutation
         ):
             raise ValueError("explicitly_permitted is only meaningful for LOCAL_MUTATION tools")
+        if self.self_approval_allowed and not self.approval_eligible:
+            raise ValueError(
+                "self_approval_allowed requires approval_eligible (blueprint section 13.2)"
+            )
         if (
             self.external_egress_enabled or self.allowed_destinations
         ) and self.side_effect_class is not SideEffectClass.external_mutation:

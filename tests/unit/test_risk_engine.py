@@ -19,11 +19,13 @@ def score(
     side_effect_class: SideEffectClass,
     data_class: DataClass = DataClass.public,
     destination: str | None = None,
+    resource_count: int = 0,
 ) -> int:
     return assess_risk(
         side_effect_class=side_effect_class,
         data_class=data_class,
         destination=destination,
+        resource_count=resource_count,
     ).score
 
 
@@ -114,3 +116,60 @@ def test_zero_weight_factors_are_omitted() -> None:
     )
     assert assessment.factor_codes == ("side_effect_read_only",)
     assert assessment.score == 0
+
+
+def test_version_two_adds_resource_breadth_weight() -> None:
+    assert RISK_ENGINE_VERSION == "risk-v2"
+
+
+@pytest.mark.parametrize(
+    "resource_count,expected",
+    [
+        (0, 0),
+        (1, 0),
+        (2, 5),
+        (4, 5),
+        (5, 10),
+        (8, 10),
+        (9, 15),
+        (32, 15),
+    ],
+)
+def test_resource_breadth_factor_boundaries(resource_count: int, expected: int) -> None:
+    assert score(SideEffectClass.local_mutation, resource_count=resource_count) == 10 + expected
+
+
+def test_breadth_factor_is_labelled_with_rationale() -> None:
+    assessment = assess_risk(
+        side_effect_class=SideEffectClass.read_only,
+        data_class=DataClass.public,
+        destination=None,
+        resource_count=9,
+    )
+    factors = {factor.code: factor for factor in assessment.factors}
+    breadth = factors["breadth_9_or_more_resources"]
+    assert breadth.weight == 15
+    assert breadth.rationale
+    assert assessment.factor_codes[-1] == "breadth_9_or_more_resources"
+
+
+@pytest.mark.parametrize("resource_count", [-1, 33, True, "2", 1.5])
+def test_invalid_resource_counts_are_rejected(resource_count: object) -> None:
+    with pytest.raises(RiskScoringError):
+        assess_risk(
+            side_effect_class=SideEffectClass.read_only,
+            data_class=DataClass.public,
+            destination=None,
+            resource_count=resource_count,  # type: ignore[arg-type]
+        )
+
+
+def test_every_factor_carries_a_rationale() -> None:
+    assessment = assess_risk(
+        side_effect_class=SideEffectClass.external_mutation,
+        data_class=DataClass.confidential,
+        destination=DEST,
+        resource_count=5,
+    )
+    assert assessment.factors
+    assert all(factor.rationale for factor in assessment.factors)

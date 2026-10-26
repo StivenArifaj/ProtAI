@@ -47,6 +47,7 @@ from pydantic import ValidationError
 from ai_security import __version__
 from ai_security.audit.models import AuditEvent, AuditEventType
 from ai_security.audit.writer import AuditRecorder, AuditWriteError
+from ai_security.firewall.approval import ApprovalConsumption, ApprovalService
 from ai_security.firewall.decision import DecisionReason, DecisionRecord, FirewallDecision
 from ai_security.firewall.models import (
     InvocationOutcome,
@@ -71,6 +72,7 @@ from ai_security.intent.validator import (
     IntentUsageTracker,
     validate_intent_constraints,
 )
+from ai_security.persistence.approval_repository import ApprovalConsumptionOutcome
 from ai_security.persistence.audit_repository import AppendedAuditEvent
 from ai_security.security.canonical_json import (
     CanonicalJSONError,
@@ -105,6 +107,7 @@ class ToolGateway:
         clock: Callable[[], datetime] | None = None,
         component_version: str = __version__,
         intent_tracker: IntentUsageTracker | None = None,
+        approval_service: ApprovalService | None = None,
     ) -> None:
         self._registry = registry
         self._engine = engine
@@ -117,6 +120,10 @@ class ToolGateway:
         # App wiring always supplies one; the Phase 2 in-process tests construct the
         # gateway without this optional layer (documented legacy/test mode).
         self._intent_tracker = intent_tracker
+        # Phase 5: when supplied, an ASK_USER decision may execute only after this
+        # service atomically consumes a matching approved request. The gateway still
+        # never treats an approval as authority for an engine BLOCK/hard denial.
+        self._approval_service = approval_service
         self._limiters: WeakKeyDictionary[
             asyncio.AbstractEventLoop, dict[str, asyncio.Semaphore]
         ] = WeakKeyDictionary()
@@ -128,8 +135,9 @@ class ToolGateway:
         request_context: RequestContext,
         proposal: ProposedToolCall,
         manifest: IntentManifest | None = None,
+        approval_id: str | None = None,
     ) -> ToolInvocationResult:
-        """Evaluate and, only on ``ALLOW``, execute the proposed action."""
+        """Evaluate and, only on ``ALLOW`` or a valid one-time approval, execute."""
         now = self._now()
 
         if not self._binding_is_valid(
@@ -281,6 +289,7 @@ class ToolGateway:
                 side_effect_class=registration.side_effect_class,
                 data_class=registration.data_class,
                 destination=canonical_destination,
+                resource_count=len(resource_ids),
             )
         except RiskScoringError:
             logger.error(
@@ -314,7 +323,50 @@ class ToolGateway:
         )
 
         action_digest: str | None = None
-        if decision.decision is FirewallDecision.allow:
+        approved_via_approval = False
+        approver_subject_id: str | None = None
+        approval_reference: str | None = None
+
+        # The canonical action digest is required for an engine ALLOW and for any
+        # ASK_USER attempt that presents an approval. A BLOCK never consults one.
+        if decision.decision is FirewallDecision.allow or (
+            decision.decision is FirewallDecision.ask_user and approval_id is not None
+        ):
+            try:
+                action_digest = self._digest(
+                    principal=principal,
+                    proposal=proposal,
+                    arguments=arguments.model_dump(mode="json"),
+                    resource_ids=resource_ids,
+                    destination=canonical_destination,
+                )
+            except CanonicalJSONError:
+                decision = self._decision(FirewallDecision.block, DecisionReason.invalid_arguments)
+
+        if decision.decision is FirewallDecision.ask_user and approval_id is not None:
+            consumption = await self._consume_approval(
+                approval_id=approval_id,
+                principal=principal,
+                request_id=proposal.request_id,
+                tool_id=proposal.tool_id,
+                action_id=proposal.action_id,
+                action_digest=action_digest,
+                resource_ids=resource_ids,
+                destination=canonical_destination,
+                policy_version=decision.policy_version,
+                policy_hash=decision.policy_hash,
+                now=now,
+            )
+            if consumption is not None and consumption.granted:
+                approved_via_approval = True
+                approver_subject_id = consumption.approver_subject_id
+                approval_reference = consumption.approval_id
+            else:
+                decision = self._decision(
+                    FirewallDecision.block, self._approval_failure_reason(consumption)
+                )
+
+        if decision.decision is FirewallDecision.allow or approved_via_approval:
             if (
                 self._intent_tracker is not None
                 and manifest is not None
@@ -328,17 +380,9 @@ class ToolGateway:
                 decision = self._decision(
                     FirewallDecision.block, DecisionReason.intent_limit_exceeded
                 )
-        if decision.decision is FirewallDecision.allow:
-            try:
-                action_digest = self._digest(
-                    principal=principal,
-                    proposal=proposal,
-                    arguments=arguments.model_dump(mode="json"),
-                    resource_ids=resource_ids,
-                    destination=canonical_destination,
-                )
-            except CanonicalJSONError:
-                decision = self._decision(FirewallDecision.block, DecisionReason.invalid_arguments)
+                approved_via_approval = False
+                approval_reference = None
+                approver_subject_id = None
 
         decision_sequence = await self._record_decision_event(
             request_context=request_context,
@@ -349,8 +393,10 @@ class ToolGateway:
             risk=risk,
             destination=canonical_destination,
             resource_ids=resource_ids,
+            approval_id=approval_reference,
+            approver_subject_id=approver_subject_id,
         )
-        if decision.decision is not FirewallDecision.allow:
+        if decision.decision is not FirewallDecision.allow and not approved_via_approval:
             return self._result(
                 proposal,
                 decision,
@@ -365,8 +411,8 @@ class ToolGateway:
             blocked = self._decision(FirewallDecision.block, DecisionReason.audit_unavailable)
             return self._result(proposal, blocked, InvocationOutcome.denied, None, risk, None, None)
 
-        if action_digest is None:  # pragma: no cover - ALLOW always computes a digest
-            raise RuntimeError("ALLOW decision without an action digest")
+        if action_digest is None:  # pragma: no cover - execution always computes a digest
+            raise RuntimeError("execution path without an action digest")
         authorization = _issue_execution_authorization(
             call_id=proposal.call_id,
             request_id=proposal.request_id,
@@ -391,6 +437,8 @@ class ToolGateway:
             arguments=arguments,
             authorization=authorization,
             decision_sequence=decision_sequence,
+            approval_id=approval_reference,
+            approver_subject_id=approver_subject_id,
         )
 
     # -- validation steps -------------------------------------------------------------
@@ -406,6 +454,54 @@ class ToolGateway:
             proposal.request_id == request_context.request_id
             and proposal.principal_subject_id == principal.subject_id
         )
+
+    async def _consume_approval(
+        self,
+        *,
+        approval_id: str,
+        principal: Principal,
+        request_id: str,
+        tool_id: str,
+        action_id: str,
+        action_digest: str | None,
+        resource_ids: tuple[str, ...],
+        destination: str | None,
+        policy_version: str,
+        policy_hash: str,
+        now: datetime,
+    ) -> ApprovalConsumption | None:
+        """Consume one approval; any malformed/outage path is a non-grant."""
+        if action_digest is None or self._approval_service is None:
+            return None
+        try:
+            return await self._approval_service.consume(
+                approval_id,
+                principal=principal,
+                request_id=request_id,
+                tool_id=tool_id,
+                action_id=action_id,
+                action_digest=action_digest,
+                resource_ids=resource_ids,
+                destination=destination,
+                policy_version=policy_version,
+                policy_hash=policy_hash,
+                now=now,
+            )
+        except Exception:
+            logger.error("approval consumption failed for tool %s; failing closed", tool_id)
+            return None
+
+    @staticmethod
+    def _approval_failure_reason(
+        consumption: ApprovalConsumption | None,
+    ) -> DecisionReason:
+        if consumption is None:
+            return DecisionReason.approval_invalid
+        if consumption.outcome is ApprovalConsumptionOutcome.denied:
+            return DecisionReason.approval_denied
+        if consumption.outcome is ApprovalConsumptionOutcome.expired:
+            return DecisionReason.approval_expired
+        return DecisionReason.approval_invalid
 
     def _validate_arguments(
         self, registered: RegisteredTool, proposal: ProposedToolCall
@@ -427,7 +523,13 @@ class ToolGateway:
             value = getattr(arguments, argument_name)
             if not isinstance(value, str) or _is_stable_id(value) is False:
                 return None
-            resource_ids.append(value)
+            # Two resource-id arguments may carry the same stable id. The canonical
+            # action binds a *set* of targets (the approval contract rejects duplicate
+            # resource ids, and the risk breadth factor counts distinct resources), so
+            # keep first-occurrence order and collapse identical values. Every raw
+            # value was validated above; deduplication cannot widen authorization.
+            if value not in resource_ids:
+                resource_ids.append(value)
         derived_resources = tuple(resource_ids)
 
         canonical_destination: str | None = None
@@ -548,6 +650,8 @@ class ToolGateway:
         arguments: ToolArguments,
         authorization: ExecutionAuthorization,
         decision_sequence: int,
+        approval_id: str | None = None,
+        approver_subject_id: str | None = None,
     ) -> ToolInvocationResult:
         semaphore = self._semaphore(proposal.tool_id, registration.max_concurrent_invocations)
         started = time.perf_counter()
@@ -571,6 +675,8 @@ class ToolGateway:
                 destination=destination,
                 resource_ids=resource_ids,
                 decision_sequence=decision_sequence,
+                approval_id=approval_id,
+                approver_subject_id=approver_subject_id,
                 outcome=InvocationOutcome.timeout,
                 error_type="TimeoutError",
                 duration_ms=_elapsed_ms(started),
@@ -589,6 +695,8 @@ class ToolGateway:
                 destination=destination,
                 resource_ids=resource_ids,
                 decision_sequence=decision_sequence,
+                approval_id=approval_id,
+                approver_subject_id=approver_subject_id,
                 outcome=InvocationOutcome.adapter_failed,
                 error_type=type(exc).__name__,
                 duration_ms=_elapsed_ms(started),
@@ -606,6 +714,8 @@ class ToolGateway:
                 destination=destination,
                 resource_ids=resource_ids,
                 decision_sequence=decision_sequence,
+                approval_id=approval_id,
+                approver_subject_id=approver_subject_id,
                 outcome=InvocationOutcome.result_rejected,
                 error_type=result_error,
                 duration_ms=_elapsed_ms(started),
@@ -625,6 +735,8 @@ class ToolGateway:
             risk=risk,
             destination=destination,
             resource_ids=resource_ids,
+            approval_id=approval_id,
+            approver_subject_id=approver_subject_id,
             outcome=InvocationOutcome.executed,
             duration_ms=duration_ms,
             result_digest=result_digest,
@@ -641,6 +753,8 @@ class ToolGateway:
                 risk,
                 decision_sequence,
                 None,
+                approval_id=approval_id,
+                approver_subject_id=approver_subject_id,
             )
         return self._result(
             proposal,
@@ -650,6 +764,8 @@ class ToolGateway:
             risk,
             decision_sequence,
             outcome_sequence.sequence_number,
+            approval_id=approval_id,
+            approver_subject_id=approver_subject_id,
         )
 
     def _result_error(self, registration: ToolRegistration, adapter_result: object) -> str | None:
@@ -675,6 +791,8 @@ class ToolGateway:
         destination: str | None,
         resource_ids: tuple[str, ...],
         decision_sequence: int,
+        approval_id: str | None,
+        approver_subject_id: str | None,
         outcome: InvocationOutcome,
         error_type: str,
         duration_ms: int,
@@ -688,6 +806,8 @@ class ToolGateway:
             risk=risk,
             destination=destination,
             resource_ids=resource_ids,
+            approval_id=approval_id,
+            approver_subject_id=approver_subject_id,
             outcome=outcome,
             duration_ms=duration_ms,
             result_digest=None,
@@ -704,6 +824,8 @@ class ToolGateway:
                 risk,
                 decision_sequence,
                 None,
+                approval_id=approval_id,
+                approver_subject_id=approver_subject_id,
             )
         return self._result(
             proposal,
@@ -713,6 +835,8 @@ class ToolGateway:
             risk,
             decision_sequence,
             outcome_sequence.sequence_number,
+            approval_id=approval_id,
+            approver_subject_id=approver_subject_id,
         )
 
     def _semaphore(self, tool_id: str, limit: int) -> asyncio.Semaphore:
@@ -740,6 +864,8 @@ class ToolGateway:
         risk: RiskAssessment | None = None,
         destination: str | None = None,
         resource_ids: tuple[str, ...] = (),
+        approval_id: str | None = None,
+        approver_subject_id: str | None = None,
     ) -> int | None:
         event = self._event(
             event_type=AuditEventType.policy_evaluated,
@@ -756,6 +882,8 @@ class ToolGateway:
             result_digest=None,
             result_bytes=None,
             error_type=None,
+            approval_id=approval_id,
+            approver_subject_id=approver_subject_id,
         )
         appended = await self._record_event(event)
         return None if appended is None else appended.sequence_number
@@ -771,6 +899,8 @@ class ToolGateway:
         risk: RiskAssessment,
         destination: str | None,
         resource_ids: tuple[str, ...],
+        approval_id: str | None,
+        approver_subject_id: str | None,
         outcome: InvocationOutcome,
         duration_ms: int,
         result_digest: str | None,
@@ -792,6 +922,8 @@ class ToolGateway:
             risk=risk,
             destination=destination,
             resource_ids=resource_ids,
+            approval_id=approval_id,
+            approver_subject_id=approver_subject_id,
             outcome=outcome,
             duration_ms=duration_ms,
             result_digest=result_digest,
@@ -816,6 +948,8 @@ class ToolGateway:
         result_digest: str | None,
         result_bytes: int | None,
         error_type: str | None,
+        approval_id: str | None = None,
+        approver_subject_id: str | None = None,
     ) -> AuditEvent:
         return AuditEvent(
             event_id=uuid.uuid4().hex,
@@ -840,6 +974,8 @@ class ToolGateway:
             risk_factor_codes=None if risk is None else risk.factor_codes,
             destination=destination,
             resource_ids=resource_ids,
+            approval_id=approval_id,
+            approver_subject_id=approver_subject_id,
             duration_ms=duration_ms,
             result_digest=result_digest,
             result_bytes=result_bytes,
@@ -877,6 +1013,8 @@ class ToolGateway:
         risk: RiskAssessment | None,
         decision_sequence: int | None,
         outcome_sequence: int | None,
+        approval_id: str | None = None,
+        approver_subject_id: str | None = None,
     ) -> ToolInvocationResult:
         # ``result`` is always a ``ToolResult`` or None by construction; the cast keeps
         # the frozen dataclass free of pydantic revalidation.
@@ -893,6 +1031,8 @@ class ToolGateway:
             policy_hash=decision.policy_hash,
             decision_audit_sequence=decision_sequence,
             outcome_audit_sequence=outcome_sequence,
+            approval_id=approval_id,
+            approver_subject_id=approver_subject_id,
         )
 
     def _now(self) -> datetime:

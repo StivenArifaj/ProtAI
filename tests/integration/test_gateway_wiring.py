@@ -14,6 +14,7 @@ import pytest
 
 from ai_security.api.app import create_app
 from ai_security.audit.writer import ChainAuditRecorder
+from ai_security.firewall.approval import ApprovalService
 from ai_security.firewall.gateway import ToolGateway
 from ai_security.settings import Settings
 from ai_security.tools.registry import ToolRegistry, ToolRegistryConfigError
@@ -32,6 +33,9 @@ def test_create_app_builds_registry_and_gateway(
     assert isinstance(gateway, ToolGateway)
     assert gateway._registry is registry  # noqa: SLF001 - wiring identity check
     assert isinstance(gateway._recorder, ChainAuditRecorder)  # noqa: SLF001 - wiring check
+    approval_service = app.state.approval_service
+    assert isinstance(approval_service, ApprovalService)
+    assert gateway._approval_service is approval_service  # noqa: SLF001 - wiring check
     assert registry.resolve("mock_email.read", "read") is not None
     assert registry.resolve("mock_files.search", "search") is not None
     assert registry.resolve("mock_email.delete", "delete") is None

@@ -7,20 +7,28 @@ expiry, audit outage, or caller-controlled field may reach an adapter or the sin
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
 import pytest
 
 from ai_security.audit.models import AuditEvent, AuditEventType
 from ai_security.audit.writer import AuditWriteError
+from ai_security.firewall.approval import ApprovalConsumption
 from ai_security.firewall.decision import DecisionReason, FirewallDecision
 from ai_security.firewall.gateway import ToolGateway
 from ai_security.firewall.models import InvocationOutcome, ProposedToolCall, RequestContext
 from ai_security.firewall.policy_engine import PolicyEngine
 from ai_security.identity.models import Principal
+from ai_security.persistence.approval_repository import ApprovalConsumptionOutcome
 from ai_security.persistence.audit_repository import AppendedAuditEvent
 from ai_security.policy.loader import load_policy_bundle
-from ai_security.policy.models import PolicyBundle, ToolPolicy
+from ai_security.policy.models import (
+    PolicyBundle,
+    RiskThresholdsDocument,
+    Thresholds,
+    ToolPolicy,
+)
 from ai_security.tools.base import ExecutionAuthorizationError, ToolArguments, ToolResult
 from ai_security.tools.mock_email import EmailReadArguments, MockEmailAdapter
 from ai_security.tools.mock_external_sink import (
@@ -96,6 +104,51 @@ def enabled_sink_bundle() -> PolicyBundle:
     )
 
 
+def approval_bundle() -> PolicyBundle:
+    """ASK_USER for an enabled external write: egress allowed, mid risk band."""
+    bundle = enabled_sink_bundle().with_tool_policy(
+        "mock_external_sink.write",
+        ToolPolicy(
+            side_effect_class="EXTERNAL_MUTATION",
+            external_egress_enabled=True,
+            allowed_destinations=(DESTINATION,),
+            approval_eligible=True,
+        ),
+    )
+    return replace(
+        bundle,
+        risk_thresholds=RiskThresholdsDocument(
+            schema_version=1,
+            version="security-thresholds",
+            thresholds=Thresholds(ask_user_at_or_above=20, block_at_or_above=80),
+        ),
+    )
+
+
+class FakeApprovalService:
+    """Deterministic approval-consumption stub (no database; gateway contract only)."""
+
+    def __init__(
+        self,
+        outcome: ApprovalConsumptionOutcome = ApprovalConsumptionOutcome.consumed,
+        *,
+        raises: bool = False,
+    ) -> None:
+        self.outcome = outcome
+        self.raises = raises
+        self.calls = 0
+
+    async def consume(self, approval_id: str, **_: object) -> ApprovalConsumption:
+        self.calls += 1
+        if self.raises:
+            raise RuntimeError("approval storage down")
+        return ApprovalConsumption(
+            outcome=self.outcome,
+            approval_id=approval_id,
+            approver_subject_id="approver-1",
+        )
+
+
 def principal(subject_id: str = "dev-user") -> Principal:
     return Principal(
         subject_id=subject_id,
@@ -133,6 +186,7 @@ def build(
     *,
     bundle: PolicyBundle,
     recorder: Recorder,
+    approval_service: object | None = None,
 ) -> tuple[ToolGateway, CountingEmailAdapter, SinkStore]:
     email = CountingEmailAdapter()
     store = SinkStore()
@@ -150,16 +204,23 @@ def build(
         engine=PolicyEngine(bundle),
         recorder=recorder,
         clock=lambda: FIXED_NOW,
+        approval_service=approval_service,  # type: ignore[arg-type]
     )
     return gateway, email, store
 
 
-def invoke(gateway: ToolGateway, call: ProposedToolCall) -> object:
+def invoke(
+    gateway: ToolGateway,
+    call: ProposedToolCall,
+    *,
+    approval_id: str | None = None,
+) -> object:
     async def scenario() -> object:
         return await gateway.invoke_tool(
             principal=principal(),
             request_context=RequestContext(request_id=REQUEST_ID),
             proposal=call,
+            approval_id=approval_id,
         )
 
     return asyncio.run(scenario())
@@ -334,3 +395,103 @@ def test_direct_adapter_execution_without_authorization_fails_closed() -> None:
 
     with pytest.raises(ExecutionAuthorizationError):
         asyncio.run(scenario())
+
+
+def approval_call(content: str = "canary") -> ProposedToolCall:
+    return proposal(
+        "mock_external_sink.write",
+        "write",
+        arguments={"destination": DESTINATION, "content": content},
+        destination=DESTINATION,
+    )
+
+
+def test_ask_user_without_approval_never_executes() -> None:
+    recorder = Recorder()
+    gateway, _, store = build(bundle=approval_bundle(), recorder=recorder)
+    result = invoke(gateway, approval_call())
+    assert result.decision is FirewallDecision.ask_user
+    assert result.outcome is InvocationOutcome.denied
+    assert len(store) == 0
+    assert [event.decision for event in recorder.events] == [FirewallDecision.ask_user]
+
+
+def test_granted_approval_allows_one_ask_user_execution_with_metadata() -> None:
+    recorder = Recorder()
+    service = FakeApprovalService()
+    gateway, _, store = build(bundle=approval_bundle(), recorder=recorder, approval_service=service)
+    result = invoke(gateway, approval_call(), approval_id="a" * 32)
+    assert result.decision is FirewallDecision.ask_user
+    assert result.outcome is InvocationOutcome.executed
+    assert result.approval_id == "a" * 32
+    assert result.approver_subject_id == "approver-1"
+    assert service.calls == 1
+    assert len(store) == 1
+    decision_event = recorder.events[-2]
+    assert decision_event.approval_id == "a" * 32
+    assert decision_event.approver_subject_id == "approver-1"
+
+
+def test_approval_is_not_consulted_without_a_presented_approval() -> None:
+    service = FakeApprovalService()
+    gateway, _, store = build(
+        bundle=approval_bundle(), recorder=Recorder(), approval_service=service
+    )
+    result = invoke(gateway, approval_call())
+    assert result.outcome is InvocationOutcome.denied
+    assert service.calls == 0
+    assert len(store) == 0
+
+
+@pytest.mark.parametrize(
+    ("outcome", "reason"),
+    [
+        (ApprovalConsumptionOutcome.mismatch, DecisionReason.approval_invalid),
+        (ApprovalConsumptionOutcome.replay, DecisionReason.approval_invalid),
+        (ApprovalConsumptionOutcome.not_approved, DecisionReason.approval_invalid),
+        (ApprovalConsumptionOutcome.not_found, DecisionReason.approval_invalid),
+        (ApprovalConsumptionOutcome.denied, DecisionReason.approval_denied),
+        (ApprovalConsumptionOutcome.expired, DecisionReason.approval_expired),
+    ],
+)
+def test_non_granted_approvals_fail_closed_without_execution(
+    outcome: ApprovalConsumptionOutcome, reason: DecisionReason
+) -> None:
+    recorder = Recorder()
+    service = FakeApprovalService(outcome)
+    gateway, _, store = build(bundle=approval_bundle(), recorder=recorder, approval_service=service)
+    result = invoke(gateway, approval_call(), approval_id="b" * 32)
+    assert result.decision is FirewallDecision.block
+    assert result.reason is reason
+    assert result.outcome is InvocationOutcome.denied
+    assert len(store) == 0
+    assert recorder.events[-1].approval_id is None
+
+
+def test_approval_storage_failure_fails_closed_without_execution() -> None:
+    recorder = Recorder()
+    service = FakeApprovalService(raises=True)
+    gateway, _, store = build(bundle=approval_bundle(), recorder=recorder, approval_service=service)
+    result = invoke(gateway, approval_call(), approval_id="c" * 32)
+    assert result.reason is DecisionReason.approval_invalid
+    assert len(store) == 0
+    assert recorder.events[-1].decision is FirewallDecision.block
+
+
+def test_engine_block_never_consults_or_consumes_an_approval() -> None:
+    recorder = Recorder()
+    service = FakeApprovalService()
+    gateway, _, store = build(bundle=starter_bundle(), recorder=recorder, approval_service=service)
+    result = invoke(gateway, approval_call(), approval_id="d" * 32)
+    assert result.decision is FirewallDecision.block
+    assert result.reason is DecisionReason.external_egress_disabled
+    assert result.outcome is InvocationOutcome.denied
+    assert service.calls == 0
+    assert len(store) == 0
+
+
+def test_approval_service_absent_blocks_an_ask_user_attempt() -> None:
+    gateway, _, store = build(bundle=approval_bundle(), recorder=Recorder())
+    result = invoke(gateway, approval_call(), approval_id="e" * 32)
+    assert result.reason is DecisionReason.approval_invalid
+    assert len(store) == 0

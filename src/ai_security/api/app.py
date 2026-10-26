@@ -37,6 +37,7 @@ from fastapi import FastAPI
 from ai_security.api.middleware import HostAuthMiddleware
 from ai_security.api.routes_health import router as health_router
 from ai_security.audit.writer import ChainAuditRecorder
+from ai_security.firewall.approval import ApprovalService
 from ai_security.firewall.gateway import ToolGateway
 from ai_security.firewall.policy_engine import PolicyEngine
 from ai_security.input_defense.config import load_input_defense_config
@@ -44,6 +45,7 @@ from ai_security.input_defense.service import InputDefenseService
 from ai_security.intent.extractors import MockIntentExtractor
 from ai_security.intent.service import IntentManifestService
 from ai_security.intent.validator import IntentUsageTracker
+from ai_security.persistence.approval_repository import ApprovalRepository
 from ai_security.persistence.audit_repository import V1_CHAIN_ID, AuditChainRepository
 from ai_security.persistence.database import Database
 from ai_security.persistence.nonce_repository import SqlAlchemyNonceRepository
@@ -121,6 +123,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         ),
     )
     app.state.tool_registry = registry
+    # Phase 5: durable approval storage is bound to the same audit chain. The gateway
+    # accepts an approval only for an engine ASK_USER decision and only after an atomic,
+    # digest-bound consumption; BLOCK/hard-denied actions never consult it.
+    app.state.approval_service = ApprovalService(
+        ApprovalRepository(database.session_factory, app.state.audit_chain),
+        ttl_seconds=resolved.approval_ttl_seconds,
+    )
     # Phase 4: manifests are issued only by this service (mock extractor in Phase 4;
     # the local-model adapter interface is ready for Phase 8 provider wiring). The
     # gateway is constructed with the tracker so production execution requires a
@@ -137,6 +146,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         engine=PolicyEngine(policy_bundle),
         recorder=ChainAuditRecorder(app.state.audit_chain),
         intent_tracker=app.state.intent_usage_tracker,
+        approval_service=app.state.approval_service,
     )
     # Phase 3: the input-defense configuration is validated at startup (invalid or
     # incomplete dispositions refuse startup) and the detection service plus the

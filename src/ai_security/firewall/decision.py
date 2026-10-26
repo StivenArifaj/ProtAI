@@ -73,6 +73,15 @@ class DecisionReason(StrEnum):
     intent_constraint_violation = "intent_constraint_violation"
     intent_limit_exceeded = "intent_limit_exceeded"
 
+    # Approval workflow reasons (Phase 5, section 13). ``approval_granted`` is used by
+    # approval audit events; the gateway itself keeps the engine's ASK_USER reason when
+    # it executes an approved action. Approval failures are failures of a required
+    # control and block execution.
+    approval_granted = "approval_granted"
+    approval_denied = "approval_denied"
+    approval_expired = "approval_expired"
+    approval_invalid = "approval_invalid"
+
     # Operational overrides produced by the gateway (fail closed, section 16.4).
     # These may only ever downgrade a decision to BLOCK; they never grant execution.
     policy_evaluation_error = "policy_evaluation_error"

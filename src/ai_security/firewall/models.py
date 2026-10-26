@@ -116,6 +116,8 @@ class ToolInvocationResult:
     policy_hash: str
     decision_audit_sequence: int | None
     outcome_audit_sequence: int | None
+    approval_id: str | None = None
+    approver_subject_id: str | None = None
 
 
 class ToolExecutor(Protocol):
@@ -128,6 +130,7 @@ class ToolExecutor(Protocol):
         request_context: RequestContext,
         proposal: ProposedToolCall,
         manifest: IntentManifest | None = None,
+        approval_id: str | None = None,
     ) -> ToolInvocationResult:
         """Evaluate and (only on ALLOW) execute one proposed action."""
         ...
