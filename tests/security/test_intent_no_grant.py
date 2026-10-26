@@ -230,7 +230,11 @@ def test_missing_manifest_denies_before_policy_or_execution() -> None:
     assert result.reason is DecisionReason.intent_manifest_invalid  # type: ignore[attr-defined]
     assert result.outcome is InvocationOutcome.denied  # type: ignore[attr-defined]
     assert email.executions == 0
-    assert [event.event_type.value for event in recorder.events] == ["POLICY_EVALUATED"]
+    assert [event.event_type.value for event in recorder.events] == [
+        "REQUEST_RECEIVED",
+        "TOOL_CALL_PROPOSED",
+        "POLICY_EVALUATED",
+    ]
 
 
 def test_expired_or_differently_bound_manifest_denies_without_execution() -> None:

@@ -11,11 +11,15 @@ clarification/rejection or a typed failure with **no manifest**.
 from __future__ import annotations
 
 import hashlib
+import logging
 import secrets
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from typing import get_args, get_origin
 
+from ai_security import __version__
+from ai_security.audit.models import AuditEvent, AuditEventType
+from ai_security.audit.writer import AuditRecorder, AuditWriteError
 from ai_security.identity.models import Principal
 from ai_security.intent.extractors import (
     IntentExtractor,
@@ -34,6 +38,8 @@ from ai_security.intent.models import (
 from ai_security.intent.time_window import resolve_relative_window
 from ai_security.policy.models import PolicyBundle
 from ai_security.tools.registry import ToolRegistration, ToolRegistry
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_MANIFEST_TTL_SECONDS = 300
 MAX_MANIFEST_TTL_SECONDS = 3_600
@@ -136,6 +142,8 @@ class IntentManifestService:
         bundle: PolicyBundle,
         clock: Callable[[], datetime] | None = None,
         manifest_ttl_seconds: int = DEFAULT_MANIFEST_TTL_SECONDS,
+        recorder: AuditRecorder | None = None,
+        component_version: str = __version__,
     ) -> None:
         if not 1 <= manifest_ttl_seconds <= MAX_MANIFEST_TTL_SECONDS:
             raise ValueError(f"manifest_ttl_seconds must be in [1, {MAX_MANIFEST_TTL_SECONDS}]")
@@ -144,8 +152,64 @@ class IntentManifestService:
         self._bundle = bundle
         self._clock = clock if clock is not None else (lambda: datetime.now(UTC))
         self._ttl = timedelta(seconds=manifest_ttl_seconds)
+        # Optional audit instrumentation. Intent remains advisory/narrowing only
+        # (ADR-010); an audit outage can never turn an intent outcome into authority.
+        # When a recorder is configured, INTENT_CREATED/INTENT_FAILED records the
+        # request-to-intent step for correlation. A failed write is logged, not
+        # promoted to a grant; the gateway independently fails closed on audit.
+        self._recorder = recorder
+        self._component_version = component_version
 
     async def extract_and_issue(
+        self,
+        *,
+        request_id: str,
+        principal: Principal,
+        text: str,
+        received_at: datetime | None = None,
+    ) -> IntentResolution:
+        resolution = await self._extract_and_issue(
+            request_id=request_id,
+            principal=principal,
+            text=text,
+            received_at=received_at,
+        )
+        await self._record_intent_event(
+            request_id=request_id,
+            principal=principal,
+            resolution=resolution,
+        )
+        return resolution
+
+    async def _record_intent_event(
+        self,
+        *,
+        request_id: str,
+        principal: Principal,
+        resolution: IntentResolution,
+    ) -> None:
+        if self._recorder is None:
+            return
+        active = resolution.status is IntentResolutionStatus.active
+        error_type = None if active else (resolution.error_code or resolution.status.value.lower())
+        event = AuditEvent(
+            event_id=secrets.token_hex(16),
+            event_type=(AuditEventType.intent_created if active else AuditEventType.intent_failed),
+            occurred_at=self._now(),
+            component="intent.service",
+            component_version=self._component_version,
+            request_id=request_id,
+            principal_subject_id=principal.subject_id,
+            policy_version=self._bundle.version,
+            policy_hash=self._bundle.combined_hash,
+            error_type=error_type,
+        )
+        try:
+            await self._recorder.record(event)
+        except AuditWriteError:
+            logger.error("intent audit persistence failed for request %s", request_id)
+
+    async def _extract_and_issue(
         self,
         *,
         request_id: str,

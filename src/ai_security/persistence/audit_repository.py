@@ -25,6 +25,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import func, select
@@ -64,6 +65,44 @@ class AppendedAuditEvent:
     event_hash: str
 
 
+def _optional_metadata_string(event: Mapping[str, Any], key: str, *, max_length: int) -> str | None:
+    value = event.get(key)
+    if value is None:
+        return None
+    if not isinstance(value, str) or not value or len(value) > max_length:
+        raise AuditAppendError(f"audit metadata {key} must be a non-empty bounded string")
+    return value
+
+
+def _event_metadata(event: Mapping[str, Any]) -> dict[str, object]:
+    """Derive the queryable metadata columns from the already-built payload.
+
+    The canonical bytes remain the source of truth. Malformed optional metadata is a
+    programming error and refuses the append rather than silently storing a column
+    that disagrees with the payload the verifier will hash.
+    """
+    occurred_at_value = event.get("occurred_at")
+    occurred_at: datetime | None = None
+    if occurred_at_value is not None:
+        if not isinstance(occurred_at_value, str):
+            raise AuditAppendError("audit metadata occurred_at must be an ISO-8601 string")
+        try:
+            parsed = datetime.fromisoformat(occurred_at_value)
+        except ValueError as exc:
+            raise AuditAppendError("audit metadata occurred_at is not ISO-8601") from exc
+        if parsed.utcoffset() is None:
+            raise AuditAppendError("audit metadata occurred_at must be timezone-aware")
+        occurred_at = parsed.astimezone(UTC)
+    return {
+        "event_type": _optional_metadata_string(event, "event_type", max_length=64),
+        "request_id": _optional_metadata_string(event, "request_id", max_length=128),
+        "trace_id": _optional_metadata_string(event, "trace_id", max_length=128),
+        "call_id": _optional_metadata_string(event, "call_id", max_length=128),
+        "occurred_at": occurred_at,
+        "component": _optional_metadata_string(event, "component", max_length=64),
+    }
+
+
 class AuditChainRepository:
     """Append routine for one v1 chain per deployed database."""
 
@@ -98,6 +137,7 @@ class AuditChainRepository:
         atomically. This module remains the only writer of ``audit_events``.
         """
         canonical_event_bytes = canonical_json_bytes(dict(event))
+        metadata = _event_metadata(event)
         await session.execute(select(func.pg_advisory_xact_lock(AUDIT_CHAIN_LOCK_KEY)))
         latest = (
             await session.execute(
@@ -128,6 +168,7 @@ class AuditChainRepository:
                 canonical_event_bytes=canonical_event_bytes,
                 previous_hash=previous_hash_hex,
                 event_hash=event_hash_hex,
+                **metadata,
             )
         )
         return AppendedAuditEvent(

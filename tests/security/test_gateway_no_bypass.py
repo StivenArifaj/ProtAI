@@ -344,7 +344,13 @@ def test_no_execution_without_a_successfully_recorded_decision() -> None:
     original_execute = email.execute
 
     async def checked_execute(**kwargs: object) -> ToolResult:
-        assert [event.event_type for event in recorder.events] == [AuditEventType.policy_evaluated]
+        assert [event.event_type for event in recorder.events] == [
+            AuditEventType.request_received,
+            AuditEventType.tool_call_proposed,
+            AuditEventType.egress_inspected,
+            AuditEventType.policy_evaluated,
+            AuditEventType.tool_execution_started,
+        ]
         return await original_execute(**kwargs)  # type: ignore[arg-type]
 
     email.execute = checked_execute  # type: ignore[method-assign]
@@ -361,19 +367,25 @@ def test_no_execution_without_a_successfully_recorded_decision() -> None:
     assert result.outcome is InvocationOutcome.executed  # type: ignore[attr-defined]
     assert email.executions == 1
     assert [event.event_type for event in recorder.events] == [
+        AuditEventType.request_received,
+        AuditEventType.tool_call_proposed,
+        AuditEventType.egress_inspected,
         AuditEventType.policy_evaluated,
+        AuditEventType.tool_execution_started,
         AuditEventType.tool_execution_completed,
+        AuditEventType.output_inspected,
+        AuditEventType.response_released,
     ]
 
 
 def test_executed_results_are_never_returned_when_the_outcome_cannot_be_audited() -> None:
-    class SecondCallFails(Recorder):
+    class CompletedEventFails(Recorder):
         async def record(self, event: AuditEvent) -> AppendedAuditEvent:
-            if self.events:
+            if event.event_type is AuditEventType.tool_execution_completed:
                 raise AuditWriteError("down")
             return await super().record(event)
 
-    recorder = SecondCallFails()
+    recorder = CompletedEventFails()
     gateway, email, _ = build(bundle=starter_bundle(), recorder=recorder)
     result = invoke(
         gateway,
@@ -420,7 +432,18 @@ def test_ask_user_without_approval_never_executes() -> None:
     assert result.decision is FirewallDecision.ask_user
     assert result.outcome is InvocationOutcome.denied
     assert len(store) == 0
-    assert [event.decision for event in recorder.events] == [FirewallDecision.ask_user]
+    assert [event.event_type for event in recorder.events] == [
+        AuditEventType.request_received,
+        AuditEventType.tool_call_proposed,
+        AuditEventType.egress_inspected,
+        AuditEventType.policy_evaluated,
+    ]
+    assert [event.decision for event in recorder.events] == [
+        None,
+        None,
+        None,
+        FirewallDecision.ask_user,
+    ]
 
 
 def test_granted_approval_allows_one_ask_user_execution_with_metadata() -> None:
@@ -434,7 +457,9 @@ def test_granted_approval_allows_one_ask_user_execution_with_metadata() -> None:
     assert result.approver_subject_id == "approver-1"
     assert service.calls == 1
     assert len(store) == 1
-    decision_event = recorder.events[-2]
+    decision_event = next(
+        event for event in recorder.events if event.event_type is AuditEventType.policy_evaluated
+    )
     assert decision_event.approval_id == "a" * 32
     assert decision_event.approver_subject_id == "approver-1"
 

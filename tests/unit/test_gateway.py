@@ -12,6 +12,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 
+import pytest
 from pydantic import Field
 
 from ai_security.audit.models import AuditEvent, AuditEventType
@@ -387,14 +388,21 @@ def test_allowed_read_executes_and_audits_decision_then_outcome() -> None:
     assert result.result is not None
     assert result.result.email_id == "email-1"  # type: ignore[attr-defined]
     assert result.risk is not None and result.risk.score == 5
-    assert result.decision_audit_sequence == 1
-    assert result.outcome_audit_sequence == 2
+    assert result.decision_audit_sequence == 4
+    assert result.outcome_audit_sequence == 6
 
     assert [event.event_type for event in recorder.events] == [
+        AuditEventType.request_received,
+        AuditEventType.tool_call_proposed,
+        AuditEventType.egress_inspected,
         AuditEventType.policy_evaluated,
+        AuditEventType.tool_execution_started,
         AuditEventType.tool_execution_completed,
+        AuditEventType.output_inspected,
+        AuditEventType.response_released,
     ]
-    decision_event, outcome_event = recorder.events
+    decision_event = recorder.events[3]
+    outcome_event = recorder.events[5]
     assert decision_event.decision is FirewallDecision.allow
     assert decision_event.risk_factor_codes == (
         "side_effect_read_only",
@@ -403,6 +411,9 @@ def test_allowed_read_executes_and_audits_decision_then_outcome() -> None:
     assert outcome_event.outcome is InvocationOutcome.executed
     assert outcome_event.result_digest is not None
     assert outcome_event.result_bytes is not None and outcome_event.result_bytes > 0
+    # The full lifecycle is correlatable by request/call id (section 16.1).
+    assert {event.request_id for event in recorder.events} == {"req-1"}
+    assert {event.call_id for event in recorder.events[1:]} == {"call-1"}
     # Audit payloads never include raw content (section 16.3).
     payload = canonical_json_bytes(outcome_event.to_payload()).decode("utf-8")
     assert "budget" not in payload
@@ -453,13 +464,21 @@ def test_synthetic_canary_never_reaches_an_enabled_sink() -> None:
     assert result.outcome is InvocationOutcome.denied
     assert result.result is None
     assert store.records() == ()
-    assert len(recorder.events) == 1
-    event = recorder.events[0]
+    assert [event.event_type for event in recorder.events] == [
+        AuditEventType.request_received,
+        AuditEventType.tool_call_proposed,
+        AuditEventType.egress_inspected,
+        AuditEventType.policy_evaluated,
+    ]
+    event = recorder.events[2]
     assert event.dlp is not None
     assert event.dlp.phase is DlpPhase.egress
     assert event.dlp.outcome is DlpOutcome.block
     assert "synthetic_canary" in {finding.code for finding in event.dlp.findings}
-    assert canary not in canonical_json_bytes(event.to_payload()).decode("utf-8")
+    assert recorder.events[3].decision is FirewallDecision.block
+    assert recorder.events[3].reason is DecisionReason.dlp_egress_blocked
+    for recorded in recorder.events:
+        assert canary not in canonical_json_bytes(recorded.to_payload()).decode("utf-8")
     assert result.dlp_egress is not None
     assert result.dlp_egress.inspection_error is False
 
@@ -495,7 +514,8 @@ def test_destination_trust_blocks_classified_content_before_the_sink() -> None:
     assert report.destination_trust.max_data_class is DataClass.public
     # Egress denial happens before risk/policy evaluation.
     assert result.risk is None
-    assert recorder.events[0].decision is FirewallDecision.block
+    assert recorder.events[2].event_type is AuditEventType.egress_inspected
+    assert recorder.events[3].decision is FirewallDecision.block
 
 
 def test_egress_inspection_failure_denies_before_risk_and_execution() -> None:
@@ -527,9 +547,10 @@ def test_egress_inspection_failure_denies_before_risk_and_execution() -> None:
     assert report is not None
     assert report.outcome is DlpOutcome.block
     assert report.inspection_error is True
-    assert recorder.events[0].reason is DecisionReason.dlp_inspection_failed
-    assert recorder.events[0].dlp is not None
-    assert recorder.events[0].dlp.inspection_error is True
+    assert recorder.events[2].event_type is AuditEventType.egress_inspected
+    assert recorder.events[2].dlp is not None
+    assert recorder.events[2].dlp.inspection_error is True
+    assert recorder.events[3].reason is DecisionReason.dlp_inspection_failed
 
 
 def test_response_dlp_redacts_email_and_preserves_the_original_digest() -> None:
@@ -558,7 +579,8 @@ def test_response_dlp_redacts_email_and_preserves_the_original_digest() -> None:
     assert report.released_digest != report.content_digest
     assert result.dlp_egress is not None
 
-    outcome_event = recorder.events[1]
+    outcome_event = recorder.events[7]
+    assert outcome_event.event_type is AuditEventType.response_released
     assert outcome_event.dlp is not None
     assert outcome_event.dlp.released_digest == report.released_digest
     assert outcome_event.result_digest == report.content_digest
@@ -591,7 +613,8 @@ def test_response_block_suppresses_a_canary_result() -> None:
     assert report is not None
     assert report.outcome is DlpOutcome.block
     assert result.dlp_egress is not None
-    outcome_event = recorder.events[1]
+    outcome_event = recorder.events[7]
+    assert outcome_event.event_type is AuditEventType.response_suppressed
     assert outcome_event.outcome is InvocationOutcome.response_blocked
     assert outcome_event.dlp is not None
     assert outcome_event.dlp.outcome is DlpOutcome.block
@@ -644,8 +667,13 @@ def test_unknown_tool_is_denied_and_never_resolves_an_adapter() -> None:
     assert result.outcome is InvocationOutcome.denied
     assert result.result is None
     assert len(store.records()) == 0
-    assert len(recorder.events) == 1
-    assert recorder.events[0].side_effect_class is None
+    assert [event.event_type for event in recorder.events] == [
+        AuditEventType.request_received,
+        AuditEventType.tool_call_proposed,
+        AuditEventType.policy_evaluated,
+    ]
+    assert recorder.events[2].reason is DecisionReason.unknown_tool
+    assert recorder.events[2].side_effect_class is None
 
 
 def test_registered_but_policy_disabled_tool_is_denied() -> None:
@@ -679,7 +707,7 @@ def test_binding_mismatch_on_principal_is_denied_before_evaluation() -> None:
     )
     assert result.reason is DecisionReason.binding_mismatch
     assert result.outcome is InvocationOutcome.denied
-    assert recorder.events[0].reason is DecisionReason.binding_mismatch
+    assert recorder.events[2].reason is DecisionReason.binding_mismatch
 
 
 def test_binding_mismatch_on_request_is_denied() -> None:
@@ -759,7 +787,8 @@ def test_duplicate_derived_resource_ids_are_collapsed_before_risk_and_audit() ->
     assert result.risk is not None
     assert "breadth_2_to_4_resources" not in result.risk.factor_codes
     assert adapter.seen_resource_ids == ("res-1",)
-    assert recorder.events[0].resource_ids == ("res-1",)
+    assert recorder.events[3].event_type is AuditEventType.policy_evaluated
+    assert recorder.events[3].resource_ids == ("res-1",)
 
 
 def test_cross_user_read_is_denied_by_the_resource_check() -> None:
@@ -819,11 +848,77 @@ def test_disabled_egress_blocks_the_sink_and_leaves_it_unchanged() -> None:
     assert result.reason is DecisionReason.external_egress_disabled
     assert result.outcome is InvocationOutcome.denied
     assert store.records() == ()
-    assert len(recorder.events) == 1
-    assert recorder.events[0].outcome is None
+    assert len(recorder.events) == 4
+    assert recorder.events[3].reason is DecisionReason.external_egress_disabled
+    assert recorder.events[3].outcome is None
 
 
 # -- operational failures -------------------------------------------------------------
+
+
+LIFECYCLE_EVENT_ORDER = [
+    AuditEventType.request_received,
+    AuditEventType.tool_call_proposed,
+    AuditEventType.egress_inspected,
+    AuditEventType.policy_evaluated,
+    AuditEventType.tool_execution_started,
+    AuditEventType.tool_execution_completed,
+    AuditEventType.output_inspected,
+    AuditEventType.response_released,
+]
+
+
+@pytest.mark.parametrize(
+    ("failed_call", "recorded_count", "executed"),
+    [
+        (1, 0, False),
+        (2, 1, False),
+        (3, 2, False),
+        (4, 3, False),
+        (5, 4, False),
+        (6, 5, True),
+        (7, 6, True),
+        (8, 7, True),
+    ],
+)
+def test_each_mandatory_lifecycle_audit_failure_fails_closed(
+    failed_call: int, recorded_count: int, executed: bool
+) -> None:
+    """Every mandatory event is a gate: lose it, and the boundary closes.
+
+    Before execution, an audit failure denies and no adapter runs. After execution,
+    the side effect has already happened, so the gateway withholds the result and
+    never claims success.
+    """
+    recorder = RecordingAuditRecorder(fail_on_call=failed_call)
+    gateway, store = make_gateway(bundle=sink_enabled_bundle(), recorder=recorder)
+    result = asyncio.run(
+        gateway.invoke_tool(
+            principal=principal(),
+            request_context=context(),
+            proposal=proposal(
+                "mock_external_sink.write",
+                "write",
+                arguments={"destination": DESTINATION, "content": "canary"},
+                destination=DESTINATION,
+            ),
+        )
+    )
+
+    assert [event.event_type for event in recorder.events] == LIFECYCLE_EVENT_ORDER[:recorded_count]
+    assert result.result is None
+    assert len(store.records()) == (1 if executed else 0)
+    if failed_call < 5:
+        assert result.decision is FirewallDecision.block
+        assert result.reason is DecisionReason.audit_unavailable
+        assert result.outcome is InvocationOutcome.denied
+        assert result.decision_audit_sequence is None
+    else:
+        assert result.decision is FirewallDecision.allow
+        assert result.reason is DecisionReason.allowlisted_external_call
+        assert result.outcome is InvocationOutcome.audit_failed
+        assert result.decision_audit_sequence == 4
+    assert result.outcome_audit_sequence == (6 if failed_call >= 7 else None)
 
 
 def test_audit_failure_before_execution_blocks_an_allowed_action() -> None:
@@ -850,7 +945,7 @@ def test_audit_failure_before_execution_blocks_an_allowed_action() -> None:
 
 
 def test_outcome_audit_failure_withholds_the_result() -> None:
-    recorder = RecordingAuditRecorder(fail_on_call=2)
+    recorder = RecordingAuditRecorder(fail_on_call=6)
     gateway, store = make_gateway(bundle=sink_enabled_bundle(), recorder=recorder)
     result = asyncio.run(
         gateway.invoke_tool(
@@ -867,14 +962,20 @@ def test_outcome_audit_failure_withholds_the_result() -> None:
     assert result.decision is FirewallDecision.allow
     assert result.outcome is InvocationOutcome.audit_failed
     assert result.result is None
-    assert result.decision_audit_sequence == 1
+    assert result.decision_audit_sequence == 4
     assert result.outcome_audit_sequence is None
     assert len(store.records()) == 1
-    assert len(recorder.events) == 1
+    assert [event.event_type for event in recorder.events] == [
+        AuditEventType.request_received,
+        AuditEventType.tool_call_proposed,
+        AuditEventType.egress_inspected,
+        AuditEventType.policy_evaluated,
+        AuditEventType.tool_execution_started,
+    ]
 
 
 def test_audit_failure_on_a_denial_keeps_the_denial_reason() -> None:
-    recorder = RecordingAuditRecorder(fail_on_call=1)
+    recorder = RecordingAuditRecorder(fail_on_call=4)
     gateway, _ = make_gateway(bundle=starter_bundle(), recorder=recorder)
     result = asyncio.run(
         gateway.invoke_tool(
@@ -914,11 +1015,15 @@ def test_adapter_failure_is_a_typed_outcome_with_an_audit_event() -> None:
     assert result.outcome is InvocationOutcome.adapter_failed
     assert result.result is None
     assert [event.event_type for event in recorder.events] == [
+        AuditEventType.request_received,
+        AuditEventType.tool_call_proposed,
+        AuditEventType.egress_inspected,
         AuditEventType.policy_evaluated,
+        AuditEventType.tool_execution_started,
         AuditEventType.tool_execution_failed,
     ]
-    assert recorder.events[1].error_type == "RuntimeError"
-    assert recorder.events[1].outcome is InvocationOutcome.adapter_failed
+    assert recorder.events[5].error_type == "RuntimeError"
+    assert recorder.events[5].outcome is InvocationOutcome.adapter_failed
 
 
 def test_execution_timeout_is_reported_and_audited() -> None:
@@ -942,8 +1047,8 @@ def test_execution_timeout_is_reported_and_audited() -> None:
     )
     assert result.outcome is InvocationOutcome.timeout
     assert result.result is None
-    assert recorder.events[1].error_type == "TimeoutError"
-    assert recorder.events[1].outcome is InvocationOutcome.timeout
+    assert recorder.events[5].error_type == "TimeoutError"
+    assert recorder.events[5].outcome is InvocationOutcome.timeout
 
 
 def test_oversized_results_are_rejected() -> None:
@@ -966,7 +1071,7 @@ def test_oversized_results_are_rejected() -> None:
     )
     assert result.outcome is InvocationOutcome.result_rejected
     assert result.result is None
-    assert recorder.events[1].error_type == "ResultTooLarge"
+    assert recorder.events[5].error_type == "ResultTooLarge"
 
 
 def test_wrong_result_schema_is_rejected() -> None:
@@ -988,7 +1093,7 @@ def test_wrong_result_schema_is_rejected() -> None:
         )
     )
     assert result.outcome is InvocationOutcome.result_rejected
-    assert recorder.events[1].error_type == "ResultSchemaMismatch"
+    assert recorder.events[5].error_type == "ResultSchemaMismatch"
 
 
 @dataclass
@@ -1063,7 +1168,7 @@ def test_policy_engine_exceptions_fail_closed_and_are_audited() -> None:
     assert result.decision is FirewallDecision.block
     assert result.reason is DecisionReason.policy_evaluation_error
     assert result.outcome is InvocationOutcome.denied
-    assert recorder.events[0].reason is DecisionReason.policy_evaluation_error
+    assert recorder.events[3].reason is DecisionReason.policy_evaluation_error
 
 
 class StrictEmailResult(ToolResult):

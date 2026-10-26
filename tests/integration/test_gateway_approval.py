@@ -341,16 +341,31 @@ def test_approved_execution_runs_once_and_records_approval_metadata(
             assert [event["event_type"] for event in recorded] == [
                 "APPROVAL_REQUESTED",
                 "APPROVAL_DECIDED",
+                "REQUEST_RECEIVED",
+                "TOOL_CALL_PROPOSED",
+                "EGRESS_INSPECTED",
                 "APPROVAL_CONSUMED",
                 "POLICY_EVALUATED",
+                "TOOL_EXECUTION_STARTED",
                 "TOOL_EXECUTION_COMPLETED",
+                "OUTPUT_INSPECTED",
+                "RESPONSE_RELEASED",
             ]
-            decision_event = recorded[3]
+            decision_event = recorded[6]
             assert decision_event["decision"] == "ASK_USER"
             assert decision_event["approval_id"] == approval_id
             assert decision_event["approver_subject_id"] == "approver-1"
-            consumed_event = recorded[2]
+            consumed_event = recorded[5]
             assert consumed_event["approver_subject_id"] == "approver-1"
+            # Consumption is bound to the executed action's class and effective class.
+            assert consumed_event["side_effect_class"] == "EXTERNAL_MUTATION"
+            assert consumed_event["data_class"] == DataClass.public.value
+            # Privacy (section 16.3): neither the one-time token nor the arguments'
+            # content may appear anywhere in the audit chain.
+            serialized = json.dumps(recorded)
+            assert token not in serialized
+            assert CONTENT not in serialized
+            assert "approval_token" not in serialized
 
             replay = await invoke(harness, approval_id=approval_id)
             assert replay.decision is FirewallDecision.block
@@ -496,13 +511,16 @@ def test_approval_with_a_stale_data_class_cannot_authorize_classified_content(
             assert stale_row is not None and stale_row.status == "approved"
 
             recorded = await audit_payloads(database, harness.chain_id)
+            assert recorded[-1]["event_type"] == "POLICY_EVALUATED"
             decision_event = recorded[-1]
-            assert decision_event["event_type"] == "POLICY_EVALUATED"
             assert decision_event["decision"] == "BLOCK"
             assert decision_event["data_class"] == "INTERNAL"
-            assert decision_event["dlp"]["outcome"] == "PASS"
-            assert decision_event["dlp"]["max_data_class"] == "INTERNAL"
-            assert [finding["code"] for finding in decision_event["dlp"]["findings"]] == ["email"]
+            egress_event = next(
+                event for event in reversed(recorded) if event["event_type"] == "EGRESS_INSPECTED"
+            )
+            assert egress_event["dlp"]["outcome"] == "PASS"
+            assert egress_event["dlp"]["max_data_class"] == "INTERNAL"
+            assert [finding["code"] for finding in egress_event["dlp"]["findings"]] == ["email"]
 
             matching_id, matching_token = await issue(
                 harness, content=content, data_class=DataClass.internal

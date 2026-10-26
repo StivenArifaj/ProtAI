@@ -159,8 +159,49 @@ class ToolGateway:
         """Evaluate and, only on ``ALLOW`` or a valid one-time approval, execute."""
         now = self._now()
 
+        # The request envelope is durable before any validation or side effect. If the
+        # audit chain is unavailable, the gateway fails closed: a call that cannot be
+        # correlated from request receipt onward never reaches policy or an adapter.
+        request_event = self._event(
+            event_type=AuditEventType.request_received,
+            request_context=request_context,
+            principal=principal,
+            proposal=None,
+            decision=None,
+            registration=None,
+            risk=None,
+            destination=None,
+            resource_ids=(),
+            outcome=None,
+            duration_ms=None,
+            result_digest=None,
+            result_bytes=None,
+            error_type=None,
+        )
+        if await self._record_event(request_event) is None:
+            return self._audit_unavailable(proposal)
+
+        proposal_event = self._event(
+            event_type=AuditEventType.tool_call_proposed,
+            request_context=request_context,
+            principal=principal,
+            proposal=proposal,
+            decision=None,
+            registration=None,
+            risk=None,
+            destination=None,
+            resource_ids=(),
+            outcome=None,
+            duration_ms=None,
+            result_digest=None,
+            result_bytes=None,
+            error_type=None,
+        )
+        if await self._record_event(proposal_event) is None:
+            return self._audit_unavailable(proposal)
+
         if not self._binding_is_valid(
-            principal=principal, request_context=request_context, proposal=proposal
+            request_context=request_context, principal=principal, proposal=proposal
         ):
             decision = self._decision(FirewallDecision.block, DecisionReason.binding_mismatch)
             sequence = await self._record_decision_event(
@@ -310,6 +351,28 @@ class ToolGateway:
                 registration.side_effect_class is SideEffectClass.external_mutation
             ),
         )
+        egress_event = self._event(
+            event_type=AuditEventType.egress_inspected,
+            request_context=request_context,
+            principal=principal,
+            proposal=proposal,
+            decision=None,
+            registration=registration,
+            risk=None,
+            destination=canonical_destination,
+            resource_ids=resource_ids,
+            outcome=None,
+            duration_ms=None,
+            result_digest=None,
+            result_bytes=None,
+            error_type=None,
+            data_class=egress_report.max_data_class,
+            dlp=egress_report,
+        )
+        if await self._record_event(egress_event) is None:
+            logger.error("egress inspection could not be audited for tool %s", proposal.tool_id)
+            return self._audit_unavailable(proposal, dlp_egress=egress_report)
+
         if egress_report.outcome is not DlpOutcome.pass_:
             decision = self._decision(
                 FirewallDecision.block,
@@ -326,7 +389,6 @@ class ToolGateway:
                 destination=canonical_destination,
                 resource_ids=resource_ids,
                 data_class=egress_report.max_data_class,
-                dlp=egress_report,
             )
             return self._result(
                 proposal,
@@ -370,7 +432,6 @@ class ToolGateway:
                 destination=canonical_destination,
                 resource_ids=resource_ids,
                 data_class=effective_data_class,
-                dlp=egress_report,
             )
             return self._result(
                 proposal,
@@ -470,7 +531,6 @@ class ToolGateway:
             approval_id=approval_reference,
             approver_subject_id=approver_subject_id,
             data_class=effective_data_class,
-            dlp=egress_report,
         )
         if decision.decision is not FirewallDecision.allow and not approved_via_approval:
             return self._result(
@@ -750,6 +810,42 @@ class ToolGateway:
     ) -> ToolInvocationResult:
         semaphore = self._semaphore(proposal.tool_id, registration.max_concurrent_invocations)
         started = time.perf_counter()
+
+        # No adapter call may happen until the started event is durable. The policy
+        # decision was already audited before this method was entered.
+        started_event = self._event(
+            event_type=AuditEventType.tool_execution_started,
+            request_context=request_context,
+            principal=principal,
+            proposal=proposal,
+            decision=decision,
+            registration=registration,
+            risk=risk,
+            destination=destination,
+            resource_ids=resource_ids,
+            outcome=None,
+            duration_ms=None,
+            result_digest=None,
+            result_bytes=None,
+            error_type=None,
+            approval_id=approval_id,
+            approver_subject_id=approver_subject_id,
+            data_class=effective_data_class,
+        )
+        if await self._record_event(started_event) is None:
+            return self._result(
+                proposal,
+                decision,
+                InvocationOutcome.audit_failed,
+                None,
+                risk,
+                decision_sequence,
+                None,
+                approval_id=approval_id,
+                approver_subject_id=approver_subject_id,
+                dlp_egress=dlp_egress,
+            )
+
         try:
             async with asyncio.timeout(registration.timeout_ms / 1_000):
                 async with semaphore:
@@ -826,18 +922,13 @@ class ToolGateway:
             raise RuntimeError("adapter result lost its schema during validation")
         canonical_result = canonical_json_bytes(adapter_result.model_dump(mode="json"))
         result_digest = hashlib.sha256(canonical_result).hexdigest()
+        result_bytes = len(canonical_result)
+        execution_duration_ms = _elapsed_ms(started)
 
-        # Response release is all-or-nothing: the complete result was buffered, inspected
-        # as one document, and only then released, redacted, or suppressed. No token or
-        # partial result is ever emitted before this point (section 15.1).
-        released_result, dlp_output = self._release_result(
-            registration=registration,
-            adapter_result=adapter_result,
-            effective_data_class=effective_data_class,
-        )
-        response_blocked = released_result is None
-        duration_ms = _elapsed_ms(started)
-        event = self._execution_event(
+        # The tool execution itself is complete and audited before the buffered result
+        # is inspected. If this event cannot be persisted the side effect may already
+        # have happened, so the result is withheld and success is never claimed.
+        completed_event = self._execution_event(
             request_context=request_context,
             principal=principal,
             proposal=proposal,
@@ -848,20 +939,15 @@ class ToolGateway:
             resource_ids=resource_ids,
             approval_id=approval_id,
             approver_subject_id=approver_subject_id,
-            outcome=(
-                InvocationOutcome.response_blocked
-                if response_blocked
-                else InvocationOutcome.executed
-            ),
-            duration_ms=duration_ms,
+            outcome=InvocationOutcome.executed,
+            duration_ms=execution_duration_ms,
             result_digest=result_digest,
-            result_bytes=len(canonical_result),
+            result_bytes=result_bytes,
             error_type=None,
             data_class=effective_data_class,
-            dlp=dlp_output,
         )
-        outcome_sequence = await self._record_event(event)
-        if outcome_sequence is None:
+        completed = await self._record_event(completed_event)
+        if completed is None:
             return self._result(
                 proposal,
                 decision,
@@ -873,20 +959,103 @@ class ToolGateway:
                 approval_id=approval_id,
                 approver_subject_id=approver_subject_id,
                 dlp_egress=dlp_egress,
+            )
+
+        # Response release is all-or-nothing: the complete result was buffered, inspected
+        # as one document, and only then released, redacted, or suppressed. No token or
+        # partial result is ever emitted before this point (section 15.1).
+        released_result, dlp_output = self._release_result(
+            registration=registration,
+            adapter_result=adapter_result,
+            effective_data_class=effective_data_class,
+        )
+        response_blocked = released_result is None
+
+        inspection_event = self._event(
+            event_type=AuditEventType.output_inspected,
+            request_context=request_context,
+            principal=principal,
+            proposal=proposal,
+            decision=None,
+            registration=registration,
+            risk=risk,
+            destination=destination,
+            resource_ids=resource_ids,
+            outcome=None,
+            duration_ms=None,
+            result_digest=result_digest,
+            result_bytes=result_bytes,
+            error_type=None,
+            approval_id=approval_id,
+            approver_subject_id=approver_subject_id,
+            data_class=effective_data_class,
+            dlp=dlp_output,
+        )
+        if await self._record_event(inspection_event) is None:
+            return self._result(
+                proposal,
+                decision,
+                InvocationOutcome.audit_failed,
+                None,
+                risk,
+                decision_sequence,
+                completed.sequence_number,
+                approval_id=approval_id,
+                approver_subject_id=approver_subject_id,
+                dlp_egress=dlp_egress,
                 dlp_output=dlp_output,
             )
+
+        response_outcome = (
+            InvocationOutcome.response_blocked if response_blocked else InvocationOutcome.executed
+        )
+        response_event = self._event(
+            event_type=(
+                AuditEventType.response_suppressed
+                if response_blocked
+                else AuditEventType.response_released
+            ),
+            request_context=request_context,
+            principal=principal,
+            proposal=proposal,
+            decision=decision,
+            registration=registration,
+            risk=risk,
+            destination=destination,
+            resource_ids=resource_ids,
+            outcome=response_outcome,
+            duration_ms=_elapsed_ms(started),
+            result_digest=result_digest,
+            result_bytes=result_bytes,
+            error_type=None,
+            approval_id=approval_id,
+            approver_subject_id=approver_subject_id,
+            data_class=effective_data_class,
+            dlp=dlp_output,
+        )
+        if await self._record_event(response_event) is None:
+            return self._result(
+                proposal,
+                decision,
+                InvocationOutcome.audit_failed,
+                None,
+                risk,
+                decision_sequence,
+                completed.sequence_number,
+                approval_id=approval_id,
+                approver_subject_id=approver_subject_id,
+                dlp_egress=dlp_egress,
+                dlp_output=dlp_output,
+            )
+
         return self._result(
             proposal,
             decision,
-            (
-                InvocationOutcome.response_blocked
-                if response_blocked
-                else InvocationOutcome.executed
-            ),
+            response_outcome,
             released_result,
             risk,
             decision_sequence,
-            outcome_sequence.sequence_number,
+            completed.sequence_number,
             approval_id=approval_id,
             approver_subject_id=approver_subject_id,
             dlp_egress=dlp_egress,
@@ -981,7 +1150,6 @@ class ToolGateway:
             result_bytes=None,
             error_type=error_type,
             data_class=effective_data_class,
-            dlp=None,
         )
         outcome_sequence = await self._record_event(event)
         if outcome_sequence is None:
@@ -1038,7 +1206,6 @@ class ToolGateway:
         approval_id: str | None = None,
         approver_subject_id: str | None = None,
         data_class: DataClass | None = None,
-        dlp: DlpReport | None = None,
     ) -> int | None:
         event = self._event(
             event_type=AuditEventType.policy_evaluated,
@@ -1058,7 +1225,7 @@ class ToolGateway:
             approval_id=approval_id,
             approver_subject_id=approver_subject_id,
             data_class=data_class,
-            dlp=dlp,
+            dlp=None,
         )
         appended = await self._record_event(event)
         return None if appended is None else appended.sequence_number
@@ -1082,11 +1249,10 @@ class ToolGateway:
         result_bytes: int | None,
         error_type: str | None,
         data_class: DataClass,
-        dlp: DlpReport | None,
     ) -> AuditEvent:
         event_type = (
             AuditEventType.tool_execution_completed
-            if outcome in (InvocationOutcome.executed, InvocationOutcome.response_blocked)
+            if outcome is InvocationOutcome.executed
             else AuditEventType.tool_execution_failed
         )
         return self._event(
@@ -1107,7 +1273,7 @@ class ToolGateway:
             result_bytes=result_bytes,
             error_type=error_type,
             data_class=data_class,
-            dlp=dlp,
+            dlp=None,
         )
 
     def _event(
@@ -1116,8 +1282,8 @@ class ToolGateway:
         event_type: AuditEventType,
         request_context: RequestContext,
         principal: Principal,
-        proposal: ProposedToolCall,
-        decision: DecisionRecord,
+        proposal: ProposedToolCall | None,
+        decision: DecisionRecord | None,
         registration: ToolRegistration | None,
         risk: RiskAssessment | None,
         destination: str | None,
@@ -1132,6 +1298,8 @@ class ToolGateway:
         data_class: DataClass | None = None,
         dlp: DlpReport | None = None,
     ) -> AuditEvent:
+        policy_version = decision.policy_version if decision is not None else self._bundle.version
+        policy_hash = decision.policy_hash if decision is not None else self._bundle.combined_hash
         return AuditEvent(
             event_id=uuid.uuid4().hex,
             event_type=event_type,
@@ -1141,12 +1309,13 @@ class ToolGateway:
             trace_id=request_context.trace_id,
             session_id=request_context.session_id,
             principal_subject_id=principal.subject_id,
-            tool_id=proposal.tool_id,
-            action_id=proposal.action_id,
-            decision=decision.decision,
-            reason=decision.reason,
-            policy_version=decision.policy_version,
-            policy_hash=decision.policy_hash,
+            call_id=None if proposal is None else proposal.call_id,
+            tool_id=None if proposal is None else proposal.tool_id,
+            action_id=None if proposal is None else proposal.action_id,
+            decision=None if decision is None else decision.decision,
+            reason=None if decision is None else decision.reason,
+            policy_version=policy_version,
+            policy_hash=policy_hash,
             outcome=outcome,
             side_effect_class=None if registration is None else registration.side_effect_class,
             data_class=(
@@ -1188,6 +1357,25 @@ class ToolGateway:
             reason=reason,
             policy_version=self._bundle.version,
             policy_hash=self._bundle.combined_hash,
+        )
+
+    def _audit_unavailable(
+        self,
+        proposal: ProposedToolCall,
+        *,
+        dlp_egress: DlpReport | None = None,
+        decision_sequence: int | None = None,
+    ) -> ToolInvocationResult:
+        """Fail closed before execution when a required audit event cannot persist."""
+        return self._result(
+            proposal,
+            self._decision(FirewallDecision.block, DecisionReason.audit_unavailable),
+            InvocationOutcome.denied,
+            None,
+            None,
+            decision_sequence,
+            None,
+            dlp_egress=dlp_egress,
         )
 
     def _result(

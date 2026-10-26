@@ -7,6 +7,8 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from ai_security.audit.models import AuditEvent, AuditEventType
+from ai_security.audit.writer import AuditRecorder, AuditWriteError
 from ai_security.identity.models import Principal
 from ai_security.intent.extractors import (
     IntentExtractorUnavailable,
@@ -21,6 +23,7 @@ from ai_security.intent.models import (
     RelativeTimeScope,
 )
 from ai_security.intent.service import IntentManifestService
+from ai_security.persistence.audit_repository import AppendedAuditEvent
 from ai_security.policy.loader import load_policy_bundle
 from ai_security.tools.mock_email import MockEmailAdapter
 from ai_security.tools.mock_external_sink import MockExternalSinkAdapter, SinkStore
@@ -35,7 +38,10 @@ DESTINATION = "https://mock-sink.invalid/collect"
 
 
 def build_service(
-    extractor: object | None = None, *, ttl_seconds: int = 300
+    extractor: object | None = None,
+    *,
+    ttl_seconds: int = 300,
+    recorder: AuditRecorder | None = None,
 ) -> IntentManifestService:
     bundle = load_policy_bundle(POLICIES, THRESHOLDS)
     registry = build_registry(
@@ -53,7 +59,25 @@ def build_service(
         bundle=bundle,
         clock=lambda: NOW,
         manifest_ttl_seconds=ttl_seconds,
+        recorder=recorder,
     )
+
+
+class RecordingRecorder:
+    def __init__(self, *, fail: bool = False) -> None:
+        self.events: list[object] = []
+        self._fail = fail
+
+    async def record(self, event: object) -> AppendedAuditEvent:
+        if self._fail:
+            raise AuditWriteError("audit down (test)")
+        self.events.append(event)
+        return AppendedAuditEvent(
+            chain_id="intent-chain",
+            sequence_number=len(self.events),
+            previous_hash="0" * 64,
+            event_hash=f"{len(self.events):064x}",
+        )
 
 
 def principal(timezone: str | None = "America/New_York") -> Principal:
@@ -306,3 +330,56 @@ def test_manifest_ttl_is_bounded() -> None:
         build_service(ttl_seconds=0)
     with pytest.raises(ValueError):
         build_service(ttl_seconds=3_601)
+
+
+def test_active_intent_is_audited_without_the_raw_request_text() -> None:
+    recorder = RecordingRecorder()
+    service = build_service(recorder=recorder)
+    text = "read email-1 and summarize it; CANARY_SECRET_INTENT_PRIVACY_7788"
+    resolution = asyncio.run(
+        service.extract_and_issue(request_id="req-1", principal=principal(), text=text)
+    )
+    assert resolution.status is IntentResolutionStatus.active
+    assert len(recorder.events) == 1
+    event = recorder.events[0]
+    assert isinstance(event, AuditEvent)
+    assert event.event_type is AuditEventType.intent_created
+    assert event.component == "intent.service"
+    assert event.request_id == "req-1"
+    assert event.principal_subject_id == "dev-user"
+    assert event.policy_version == "dev-1"
+    assert event.error_type is None
+    serialized = event.to_payload()
+    assert text not in str(serialized)
+    assert "CANARY_SECRET_INTENT_PRIVACY_7788" not in str(serialized)
+
+
+def test_failed_intent_is_audited_with_a_stable_error_code() -> None:
+    recorder = RecordingRecorder()
+    service = build_service(StaticExtractor(InvalidIntentExtraction("bad")), recorder=recorder)
+    resolution = asyncio.run(
+        service.extract_and_issue(request_id="req-1", principal=principal(), text="anything")
+    )
+    assert resolution.status is IntentResolutionStatus.invalid_extraction
+    assert len(recorder.events) == 1
+    event = recorder.events[0]
+    assert isinstance(event, AuditEvent)
+    assert event.event_type is AuditEventType.intent_failed
+    assert event.component == "intent.service"
+    assert event.error_type == "invalid_extraction"
+    assert "anything" not in str(event.to_payload())
+
+
+def test_intent_audit_outage_never_changes_the_resolution_or_grants_authority() -> None:
+    recorder = RecordingRecorder(fail=True)
+    service = build_service(recorder=recorder)
+    resolution = asyncio.run(
+        service.extract_and_issue(
+            request_id="req-1",
+            principal=principal(),
+            text="read email-1 and summarize it",
+        )
+    )
+    assert resolution.status is IntentResolutionStatus.active
+    assert resolution.manifest is not None
+    assert recorder.events == []

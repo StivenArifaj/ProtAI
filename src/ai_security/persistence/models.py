@@ -51,9 +51,16 @@ class AuditEvent(Base):
     """Append-only audit events with hash-chain fields (blueprint section 16.2).
 
     ``canonical_event_bytes`` stores the exact canonical JSON bytes the hash was
-    computed over; the future verifier (Phase 7) re-hashes these stored bytes, never a
-    reconstructed serialization. ``previous_hash``/``event_hash`` are lowercase
-    64-character hex for readability (raw 32-byte form is used for hashing).
+    computed over; the verifier (Phase 7) re-hashes these stored bytes, never a
+    reconstructed ORM/JSONB serialization. ``previous_hash``/``event_hash`` are
+    lowercase 64-character hex for readability (raw 32-byte form is used for hashing).
+
+    The queryable metadata columns (``event_type``, ``request_id``, ``trace_id``,
+    ``call_id``, ``occurred_at``, ``component``) are *derived* from the canonical
+    payload for correlation and indexing. They are nullable for pre-Phase-7 rows and
+    for tests that append raw fixture payloads; the migration backfills every row whose
+    payload contains the field. The verifier checks non-null metadata against the
+    payload but always treats the hashed bytes as authoritative.
 
     The unique constraint on ``(chain_id, sequence_number)`` is the final integrity
     guard; the append routine additionally serializes appends with a transaction-scoped
@@ -63,6 +70,20 @@ class AuditEvent(Base):
     __tablename__ = "audit_events"
     __table_args__ = (
         UniqueConstraint("chain_id", "sequence_number", name="uq_audit_events_chain_sequence"),
+        Index("ix_audit_events_event_type", "event_type"),
+        Index(
+            "ix_audit_events_request_sequence",
+            "request_id",
+            "chain_id",
+            "sequence_number",
+        ),
+        Index(
+            "ix_audit_events_trace_sequence",
+            "trace_id",
+            "chain_id",
+            "sequence_number",
+        ),
+        Index("ix_audit_events_occurred_at", "occurred_at"),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, Identity(always=True), primary_key=True)
@@ -74,6 +95,13 @@ class AuditEvent(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+    # Derived, queryable metadata. Never part of the hashed payload.
+    event_type: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    request_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    trace_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    call_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    occurred_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    component: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
 
 class SessionSecurityState(Base):

@@ -153,26 +153,37 @@ def test_allowed_read_is_audited_before_execution_and_chained(
             assert result.reason is DecisionReason.authorized_read
             assert result.outcome is InvocationOutcome.executed
             assert result.result is not None
-            assert result.decision_audit_sequence == 1
-            assert result.outcome_audit_sequence == 2
+            assert result.decision_audit_sequence == 4
+            assert result.outcome_audit_sequence == 6
 
             recorded = await payloads(database, chain_id)
             assert [event["event_type"] for event in recorded] == [
+                "REQUEST_RECEIVED",
+                "TOOL_CALL_PROPOSED",
+                "EGRESS_INSPECTED",
                 "POLICY_EVALUATED",
+                "TOOL_EXECUTION_STARTED",
                 "TOOL_EXECUTION_COMPLETED",
+                "OUTPUT_INSPECTED",
+                "RESPONSE_RELEASED",
             ]
-            decision_event, outcome_event = recorded
+            decision_event = recorded[3]
+            outcome_event = recorded[5]
+            output_event = recorded[6]
+            response_event = recorded[7]
             assert decision_event["decision"] == "ALLOW"
             assert decision_event["reason"] == "authorized_read"
             assert decision_event["policy_hash"] == result.policy_hash
             assert decision_event["risk_score"] == 5
             assert outcome_event["outcome"] == "EXECUTED"
             canonical_result = canonical_json_bytes(result.result.model_dump(mode="json"))
-            output_dlp = outcome_event["dlp"]
+            output_dlp = output_event["dlp"]
             assert output_dlp["outcome"] == "REDACT"
             assert output_dlp["released_digest"] == hashlib.sha256(canonical_result).hexdigest()
-            assert outcome_event["result_digest"] == output_dlp["content_digest"]
-            assert outcome_event["result_bytes"] == output_dlp["content_bytes"]
+            assert output_event["result_digest"] == output_dlp["content_digest"]
+            assert response_event["event_type"] == "RESPONSE_RELEASED"
+            assert response_event["dlp"]["released_digest"] == output_dlp["released_digest"]
+            assert {event["request_id"] for event in recorded} == {request_context.request_id}
             serialized = json.dumps(recorded)
             assert "Please review" not in serialized
             assert "budget" not in serialized
@@ -192,8 +203,9 @@ def test_allowed_read_is_audited_before_execution_and_chained(
                     .scalars()
                     .all()
                 )
-            assert [row.sequence_number for row in rows] == [1, 2]
-            assert rows[1].previous_hash == rows[0].event_hash
+            assert [row.sequence_number for row in rows] == list(range(1, 9))
+            for previous, current in zip(rows, rows[1:], strict=False):
+                assert current.previous_hash == previous.event_hash
         finally:
             await database.dispose()
 
@@ -221,11 +233,17 @@ def test_denied_egress_is_audited_and_leaves_the_sink_empty(
             assert store.records() == ()
 
             recorded = await payloads(database, chain_id)
-            assert len(recorded) == 1
-            assert recorded[0]["event_type"] == "POLICY_EVALUATED"
-            assert recorded[0]["decision"] == "BLOCK"
-            assert recorded[0]["data_class"] == DataClass.public.value
-            assert recorded[0]["destination"] == DESTINATION
+            assert [event["event_type"] for event in recorded] == [
+                "REQUEST_RECEIVED",
+                "TOOL_CALL_PROPOSED",
+                "EGRESS_INSPECTED",
+                "POLICY_EVALUATED",
+            ]
+            assert recorded[2]["destination"] == DESTINATION
+            assert recorded[2]["dlp"]["outcome"] == "PASS"
+            assert recorded[3]["decision"] == "BLOCK"
+            assert recorded[3]["data_class"] == DataClass.public.value
+            assert recorded[3]["destination"] == DESTINATION
         finally:
             await database.dispose()
 
