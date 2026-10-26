@@ -19,6 +19,7 @@ from sqlalchemy import select
 
 from ai_security.audit.writer import ChainAuditRecorder
 from ai_security.data_security.classification import DataClass
+from ai_security.data_security.dlp import OutputDefenseService, load_output_dlp_config
 from ai_security.firewall.decision import DecisionReason, FirewallDecision
 from ai_security.firewall.gateway import ToolGateway
 from ai_security.firewall.models import InvocationOutcome, ProposedToolCall, RequestContext
@@ -117,6 +118,7 @@ def gateway_for(
         ),
         engine=PolicyEngine(bundle),
         recorder=ChainAuditRecorder(repository),
+        output_defense=OutputDefenseService(load_output_dlp_config("config/output_dlp.yaml")),
         clock=lambda: FIXED_NOW,
     )
 
@@ -166,8 +168,11 @@ def test_allowed_read_is_audited_before_execution_and_chained(
             assert decision_event["risk_score"] == 5
             assert outcome_event["outcome"] == "EXECUTED"
             canonical_result = canonical_json_bytes(result.result.model_dump(mode="json"))
-            assert outcome_event["result_digest"] == hashlib.sha256(canonical_result).hexdigest()
-            assert outcome_event["result_bytes"] == len(canonical_result)
+            output_dlp = outcome_event["dlp"]
+            assert output_dlp["outcome"] == "REDACT"
+            assert output_dlp["released_digest"] == hashlib.sha256(canonical_result).hexdigest()
+            assert outcome_event["result_digest"] == output_dlp["content_digest"]
+            assert outcome_event["result_bytes"] == output_dlp["content_bytes"]
             serialized = json.dumps(recorded)
             assert "Please review" not in serialized
             assert "budget" not in serialized

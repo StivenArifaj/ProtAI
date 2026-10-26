@@ -14,6 +14,7 @@ import pytest
 
 from ai_security.audit.models import AuditEvent, AuditEventType
 from ai_security.audit.writer import AuditWriteError
+from ai_security.data_security.dlp import OutputDefenseService, load_output_dlp_config
 from ai_security.firewall.approval import ApprovalConsumption
 from ai_security.firewall.decision import DecisionReason, FirewallDecision
 from ai_security.firewall.gateway import ToolGateway
@@ -182,11 +183,16 @@ def proposal(
     )
 
 
+def default_output_defense() -> OutputDefenseService:
+    return OutputDefenseService(load_output_dlp_config("config/output_dlp.yaml"))
+
+
 def build(
     *,
     bundle: PolicyBundle,
     recorder: Recorder,
     approval_service: object | None = None,
+    output_defense: OutputDefenseService | None = None,
 ) -> tuple[ToolGateway, CountingEmailAdapter, SinkStore]:
     email = CountingEmailAdapter()
     store = SinkStore()
@@ -203,6 +209,7 @@ def build(
         registry=registry,
         engine=PolicyEngine(bundle),
         recorder=recorder,
+        output_defense=output_defense or default_output_defense(),
         clock=lambda: FIXED_NOW,
         approval_service=approval_service,  # type: ignore[arg-type]
     )

@@ -299,6 +299,19 @@ class ToolRegistry:
             for _, entry in sorted(self._by_key.items(), key=lambda item: item[0][0])
         )
 
+    def external_destinations(self) -> frozenset[str]:
+        """Canonical destinations declared by all external-mutation capabilities.
+
+        Output-DLP startup validation requires an exact trust-map match: an executable
+        external destination without a trust entry would bypass the destination-aware
+        data-class check, and an unused trust entry can hide a configuration typo.
+        """
+        destinations: set[str] = set()
+        for registration in self.registrations():
+            if registration.side_effect_class is SideEffectClass.external_mutation:
+                destinations.update(registration.destinations)
+        return frozenset(destinations)
+
 
 def build_registry(bundle: PolicyBundle, adapters: Iterable[ToolAdapter]) -> ToolRegistry:
     """Build the registry and prove it matches the loaded policy document exactly.

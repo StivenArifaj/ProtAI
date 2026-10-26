@@ -271,11 +271,50 @@ def test_consume_is_bound_to_action_and_one_time(migrated_database: str) -> None
                 action_digest="c" * 64,
                 resource_ids=("email-1",),
                 destination=None,
+                side_effect_class=SideEffectClass.local_mutation,
+                data_class=DataClass.internal,
                 policy_version="1.0.0",
                 policy_hash=POLICY_HASH,
                 now=BASE,
             )
             assert mismatch.outcome is ApprovalConsumptionOutcome.mismatch
+
+            # Same canonical action and policy, but a different side-effect class or a
+            # DLP-raised data class cannot reuse the approval bound to the original
+            # facts. A mismatch must not consume the grant.
+            wrong_effect = await service.consume(
+                approval_id,
+                principal=requester(),
+                request_id="req-approval-1",
+                tool_id="mock_email.send",
+                action_id="send",
+                action_digest=ACTION_DIGEST,
+                resource_ids=("email-1",),
+                destination=None,
+                side_effect_class=SideEffectClass.read_only,
+                data_class=DataClass.internal,
+                policy_version="1.0.0",
+                policy_hash=POLICY_HASH,
+                now=BASE,
+            )
+            assert wrong_effect.outcome is ApprovalConsumptionOutcome.mismatch
+
+            raised_class = await service.consume(
+                approval_id,
+                principal=requester(),
+                request_id="req-approval-1",
+                tool_id="mock_email.send",
+                action_id="send",
+                action_digest=ACTION_DIGEST,
+                resource_ids=("email-1",),
+                destination=None,
+                side_effect_class=SideEffectClass.local_mutation,
+                data_class=DataClass.confidential,
+                policy_version="1.0.0",
+                policy_hash=POLICY_HASH,
+                now=BASE,
+            )
+            assert raised_class.outcome is ApprovalConsumptionOutcome.mismatch
 
             granted = await service.consume(
                 approval_id,
@@ -286,6 +325,8 @@ def test_consume_is_bound_to_action_and_one_time(migrated_database: str) -> None
                 action_digest=ACTION_DIGEST,
                 resource_ids=("email-1",),
                 destination=None,
+                side_effect_class=SideEffectClass.local_mutation,
+                data_class=DataClass.internal,
                 policy_version="1.0.0",
                 policy_hash=POLICY_HASH,
                 now=BASE,
@@ -302,6 +343,8 @@ def test_consume_is_bound_to_action_and_one_time(migrated_database: str) -> None
                 action_digest=ACTION_DIGEST,
                 resource_ids=("email-1",),
                 destination=None,
+                side_effect_class=SideEffectClass.local_mutation,
+                data_class=DataClass.internal,
                 policy_version="1.0.0",
                 policy_hash=POLICY_HASH,
                 now=BASE,
@@ -340,6 +383,8 @@ def test_concurrent_consume_grants_exactly_once(migrated_database: str) -> None:
                         action_digest=ACTION_DIGEST,
                         resource_ids=("email-1",),
                         destination=None,
+                        side_effect_class=SideEffectClass.local_mutation,
+                        data_class=DataClass.internal,
                         policy_version="1.0.0",
                         policy_hash=POLICY_HASH,
                         now=BASE,
@@ -379,6 +424,8 @@ def test_denied_and_expired_requests_never_consume(migrated_database: str) -> No
                 action_digest=ACTION_DIGEST,
                 resource_ids=("email-1",),
                 destination=None,
+                side_effect_class=SideEffectClass.local_mutation,
+                data_class=DataClass.internal,
                 policy_version="1.0.0",
                 policy_hash=POLICY_HASH,
                 now=BASE,
@@ -422,6 +469,8 @@ def test_consuming_before_decision_is_not_approved(migrated_database: str) -> No
                 action_digest=ACTION_DIGEST,
                 resource_ids=("email-1",),
                 destination=None,
+                side_effect_class=SideEffectClass.local_mutation,
+                data_class=DataClass.internal,
                 policy_version="1.0.0",
                 policy_hash=POLICY_HASH,
                 now=BASE,
@@ -496,6 +545,8 @@ def test_pending_request_expires_on_consume_attempt(migrated_database: str) -> N
                 action_digest=ACTION_DIGEST,
                 resource_ids=("email-1",),
                 destination=None,
+                side_effect_class=SideEffectClass.local_mutation,
+                data_class=DataClass.internal,
                 policy_version="1.0.0",
                 policy_hash=POLICY_HASH,
                 now=late,

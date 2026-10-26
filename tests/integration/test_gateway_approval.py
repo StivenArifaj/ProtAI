@@ -18,6 +18,19 @@ from sqlalchemy import select
 
 from ai_security.audit.writer import ChainAuditRecorder
 from ai_security.data_security.classification import DataClass
+from ai_security.data_security.dlp import (
+    DestinationTrust,
+    DestinationTrustLabel,
+    DlpCategory,
+    DlpLimits,
+    DlpRelease,
+    EgressScope,
+    LoadedOutputDlpConfig,
+    OutputDefenseService,
+    OutputDlpConfig,
+    SensitivePattern,
+    load_output_dlp_config,
+)
 from ai_security.firewall.approval import ApprovalRequestSpec, ApprovalService
 from ai_security.firewall.decision import DecisionReason, FirewallDecision
 from ai_security.firewall.gateway import ToolGateway
@@ -81,6 +94,40 @@ def blocked_bundle() -> PolicyBundle:
     return load_policy_bundle(POLICIES, THRESHOLDS)
 
 
+def permissive_output_defense() -> OutputDefenseService:
+    """A test defender that classifies an email address as INTERNAL.
+
+    The real configuration treats email as CONFIDENTIAL, which the policy engine blocks
+    outright for external egress. INTERNAL is the one raised class that policy can still
+    route through human approval, so it isolates the approval class binding. The trust
+    map allows the destination; only the approval comparison is under test.
+    """
+    config = OutputDlpConfig(
+        schema_version=1,
+        version="approval-class-binding",
+        limits=DlpLimits(max_scan_bytes=65_536, max_findings=8, max_matches_per_pattern=4),
+        patterns=(
+            SensitivePattern(
+                code="email",
+                category=DlpCategory.pii_email,
+                pattern=r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b",
+                data_class=DataClass.internal,
+                egress=EgressScope.classify,
+                release=DlpRelease.redact,
+            ),
+        ),
+        destinations=(
+            DestinationTrust(
+                name="sink",
+                destination=DESTINATION,
+                trust=DestinationTrustLabel.public,
+                max_data_class=DataClass.restricted,
+            ),
+        ),
+    )
+    return OutputDefenseService(LoadedOutputDlpConfig(config=config, sha256="a" * 64))
+
+
 def principal() -> Principal:
     return Principal(
         subject_id="dev-user",
@@ -125,7 +172,9 @@ def action_digest(bundle: PolicyBundle, *, content: str = CONTENT) -> str:
     )
 
 
-def spec_for(bundle: PolicyBundle, approval_digest: str) -> ApprovalRequestSpec:
+def spec_for(
+    bundle: PolicyBundle, approval_digest: str, *, data_class: DataClass = DataClass.public
+) -> ApprovalRequestSpec:
     return ApprovalRequestSpec(
         request_id="req-approval",
         tool_id="mock_external_sink.write",
@@ -134,7 +183,7 @@ def spec_for(bundle: PolicyBundle, approval_digest: str) -> ApprovalRequestSpec:
         resource_ids=(),
         destination=DESTINATION,
         side_effect_class=SideEffectClass.external_mutation,
-        data_class=DataClass.public,
+        data_class=data_class,
         risk_score=25,
         risk_version="risk-v2",
         risk_factor_codes=("side_effect_external_mutation", "external_destination"),
@@ -147,12 +196,21 @@ def spec_for(bundle: PolicyBundle, approval_digest: str) -> ApprovalRequestSpec:
 
 
 class Harness:
-    def __init__(self, database: DatabaseHarness, bundle: PolicyBundle) -> None:
+    def __init__(
+        self,
+        database: DatabaseHarness,
+        bundle: PolicyBundle,
+        *,
+        output_defense: OutputDefenseService | None = None,
+    ) -> None:
         self.bundle = bundle
         self.chain_id = f"gateway-approval-{uuid.uuid4().hex}"
         audit_chain = AuditChainRepository(database.session_factory, chain_id=self.chain_id)
         self.approvals = ApprovalService(ApprovalRepository(database.session_factory, audit_chain))
         self.store = SinkStore()
+        self.output_defense = output_defense or OutputDefenseService(
+            load_output_dlp_config("config/output_dlp.yaml")
+        )
         self.gateway = ToolGateway(
             registry=build_registry(
                 bundle,
@@ -165,6 +223,7 @@ class Harness:
             ),
             engine=PolicyEngine(bundle),
             recorder=ChainAuditRecorder(audit_chain),
+            output_defense=self.output_defense,
             clock=lambda: FIXED_NOW,
             approval_service=self.approvals,
         )
@@ -176,9 +235,10 @@ async def issue(
     now: datetime = FIXED_NOW,
     ttl_seconds: int = 900,
     content: str = CONTENT,
+    data_class: DataClass = DataClass.public,
 ) -> tuple[str, str]:
     digest = action_digest(harness.bundle, content=content)
-    spec = spec_for(harness.bundle, digest)
+    spec = spec_for(harness.bundle, digest, data_class=data_class)
     challenge = await harness.approvals.request(
         requester=principal(), spec=spec, now=now, ttl_seconds=ttl_seconds
     )
@@ -396,6 +456,118 @@ def test_engine_block_ignores_approval_and_never_consumes_it(
             recorded = await audit_payloads(database, harness.chain_id)
             assert "APPROVAL_CONSUMED" not in [event["event_type"] for event in recorded]
             assert recorded[-1]["event_type"] == "POLICY_EVALUATED"
+        finally:
+            await database.dispose()
+
+    asyncio.run(scenario())
+
+
+def test_approval_with_a_stale_data_class_cannot_authorize_classified_content(
+    migrated_database: str,
+) -> None:
+    """DLP may raise the effective class; an approval bound to PUBLIC must not follow.
+
+    The canonical action digest is identical in both attempts (same content), so only
+    the stored ``data_class`` distinguishes them. A raised class invalidates the stale
+    approval without consuming it, and a matching INTERNAL approval executes once.
+    """
+
+    async def scenario() -> None:
+        database = DatabaseHarness.open(migrated_database)
+        try:
+            harness = Harness(
+                database,
+                low_threshold_bundle(),
+                output_defense=permissive_output_defense(),
+            )
+            content = "contact finance@internal.example"
+
+            stale_id, stale_token = await issue(
+                harness, content=content, data_class=DataClass.public
+            )
+            await approve(harness, stale_id, stale_token)
+            stale = await invoke(harness, approval_id=stale_id, content=content)
+            assert stale.decision is FirewallDecision.block
+            assert stale.reason is DecisionReason.approval_invalid
+            assert stale.outcome is InvocationOutcome.denied
+            assert stale.result is None
+            assert len(harness.store) == 0
+            stale_row = await stored_approval(database, stale_id)
+            assert stale_row is not None and stale_row.status == "approved"
+
+            recorded = await audit_payloads(database, harness.chain_id)
+            decision_event = recorded[-1]
+            assert decision_event["event_type"] == "POLICY_EVALUATED"
+            assert decision_event["decision"] == "BLOCK"
+            assert decision_event["data_class"] == "INTERNAL"
+            assert decision_event["dlp"]["outcome"] == "PASS"
+            assert decision_event["dlp"]["max_data_class"] == "INTERNAL"
+            assert [finding["code"] for finding in decision_event["dlp"]["findings"]] == ["email"]
+
+            matching_id, matching_token = await issue(
+                harness, content=content, data_class=DataClass.internal
+            )
+            await approve(harness, matching_id, matching_token)
+            matching = await invoke(harness, approval_id=matching_id, content=content)
+            assert matching.decision is FirewallDecision.ask_user
+            assert matching.outcome is InvocationOutcome.executed
+            assert matching.result is not None
+            assert len(harness.store) == 1
+
+            matching_row = await stored_approval(database, matching_id)
+            assert matching_row is not None and matching_row.status == "consumed"
+            consumed = [
+                event
+                for event in await audit_payloads(database, harness.chain_id)
+                if event["event_type"] == "APPROVAL_CONSUMED"
+            ]
+            assert consumed[-1]["approval_id"] == matching_id
+        finally:
+            await database.dispose()
+
+    asyncio.run(scenario())
+
+
+def test_dlp_block_precedes_approval_and_never_consumes_it(migrated_database: str) -> None:
+    """An approval can never override a hard DLP finding.
+
+    The canary category is configured to BLOCK egress, and egress inspection runs before
+    policy evaluation. A previously granted approval therefore stays unconsumed and no
+    sink write occurs.
+    """
+
+    async def scenario() -> None:
+        database = DatabaseHarness.open(migrated_database)
+        try:
+            harness = Harness(database, low_threshold_bundle())
+            canary = "CANARY_SECRET_APPROVAL_1234"
+            approval_id, token = await issue(harness, content=f"leak {canary}")
+            await approve(harness, approval_id, token)
+
+            result = await invoke(harness, approval_id=approval_id, content=f"leak {canary}")
+            assert result.decision is FirewallDecision.block
+            assert result.reason is DecisionReason.dlp_egress_blocked
+            assert result.outcome is InvocationOutcome.denied
+            assert result.approval_id is None
+            assert result.risk is None
+            assert len(harness.store) == 0
+            report = result.dlp_egress
+            assert report is not None
+            assert report.egress_reason is not None
+            assert report.egress_reason.value == "category_blocked"
+            assert "synthetic_canary" in {finding.code for finding in report.findings}
+            assert canary not in repr(report)
+
+            row = await stored_approval(database, approval_id)
+            assert row is not None and row.status == "approved"
+            event_types = [
+                event["event_type"] for event in await audit_payloads(database, harness.chain_id)
+            ]
+            assert "APPROVAL_CONSUMED" not in event_types
+            assert event_types[-1] == "POLICY_EVALUATED"
+            assert canary not in json.dumps(
+                await audit_payloads(database, harness.chain_id), default=str
+            )
         finally:
             await database.dispose()
 

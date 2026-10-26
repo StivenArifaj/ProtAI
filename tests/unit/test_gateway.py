@@ -12,9 +12,24 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 
+from pydantic import Field
+
 from ai_security.audit.models import AuditEvent, AuditEventType
 from ai_security.audit.writer import AuditWriteError
 from ai_security.data_security.classification import DataClass
+from ai_security.data_security.dlp import (
+    DlpCategory,
+    DlpLimits,
+    DlpOutcome,
+    DlpPhase,
+    DlpRelease,
+    EgressScope,
+    LoadedOutputDlpConfig,
+    OutputDefenseService,
+    OutputDlpConfig,
+    SensitivePattern,
+    load_output_dlp_config,
+)
 from ai_security.firewall.decision import DecisionReason, FirewallDecision
 from ai_security.firewall.gateway import ToolGateway
 from ai_security.firewall.models import (
@@ -135,12 +150,63 @@ def mock_adapters(store: SinkStore) -> tuple[object, ...]:
     )
 
 
+def default_output_defense() -> OutputDefenseService:
+    """The real strict DLP policy (tests may pass a custom service instead)."""
+    return OutputDefenseService(load_output_dlp_config("config/output_dlp.yaml"))
+
+
+def tiny_scan_output_defense() -> OutputDefenseService:
+    """A defender whose scan bound is smaller than any real tool call.
+
+    Used to prove that an inspection failure is a pre-execution denial, not a warning.
+    """
+    config = OutputDlpConfig(
+        schema_version=1,
+        version="tiny-scan",
+        limits=DlpLimits(max_scan_bytes=16, max_findings=4, max_matches_per_pattern=2),
+        patterns=(
+            SensitivePattern(
+                code="email",
+                category=DlpCategory.pii_email,
+                pattern=r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b",
+                data_class=DataClass.confidential,
+                egress=EgressScope.classify,
+                release=DlpRelease.redact,
+            ),
+        ),
+        destinations=(),
+    )
+    return OutputDefenseService(LoadedOutputDlpConfig(config=config, sha256="b" * 64))
+
+
+def review_output_defense() -> OutputDefenseService:
+    """A defender whose configured release disposition is REVIEW (never releasable)."""
+    config = OutputDlpConfig(
+        schema_version=1,
+        version="review-release",
+        limits=DlpLimits(max_scan_bytes=65_536, max_findings=8, max_matches_per_pattern=4),
+        patterns=(
+            SensitivePattern(
+                code="review_marker",
+                category=DlpCategory.credential,
+                pattern=r"REVIEWME",
+                data_class=DataClass.confidential,
+                egress=EgressScope.classify,
+                release=DlpRelease.review,
+            ),
+        ),
+        destinations=(),
+    )
+    return OutputDefenseService(LoadedOutputDlpConfig(config=config, sha256="d" * 64))
+
+
 def make_gateway(
     *,
     bundle: PolicyBundle,
     recorder: RecordingAuditRecorder,
     extra_adapters: tuple[object, ...] = (),
     clock: Callable[[], datetime] = lambda: FIXED_NOW,
+    output_defense: OutputDefenseService | None = None,
 ) -> tuple[ToolGateway, SinkStore]:
     store = SinkStore()
     registry = build_registry(bundle, (*mock_adapters(store), *extra_adapters))
@@ -148,6 +214,7 @@ def make_gateway(
         registry=registry,
         engine=PolicyEngine(bundle),
         recorder=recorder,
+        output_defense=output_defense or default_output_defense(),
         clock=clock,
     )
     return gateway, store
@@ -206,6 +273,13 @@ class HookAdapter:
             destination=None,
         )
         return await self._hook()
+
+
+def _result_hook(result: ToolResult) -> Callable[[], Awaitable[ToolResult]]:
+    async def hook() -> ToolResult:
+        return result
+
+    return hook
 
 
 def custom_registration(
@@ -356,6 +430,200 @@ def test_enabled_egress_executes_the_sink_and_records_the_digest() -> None:
     assert result.risk is not None and result.risk.score == 25
     assert len(store.records()) == 1
     assert store.records()[0].content_digest != "canary"
+
+
+def test_synthetic_canary_never_reaches_an_enabled_sink() -> None:
+    recorder = RecordingAuditRecorder()
+    gateway, store = make_gateway(bundle=sink_enabled_bundle(), recorder=recorder)
+    canary = "CANARY_SECRET_UNIT_TEST_9876"
+    result = asyncio.run(
+        gateway.invoke_tool(
+            principal=principal(),
+            request_context=context(),
+            proposal=proposal(
+                "mock_external_sink.write",
+                "write",
+                arguments={"destination": DESTINATION, "content": f"leak {canary}"},
+                destination=DESTINATION,
+            ),
+        )
+    )
+    assert result.decision is FirewallDecision.block
+    assert result.reason is DecisionReason.dlp_egress_blocked
+    assert result.outcome is InvocationOutcome.denied
+    assert result.result is None
+    assert store.records() == ()
+    assert len(recorder.events) == 1
+    event = recorder.events[0]
+    assert event.dlp is not None
+    assert event.dlp.phase is DlpPhase.egress
+    assert event.dlp.outcome is DlpOutcome.block
+    assert "synthetic_canary" in {finding.code for finding in event.dlp.findings}
+    assert canary not in canonical_json_bytes(event.to_payload()).decode("utf-8")
+    assert result.dlp_egress is not None
+    assert result.dlp_egress.inspection_error is False
+
+
+def test_destination_trust_blocks_classified_content_before_the_sink() -> None:
+    recorder = RecordingAuditRecorder()
+    gateway, store = make_gateway(bundle=sink_enabled_bundle(), recorder=recorder)
+    result = asyncio.run(
+        gateway.invoke_tool(
+            principal=principal(),
+            request_context=context(),
+            proposal=proposal(
+                "mock_external_sink.write",
+                "write",
+                arguments={
+                    "destination": DESTINATION,
+                    "content": "contact finance@internal.example",
+                },
+                destination=DESTINATION,
+            ),
+        )
+    )
+    assert result.decision is FirewallDecision.block
+    assert result.reason is DecisionReason.dlp_egress_blocked
+    assert result.outcome is InvocationOutcome.denied
+    assert store.records() == ()
+    report = result.dlp_egress
+    assert report is not None
+    assert report.max_data_class is DataClass.confidential
+    assert report.egress_reason is not None
+    assert report.egress_reason.value == "class_above_destination"
+    assert report.destination_trust is not None
+    assert report.destination_trust.max_data_class is DataClass.public
+    # Egress denial happens before risk/policy evaluation.
+    assert result.risk is None
+    assert recorder.events[0].decision is FirewallDecision.block
+
+
+def test_egress_inspection_failure_denies_before_risk_and_execution() -> None:
+    recorder = RecordingAuditRecorder()
+    gateway, store = make_gateway(
+        bundle=sink_enabled_bundle(),
+        recorder=recorder,
+        output_defense=tiny_scan_output_defense(),
+    )
+    result = asyncio.run(
+        gateway.invoke_tool(
+            principal=principal(),
+            request_context=context(),
+            proposal=proposal(
+                "mock_external_sink.write",
+                "write",
+                arguments={"destination": DESTINATION, "content": "canary"},
+                destination=DESTINATION,
+            ),
+        )
+    )
+    assert result.decision is FirewallDecision.block
+    assert result.reason is DecisionReason.dlp_inspection_failed
+    assert result.outcome is InvocationOutcome.denied
+    assert result.result is None
+    assert result.risk is None
+    assert store.records() == ()
+    report = result.dlp_egress
+    assert report is not None
+    assert report.outcome is DlpOutcome.block
+    assert report.inspection_error is True
+    assert recorder.events[0].reason is DecisionReason.dlp_inspection_failed
+    assert recorder.events[0].dlp is not None
+    assert recorder.events[0].dlp.inspection_error is True
+
+
+def test_response_dlp_redacts_email_and_preserves_the_original_digest() -> None:
+    recorder = RecordingAuditRecorder()
+    gateway, _ = make_gateway(bundle=starter_bundle(), recorder=recorder)
+    result = asyncio.run(
+        gateway.invoke_tool(
+            principal=principal(),
+            request_context=context(),
+            proposal=proposal(
+                "mock_email.read",
+                "read",
+                arguments={"email_id": "email-1"},
+                target_resources=("email-1",),
+            ),
+        )
+    )
+    assert result.outcome is InvocationOutcome.executed
+    assert result.result is not None
+    assert result.result.sender == "[REDACTED:PII_EMAIL]"  # type: ignore[attr-defined]
+    report = result.dlp_output
+    assert report is not None
+    assert report.phase is DlpPhase.output
+    assert report.outcome is DlpOutcome.redact
+    assert report.released_digest is not None
+    assert report.released_digest != report.content_digest
+    assert result.dlp_egress is not None
+
+    outcome_event = recorder.events[1]
+    assert outcome_event.dlp is not None
+    assert outcome_event.dlp.released_digest == report.released_digest
+    assert outcome_event.result_digest == report.content_digest
+    serialized = canonical_json_bytes(outcome_event.to_payload()).decode("utf-8")
+    assert "finance@internal.example" not in serialized
+    assert "REDACTED:PII_EMAIL" not in serialized
+
+
+def test_response_block_suppresses_a_canary_result() -> None:
+    recorder = RecordingAuditRecorder()
+    canary = "CANARY_SECRET_OUTPUT_TEST_1234"
+    gateway, _ = make_gateway(
+        bundle=custom_bundle(),
+        recorder=recorder,
+        extra_adapters=(
+            HookAdapter(custom_registration(), _result_hook(ValueResult(value=canary))),
+        ),
+    )
+    result = asyncio.run(
+        gateway.invoke_tool(
+            principal=principal(),
+            request_context=context(),
+            proposal=custom_proposal(),
+        )
+    )
+    assert result.decision is FirewallDecision.allow
+    assert result.outcome is InvocationOutcome.response_blocked
+    assert result.result is None
+    report = result.dlp_output
+    assert report is not None
+    assert report.outcome is DlpOutcome.block
+    assert result.dlp_egress is not None
+    outcome_event = recorder.events[1]
+    assert outcome_event.outcome is InvocationOutcome.response_blocked
+    assert outcome_event.dlp is not None
+    assert outcome_event.dlp.outcome is DlpOutcome.block
+    serialized = canonical_json_bytes(outcome_event.to_payload()).decode("utf-8")
+    assert canary not in serialized
+
+
+def test_oversized_response_is_suppressed_by_failed_inspection() -> None:
+    recorder = RecordingAuditRecorder()
+    gateway, _ = make_gateway(
+        bundle=custom_bundle(),
+        recorder=recorder,
+        extra_adapters=(
+            HookAdapter(
+                custom_registration(max_result_bytes=400_000),
+                _result_hook(ValueResult(value="x" * 300_000)),
+            ),
+        ),
+    )
+    result = asyncio.run(
+        gateway.invoke_tool(
+            principal=principal(),
+            request_context=context(),
+            proposal=custom_proposal(),
+        )
+    )
+    assert result.outcome is InvocationOutcome.response_blocked
+    assert result.result is None
+    report = result.dlp_output
+    assert report is not None
+    assert report.inspection_error is True
+    assert report.outcome is DlpOutcome.block
 
 
 # -- denials with no side effect ------------------------------------------------------
@@ -782,6 +1050,7 @@ def test_policy_engine_exceptions_fail_closed_and_are_audited() -> None:
         registry=registry,
         engine=ExplodingEngine(bundle),  # type: ignore[arg-type]
         recorder=recorder,
+        output_defense=default_output_defense(),
         clock=lambda: FIXED_NOW,
     )
     result = asyncio.run(
@@ -795,3 +1064,72 @@ def test_policy_engine_exceptions_fail_closed_and_are_audited() -> None:
     assert result.reason is DecisionReason.policy_evaluation_error
     assert result.outcome is InvocationOutcome.denied
     assert recorder.events[0].reason is DecisionReason.policy_evaluation_error
+
+
+class StrictEmailResult(ToolResult):
+    """A result schema that cannot represent a redaction marker."""
+
+    sender: str = Field(pattern=r"^[^@\s]+@[^@\s]+$")
+
+
+def test_review_release_suppresses_the_complete_response() -> None:
+    recorder = RecordingAuditRecorder()
+    gateway, _ = make_gateway(
+        bundle=custom_bundle(),
+        recorder=recorder,
+        output_defense=review_output_defense(),
+        extra_adapters=(
+            HookAdapter(
+                custom_registration(),
+                _result_hook(ValueResult(value="REVIEWME please")),
+            ),
+        ),
+    )
+    result = asyncio.run(
+        gateway.invoke_tool(
+            principal=principal(),
+            request_context=context(),
+            proposal=custom_proposal(),
+        )
+    )
+    assert result.outcome is InvocationOutcome.response_blocked
+    assert result.result is None
+    report = result.dlp_output
+    assert report is not None
+    assert report.outcome is DlpOutcome.review
+    assert report.response_releasable is False
+    outcome_event = recorder.events[-1]
+    assert outcome_event.outcome is InvocationOutcome.response_blocked
+    assert outcome_event.dlp is not None
+    assert outcome_event.dlp.outcome is DlpOutcome.review
+
+
+def test_redaction_that_breaks_the_result_schema_suppresses_the_response() -> None:
+    recorder = RecordingAuditRecorder()
+    gateway, _ = make_gateway(
+        bundle=custom_bundle(),
+        recorder=recorder,
+        extra_adapters=(
+            HookAdapter(
+                custom_registration(result_schema=StrictEmailResult),
+                _result_hook(StrictEmailResult(sender="finance@internal.example")),
+            ),
+        ),
+    )
+    result = asyncio.run(
+        gateway.invoke_tool(
+            principal=principal(),
+            request_context=context(),
+            proposal=custom_proposal(),
+        )
+    )
+    assert result.outcome is InvocationOutcome.response_blocked
+    assert result.result is None
+    report = result.dlp_output
+    assert report is not None
+    assert report.outcome is DlpOutcome.block
+    assert report.inspection_error is True
+    outcome_event = recorder.events[-1]
+    assert outcome_event.outcome is InvocationOutcome.response_blocked
+    serialized = canonical_json_bytes(outcome_event.to_payload()).decode("utf-8")
+    assert "finance@internal.example" not in serialized

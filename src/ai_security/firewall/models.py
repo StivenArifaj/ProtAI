@@ -10,7 +10,8 @@ These are the typed inputs and outputs of the single enforced execution path:
   attempted and failed — callers must never treat a failed attempt as a result.
 - ``ToolInvocationResult`` is the gateway's typed reply. ``result`` is populated only
   for ``EXECUTED``; audit sequence numbers reference the persisted decision/outcome
-  events so callers can correlate without reading raw audit payloads.
+  events so callers can correlate without reading raw audit payloads. Phase 6 adds the
+  redacted ``dlp_egress``/``dlp_output`` evidence and the ``RESPONSE_BLOCKED`` outcome.
 """
 
 from __future__ import annotations
@@ -23,6 +24,7 @@ from typing import Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator
 
+from ai_security.data_security.dlp import DlpReport
 from ai_security.firewall.decision import DecisionReason, FirewallDecision
 from ai_security.firewall.risk_engine import RiskAssessment
 from ai_security.identity.models import Principal
@@ -97,6 +99,7 @@ class InvocationOutcome(StrEnum):
     adapter_failed = "ADAPTER_FAILED"
     timeout = "TIMEOUT"
     result_rejected = "RESULT_REJECTED"
+    response_blocked = "RESPONSE_BLOCKED"
     audit_failed = "AUDIT_FAILED"
 
 
@@ -118,6 +121,11 @@ class ToolInvocationResult:
     outcome_audit_sequence: int | None
     approval_id: str | None = None
     approver_subject_id: str | None = None
+    # Phase 6: redacted DLP evidence. ``dlp_egress`` explains a pre-execution denial;
+    # ``dlp_output`` explains a REDACT release or RESPONSE_BLOCKED suppression. The
+    # reports contain digests, categories, counts, and field paths — never match text.
+    dlp_egress: DlpReport | None = None
+    dlp_output: DlpReport | None = None
 
 
 class ToolExecutor(Protocol):

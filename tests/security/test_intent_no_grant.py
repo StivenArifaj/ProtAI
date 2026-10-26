@@ -13,6 +13,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from ai_security.audit.models import AuditEvent
+from ai_security.data_security.dlp import OutputDefenseService, load_output_dlp_config
 from ai_security.firewall.decision import DecisionReason, FirewallDecision
 from ai_security.firewall.gateway import ToolGateway
 from ai_security.firewall.models import InvocationOutcome, ProposedToolCall, RequestContext
@@ -140,6 +141,10 @@ def read_proposal(email_id: str = "email-1", subject_id: str = "dev-user") -> Pr
     )
 
 
+def default_output_defense() -> OutputDefenseService:
+    return OutputDefenseService(load_output_dlp_config("config/output_dlp.yaml"))
+
+
 def build(
     *,
     intent_required: bool = True,
@@ -159,6 +164,7 @@ def build(
         registry=registry,
         engine=PolicyEngine(policy),
         recorder=recorder,
+        output_defense=default_output_defense(),
         clock=lambda: gateway_clock,
         intent_tracker=tracker,
     )

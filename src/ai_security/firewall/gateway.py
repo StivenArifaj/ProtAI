@@ -9,18 +9,24 @@ arguments, canonical resource ids, canonical destination, and policy hash.
 Order of operations (section 12.3):
 
 1. verify proposal/request/principal bindings;
-2. resolve the exact registration (unknown -> BLOCK, never import);
-3. validate arguments with the registration schema and canonicalize them;
-4. derive and cross-check resource ids and the canonical destination;
-5. run the adapter's least-privilege resource check;
-6. compute deterministic risk factors (server-side facts only);
-7. evaluate the deterministic policy engine;
-8. persist the decision audit event — for ``ALLOW`` this is mandatory and happens
-   *before* any side effect (section 16.4);
-9. issue the execution authorization and run the adapter under a timeout and
-   per-tool concurrency limit;
-10. bound/validate the result, then persist the outcome event;
-11. return a typed result.
+2. verify the sealed intent manifest and its concrete constraints (when enabled);
+3. resolve the exact registration (unknown -> BLOCK, never import);
+4. validate arguments with the registration schema and canonicalize them;
+5. inspect tool-bound egress with the mandatory output defender; a denial or inspection
+   failure blocks before any resource/risk/policy evaluation;
+6. derive and cross-check resource ids and the canonical destination;
+7. run the adapter's least-privilege resource check;
+8. compute deterministic risk factors (server-side facts only) using the *effective*
+   data class (registry floor raised by DLP, never lowered);
+9. evaluate the deterministic policy engine;
+10. persist the decision audit event — for ``ALLOW`` this is mandatory and happens
+    *before* any side effect (section 16.4);
+11. issue the execution authorization and run the adapter under a timeout and
+    per-tool concurrency limit;
+12. inspect the complete buffered result, then release it, redact it, or suppress the
+    entire result (``RESPONSE_BLOCKED``); token streaming does not exist in v1;
+13. bound/validate the result, then persist the outcome event;
+14. return a typed result.
 
 A denial or failure never returns a result. If the outcome event cannot be persisted
 after an execution attempt, the outcome is ``AUDIT_FAILED`` and the result is withheld
@@ -45,8 +51,14 @@ from weakref import WeakKeyDictionary
 from pydantic import ValidationError
 
 from ai_security import __version__
-from ai_security.audit.models import AuditEvent, AuditEventType
+from ai_security.audit.models import AuditEvent, AuditEventType, DlpAuditRecord
 from ai_security.audit.writer import AuditRecorder, AuditWriteError
+from ai_security.data_security.classification import DataClass
+from ai_security.data_security.dlp import (
+    DlpOutcome,
+    DlpReport,
+    OutputDefenseService,
+)
 from ai_security.firewall.approval import ApprovalConsumption, ApprovalService
 from ai_security.firewall.decision import DecisionReason, DecisionRecord, FirewallDecision
 from ai_security.firewall.models import (
@@ -85,6 +97,7 @@ from ai_security.security.urls import (
 from ai_security.tools.base import (
     STABLE_ID_PATTERN,
     ExecutionAuthorization,
+    SideEffectClass,
     ToolArguments,
     ToolResult,
     _issue_execution_authorization,
@@ -104,6 +117,7 @@ class ToolGateway:
         registry: ToolRegistry,
         engine: PolicyEngine,
         recorder: AuditRecorder,
+        output_defense: OutputDefenseService,
         clock: Callable[[], datetime] | None = None,
         component_version: str = __version__,
         intent_tracker: IntentUsageTracker | None = None,
@@ -113,6 +127,11 @@ class ToolGateway:
         self._engine = engine
         self._bundle = engine.bundle
         self._recorder = recorder
+        # Phase 6: output defense is mandatory, not optional. A gateway instance cannot
+        # be constructed without it, so no execution path can skip egress inspection or
+        # response release. Configuration validity/destination coverage is proven by the
+        # application factory at startup.
+        self._output_defense = output_defense
         self._clock = clock if clock is not None else (lambda: datetime.now(UTC))
         self._component_version = component_version
         # Phase 4: when a tracker is supplied, every call must present a sealed,
@@ -278,6 +297,49 @@ class ToolGateway:
                     proposal, decision, InvocationOutcome.denied, None, None, sequence, None
                 )
 
+        # Output DLP runs after argument/intent validation and before any resource,
+        # risk, policy, or execution step. Tool-bound content is classified only from
+        # configured facts; a detector may raise the registration's data-class floor and
+        # can never lower it. Hard-category findings and every inspection failure are
+        # pre-execution denials.
+        egress_report = self._output_defense.inspect_egress(
+            data=arguments.model_dump(mode="json"),
+            declared_data_class=registration.data_class,
+            destination=canonical_destination,
+            require_destination=(
+                registration.side_effect_class is SideEffectClass.external_mutation
+            ),
+        )
+        if egress_report.outcome is not DlpOutcome.pass_:
+            decision = self._decision(
+                FirewallDecision.block,
+                DecisionReason.dlp_inspection_failed
+                if egress_report.inspection_error
+                else DecisionReason.dlp_egress_blocked,
+            )
+            sequence = await self._record_decision_event(
+                request_context=request_context,
+                principal=principal,
+                proposal=proposal,
+                decision=decision,
+                registration=registration,
+                destination=canonical_destination,
+                resource_ids=resource_ids,
+                data_class=egress_report.max_data_class,
+                dlp=egress_report,
+            )
+            return self._result(
+                proposal,
+                decision,
+                InvocationOutcome.denied,
+                None,
+                None,
+                sequence,
+                None,
+                dlp_egress=egress_report,
+            )
+        effective_data_class = egress_report.max_data_class
+
         resource_authorized = self._resource_authorized(
             registered=registered,
             principal=principal,
@@ -287,7 +349,7 @@ class ToolGateway:
         try:
             risk = assess_risk(
                 side_effect_class=registration.side_effect_class,
-                data_class=registration.data_class,
+                data_class=effective_data_class,
                 destination=canonical_destination,
                 resource_count=len(resource_ids),
             )
@@ -307,9 +369,18 @@ class ToolGateway:
                 registration=registration,
                 destination=canonical_destination,
                 resource_ids=resource_ids,
+                data_class=effective_data_class,
+                dlp=egress_report,
             )
             return self._result(
-                proposal, decision, InvocationOutcome.denied, None, None, sequence, None
+                proposal,
+                decision,
+                InvocationOutcome.denied,
+                None,
+                None,
+                sequence,
+                None,
+                dlp_egress=egress_report,
             )
 
         deadline_exceeded = proposal.deadline is not None and proposal.deadline <= now
@@ -320,6 +391,7 @@ class ToolGateway:
             canonical_destination=canonical_destination,
             resource_authorized=resource_authorized,
             deadline_exceeded=deadline_exceeded,
+            data_class=effective_data_class,
         )
 
         action_digest: str | None = None
@@ -353,6 +425,8 @@ class ToolGateway:
                 action_digest=action_digest,
                 resource_ids=resource_ids,
                 destination=canonical_destination,
+                side_effect_class=registration.side_effect_class,
+                data_class=effective_data_class,
                 policy_version=decision.policy_version,
                 policy_hash=decision.policy_hash,
                 now=now,
@@ -395,6 +469,8 @@ class ToolGateway:
             resource_ids=resource_ids,
             approval_id=approval_reference,
             approver_subject_id=approver_subject_id,
+            data_class=effective_data_class,
+            dlp=egress_report,
         )
         if decision.decision is not FirewallDecision.allow and not approved_via_approval:
             return self._result(
@@ -405,11 +481,21 @@ class ToolGateway:
                 risk,
                 decision_sequence,
                 None,
+                dlp_egress=egress_report,
             )
         if decision_sequence is None:
             # The decision event could not be persisted: never execute a side effect.
             blocked = self._decision(FirewallDecision.block, DecisionReason.audit_unavailable)
-            return self._result(proposal, blocked, InvocationOutcome.denied, None, risk, None, None)
+            return self._result(
+                proposal,
+                blocked,
+                InvocationOutcome.denied,
+                None,
+                risk,
+                None,
+                None,
+                dlp_egress=egress_report,
+            )
 
         if action_digest is None:  # pragma: no cover - execution always computes a digest
             raise RuntimeError("execution path without an action digest")
@@ -439,6 +525,8 @@ class ToolGateway:
             decision_sequence=decision_sequence,
             approval_id=approval_reference,
             approver_subject_id=approver_subject_id,
+            effective_data_class=effective_data_class,
+            dlp_egress=egress_report,
         )
 
     # -- validation steps -------------------------------------------------------------
@@ -466,6 +554,8 @@ class ToolGateway:
         action_digest: str | None,
         resource_ids: tuple[str, ...],
         destination: str | None,
+        side_effect_class: SideEffectClass,
+        data_class: DataClass,
         policy_version: str,
         policy_hash: str,
         now: datetime,
@@ -483,6 +573,8 @@ class ToolGateway:
                 action_digest=action_digest,
                 resource_ids=resource_ids,
                 destination=destination,
+                side_effect_class=side_effect_class,
+                data_class=data_class,
                 policy_version=policy_version,
                 policy_hash=policy_hash,
                 now=now,
@@ -589,11 +681,12 @@ class ToolGateway:
         canonical_destination: str | None,
         resource_authorized: bool,
         deadline_exceeded: bool,
+        data_class: DataClass,
     ) -> DecisionRecord:
         request = PolicyEvaluationRequest(
             tool_id=proposal.tool_id,
             side_effect_class=registration.side_effect_class,
-            data_class=registration.data_class,
+            data_class=data_class,
             risk_score=risk.score,
             principal_resolved=True,
             binding_valid=True,
@@ -650,6 +743,8 @@ class ToolGateway:
         arguments: ToolArguments,
         authorization: ExecutionAuthorization,
         decision_sequence: int,
+        effective_data_class: DataClass,
+        dlp_egress: DlpReport,
         approval_id: str | None = None,
         approver_subject_id: str | None = None,
     ) -> ToolInvocationResult:
@@ -680,6 +775,8 @@ class ToolGateway:
                 outcome=InvocationOutcome.timeout,
                 error_type="TimeoutError",
                 duration_ms=_elapsed_ms(started),
+                effective_data_class=effective_data_class,
+                dlp_egress=dlp_egress,
             )
         except Exception as exc:
             logger.warning(
@@ -700,6 +797,8 @@ class ToolGateway:
                 outcome=InvocationOutcome.adapter_failed,
                 error_type=type(exc).__name__,
                 duration_ms=_elapsed_ms(started),
+                effective_data_class=effective_data_class,
+                dlp_egress=dlp_egress,
             )
 
         result_error = self._result_error(registration, adapter_result)
@@ -719,12 +818,24 @@ class ToolGateway:
                 outcome=InvocationOutcome.result_rejected,
                 error_type=result_error,
                 duration_ms=_elapsed_ms(started),
+                effective_data_class=effective_data_class,
+                dlp_egress=dlp_egress,
             )
 
         if not isinstance(adapter_result, ToolResult):  # pragma: no cover - checked above
             raise RuntimeError("adapter result lost its schema during validation")
         canonical_result = canonical_json_bytes(adapter_result.model_dump(mode="json"))
         result_digest = hashlib.sha256(canonical_result).hexdigest()
+
+        # Response release is all-or-nothing: the complete result was buffered, inspected
+        # as one document, and only then released, redacted, or suppressed. No token or
+        # partial result is ever emitted before this point (section 15.1).
+        released_result, dlp_output = self._release_result(
+            registration=registration,
+            adapter_result=adapter_result,
+            effective_data_class=effective_data_class,
+        )
+        response_blocked = released_result is None
         duration_ms = _elapsed_ms(started)
         event = self._execution_event(
             request_context=request_context,
@@ -737,11 +848,17 @@ class ToolGateway:
             resource_ids=resource_ids,
             approval_id=approval_id,
             approver_subject_id=approver_subject_id,
-            outcome=InvocationOutcome.executed,
+            outcome=(
+                InvocationOutcome.response_blocked
+                if response_blocked
+                else InvocationOutcome.executed
+            ),
             duration_ms=duration_ms,
             result_digest=result_digest,
             result_bytes=len(canonical_result),
             error_type=None,
+            data_class=effective_data_class,
+            dlp=dlp_output,
         )
         outcome_sequence = await self._record_event(event)
         if outcome_sequence is None:
@@ -755,18 +872,66 @@ class ToolGateway:
                 None,
                 approval_id=approval_id,
                 approver_subject_id=approver_subject_id,
+                dlp_egress=dlp_egress,
+                dlp_output=dlp_output,
             )
         return self._result(
             proposal,
             decision,
-            InvocationOutcome.executed,
-            adapter_result,
+            (
+                InvocationOutcome.response_blocked
+                if response_blocked
+                else InvocationOutcome.executed
+            ),
+            released_result,
             risk,
             decision_sequence,
             outcome_sequence.sequence_number,
             approval_id=approval_id,
             approver_subject_id=approver_subject_id,
+            dlp_egress=dlp_egress,
+            dlp_output=dlp_output,
         )
+
+    def _release_result(
+        self,
+        *,
+        registration: ToolRegistration,
+        adapter_result: ToolResult,
+        effective_data_class: DataClass,
+    ) -> tuple[ToolResult | None, DlpReport]:
+        """Inspect one complete result; return the releasable result or ``None``.
+
+        ``REDACT`` is applied to every string field and the transformed payload must
+        still satisfy the registered result schema and result-size bound. Any failure
+        during redaction is an inspection failure: suppress the whole response rather
+        than releasing a partially transformed document.
+        """
+        report = self._output_defense.inspect_output(
+            data=adapter_result.model_dump(mode="json"),
+            declared_data_class=effective_data_class,
+        )
+        if report.outcome is DlpOutcome.pass_:
+            return adapter_result, report
+        if report.outcome is DlpOutcome.redact:
+            try:
+                payload, _changed = self._output_defense.redact_payload(
+                    adapter_result.model_dump(mode="json"), report=report
+                )
+                released = registration.result_schema.model_validate(payload)
+                canonical_released = canonical_json_bytes(released.model_dump(mode="json"))
+                if len(canonical_released) > registration.max_result_bytes:
+                    raise ValueError("redacted result exceeds the registered size bound")
+            except Exception:
+                logger.error(
+                    "output DLP redaction failed for tool %s; suppressing the result",
+                    registration.tool_id,
+                )
+                return None, self._output_defense.release_failure(report)
+            released_digest = hashlib.sha256(canonical_released).hexdigest()
+            return released, self._output_defense.released(report, released_digest=released_digest)
+        # BLOCK, REVIEW, and failed inspection suppress the complete result.
+        return None, report
 
     def _result_error(self, registration: ToolRegistration, adapter_result: object) -> str | None:
         if not isinstance(adapter_result, registration.result_schema):
@@ -796,6 +961,8 @@ class ToolGateway:
         outcome: InvocationOutcome,
         error_type: str,
         duration_ms: int,
+        effective_data_class: DataClass,
+        dlp_egress: DlpReport,
     ) -> ToolInvocationResult:
         event = self._execution_event(
             request_context=request_context,
@@ -813,6 +980,8 @@ class ToolGateway:
             result_digest=None,
             result_bytes=None,
             error_type=error_type,
+            data_class=effective_data_class,
+            dlp=None,
         )
         outcome_sequence = await self._record_event(event)
         if outcome_sequence is None:
@@ -826,6 +995,7 @@ class ToolGateway:
                 None,
                 approval_id=approval_id,
                 approver_subject_id=approver_subject_id,
+                dlp_egress=dlp_egress,
             )
         return self._result(
             proposal,
@@ -837,6 +1007,7 @@ class ToolGateway:
             outcome_sequence.sequence_number,
             approval_id=approval_id,
             approver_subject_id=approver_subject_id,
+            dlp_egress=dlp_egress,
         )
 
     def _semaphore(self, tool_id: str, limit: int) -> asyncio.Semaphore:
@@ -866,6 +1037,8 @@ class ToolGateway:
         resource_ids: tuple[str, ...] = (),
         approval_id: str | None = None,
         approver_subject_id: str | None = None,
+        data_class: DataClass | None = None,
+        dlp: DlpReport | None = None,
     ) -> int | None:
         event = self._event(
             event_type=AuditEventType.policy_evaluated,
@@ -884,6 +1057,8 @@ class ToolGateway:
             error_type=None,
             approval_id=approval_id,
             approver_subject_id=approver_subject_id,
+            data_class=data_class,
+            dlp=dlp,
         )
         appended = await self._record_event(event)
         return None if appended is None else appended.sequence_number
@@ -906,10 +1081,12 @@ class ToolGateway:
         result_digest: str | None,
         result_bytes: int | None,
         error_type: str | None,
+        data_class: DataClass,
+        dlp: DlpReport | None,
     ) -> AuditEvent:
         event_type = (
             AuditEventType.tool_execution_completed
-            if outcome is InvocationOutcome.executed
+            if outcome in (InvocationOutcome.executed, InvocationOutcome.response_blocked)
             else AuditEventType.tool_execution_failed
         )
         return self._event(
@@ -929,6 +1106,8 @@ class ToolGateway:
             result_digest=result_digest,
             result_bytes=result_bytes,
             error_type=error_type,
+            data_class=data_class,
+            dlp=dlp,
         )
 
     def _event(
@@ -950,6 +1129,8 @@ class ToolGateway:
         error_type: str | None,
         approval_id: str | None = None,
         approver_subject_id: str | None = None,
+        data_class: DataClass | None = None,
+        dlp: DlpReport | None = None,
     ) -> AuditEvent:
         return AuditEvent(
             event_id=uuid.uuid4().hex,
@@ -968,7 +1149,11 @@ class ToolGateway:
             policy_hash=decision.policy_hash,
             outcome=outcome,
             side_effect_class=None if registration is None else registration.side_effect_class,
-            data_class=None if registration is None else registration.data_class,
+            data_class=(
+                data_class
+                if data_class is not None
+                else (None if registration is None else registration.data_class)
+            ),
             risk_score=None if risk is None else risk.score,
             risk_version=None if risk is None else risk.version,
             risk_factor_codes=None if risk is None else risk.factor_codes,
@@ -980,6 +1165,7 @@ class ToolGateway:
             result_digest=result_digest,
             result_bytes=result_bytes,
             error_type=error_type,
+            dlp=None if dlp is None else DlpAuditRecord.from_report(dlp),
         )
 
     async def _record_event(self, event: AuditEvent) -> AppendedAuditEvent | None:
@@ -1015,6 +1201,8 @@ class ToolGateway:
         outcome_sequence: int | None,
         approval_id: str | None = None,
         approver_subject_id: str | None = None,
+        dlp_egress: DlpReport | None = None,
+        dlp_output: DlpReport | None = None,
     ) -> ToolInvocationResult:
         # ``result`` is always a ``ToolResult`` or None by construction; the cast keeps
         # the frozen dataclass free of pydantic revalidation.
@@ -1033,6 +1221,8 @@ class ToolGateway:
             outcome_audit_sequence=outcome_sequence,
             approval_id=approval_id,
             approver_subject_id=approver_subject_id,
+            dlp_egress=dlp_egress,
+            dlp_output=dlp_output,
         )
 
     def _now(self) -> datetime:

@@ -5,6 +5,7 @@ Phase 0b security-foundation settings that actually have consumers (the principa
 resolver selection, the host-authentication key configuration, timestamp tolerance and
 nonce TTL, the request-size bound), and the Phase 1 policy document paths loaded at
 startup (``POLICY_PATH``, ``RISK_THRESHOLDS_PATH``, ``POLICY_SELF_CHECKS_PATH``).
+Phase 6 adds ``OUTPUT_DLP_PATH`` (the strict output-DLP/egress trust configuration).
 Later-phase variables (model provider, session signals, audit raw-content mode) are
 introduced together with the controls that consume them, so this module never pretends
 to validate configuration it does not use.
@@ -203,6 +204,7 @@ class Settings(BaseSettings):
     risk_thresholds_path: str = Field(default="config/risk_thresholds.yaml", min_length=1)
     policy_self_checks_path: str = Field(default="config/policy_self_checks.yaml", min_length=1)
     input_defense_path: str = Field(default="config/input_defense.yaml", min_length=1)
+    output_dlp_path: str = Field(default="config/output_dlp.yaml", min_length=1)
     session_signal_ttl_seconds: int = Field(default=86400, gt=0)
     session_max_age_seconds: int = Field(default=604800, gt=0)
     intent_manifest_ttl_seconds: int = Field(default=300, ge=1, le=3600)

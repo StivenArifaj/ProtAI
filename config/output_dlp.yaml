@@ -1,0 +1,56 @@
+# Output DLP and destination-aware egress policy (blueprint section 15).
+#
+# Every detector below is deterministic and configuration-driven. Findings are audited
+# as code/category/count/field-path only; matched values are never logged. Patterns must
+# not match the redaction markers they emit, or redaction would not be idempotent.
+#
+# `data_class` is the minimum sensitivity implied by a match; the runtime only ever
+# raises the registry-declared class. `egress: BLOCK` refuses tool-bound data outright;
+# `CLASSIFY` lets the exact destination trust map decide. `release` controls what a
+# matching response finding does to the complete buffered result.
+schema_version: 1
+version: "1.0.0"
+limits:
+  max_scan_bytes: 262144
+  max_findings: 32
+  max_matches_per_pattern: 16
+patterns:
+  - code: synthetic_canary
+    category: SYNTHETIC_CANARY
+    pattern: "\\bCANARY_SECRET_[A-Z0-9_]{4,}\\b"
+    data_class: RESTRICTED
+    egress: BLOCK
+    release: BLOCK
+  - code: private_key
+    category: PRIVATE_KEY
+    pattern: "-----BEGIN (?:[A-Z0-9]+ )?PRIVATE KEY-----"
+    data_class: RESTRICTED
+    egress: BLOCK
+    release: BLOCK
+  - code: api_key
+    category: API_KEY
+    pattern: "\\bsk-[A-Za-z0-9_-]{20,}\\b"
+    data_class: RESTRICTED
+    egress: BLOCK
+    release: BLOCK
+  - code: credential_assignment
+    category: CREDENTIAL
+    pattern: "(?i)\\b(?:password|passwd|secret|api[_-]?key|access[_-]?token|refresh[_-]?token)\\s*[:=]\\s*[\"']?(?!\\[REDACTED:)[^\\s\"']{6,}"
+    data_class: CONFIDENTIAL
+    egress: BLOCK
+    release: REDACT
+  - code: email_address
+    category: PII_EMAIL
+    pattern: "\\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}\\b"
+    data_class: CONFIDENTIAL
+    egress: CLASSIFY
+    release: REDACT
+# Exact canonical destination trust map. Startup refuses unless these entries exactly
+# match every registered EXTERNAL_MUTATION destination capability (no missing entry, no
+# dead entry). The mock sink is the lowest-trust test endpoint and may receive PUBLIC
+# content only.
+destinations:
+  - name: mock_external_sink
+    destination: "https://mock-sink.invalid/collect"
+    trust: PUBLIC
+    max_data_class: PUBLIC

@@ -370,11 +370,18 @@ class ApprovalService:
         action_digest: str,
         resource_ids: tuple[str, ...],
         destination: str | None,
+        side_effect_class: SideEffectClass,
+        data_class: DataClass,
         policy_version: str,
         policy_hash: str,
         now: datetime | None = None,
     ) -> ApprovalConsumption:
-        """Atomically consume one approved request bound to the current action."""
+        """Atomically consume one approved request bound to the current action.
+
+        The stored side-effect class and data class are part of the binding. The latter
+        may have been raised by output DLP, so an approval granted for a less sensitive
+        classification cannot authorize a more sensitive egress.
+        """
         moment = self._now(now)
         if re.fullmatch(APPROVAL_ID_PATTERN, approval_id) is None:
             return ApprovalConsumption(ApprovalConsumptionOutcome.not_found, approval_id)
@@ -391,6 +398,10 @@ class ApprovalService:
             if not constant_time_hex32_equal(row.action_digest, action_digest):
                 return False
             if row.resource_ids != resource_ids or row.destination != destination:
+                return False
+            if row.side_effect_class != side_effect_class.value:
+                return False
+            if row.data_class != data_class.value:
                 return False
             return row.policy_version == policy_version and constant_time_hex32_equal(
                 row.policy_hash, policy_hash

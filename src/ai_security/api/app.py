@@ -22,8 +22,10 @@ for the (later) API routes and for in-process callers. Since Phase 3 it also loa
 strict input-defense configuration, exposes the detection service, and constructs the
 session security-state repository. Since Phase 4 it issues request/principal/policy-
 bound intent manifests and the wired gateway requires a valid manifest plus its
-concrete constraints (and per-constraint use limits) before policy/execution. No
-``/v1`` routes exist yet.
+concrete constraints (and per-constraint use limits) before policy/execution. Since
+Phase 6 the factory also loads the strict output-DLP/egress configuration, proves its
+destination trust map covers every registered external destination, and injects the
+mandatory output-defense service into the gateway. No ``/v1`` routes exist yet.
 """
 
 from __future__ import annotations
@@ -37,6 +39,7 @@ from fastapi import FastAPI
 from ai_security.api.middleware import HostAuthMiddleware
 from ai_security.api.routes_health import router as health_router
 from ai_security.audit.writer import ChainAuditRecorder
+from ai_security.data_security.dlp import OutputDefenseService, load_output_dlp_config
 from ai_security.firewall.approval import ApprovalService
 from ai_security.firewall.gateway import ToolGateway
 from ai_security.firewall.policy_engine import PolicyEngine
@@ -123,6 +126,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         ),
     )
     app.state.tool_registry = registry
+    # Phase 6: output DLP is a mandatory gateway dependency. The strict configuration is
+    # loaded at startup, and its destination trust map must exactly cover every
+    # registered EXTERNAL_MUTATION destination (missing/extra entries refuse startup).
+    app.state.output_dlp_config = load_output_dlp_config(resolved.output_dlp_path)
+    app.state.output_defense = OutputDefenseService(app.state.output_dlp_config)
+    app.state.output_defense.validate_registered_destinations(registry.external_destinations())
     # Phase 5: durable approval storage is bound to the same audit chain. The gateway
     # accepts an approval only for an engine ASK_USER decision and only after an atomic,
     # digest-bound consumption; BLOCK/hard-denied actions never consult it.
@@ -145,6 +154,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         registry=registry,
         engine=PolicyEngine(policy_bundle),
         recorder=ChainAuditRecorder(app.state.audit_chain),
+        output_defense=app.state.output_defense,
         intent_tracker=app.state.intent_usage_tracker,
         approval_service=app.state.approval_service,
     )

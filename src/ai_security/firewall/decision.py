@@ -82,6 +82,13 @@ class DecisionReason(StrEnum):
     approval_expired = "approval_expired"
     approval_invalid = "approval_invalid"
 
+    # Output DLP and destination-aware egress (Phase 6, section 15). Egress denial is
+    # pre-execution; an inspection failure is always fail-closed. Response release can
+    # still be suppressed after execution, which is an outcome (``RESPONSE_BLOCKED``)
+    # rather than a policy denial and therefore keeps the engine's decision reason.
+    dlp_egress_blocked = "dlp_egress_blocked"
+    dlp_inspection_failed = "dlp_inspection_failed"
+
     # Operational overrides produced by the gateway (fail closed, section 16.4).
     # These may only ever downgrade a decision to BLOCK; they never grant execution.
     policy_evaluation_error = "policy_evaluation_error"
