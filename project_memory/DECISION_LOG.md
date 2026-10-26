@@ -11,7 +11,7 @@ Two levels of decisions are recorded:
 When a decision changes: create a **superseding ADR** (for contract decisions) and update
 the index; never silently rewrite the historical rationale.
 
-## ADRs (all Accepted, dated 2026-10-19)
+## ADRs (all Accepted; ADR-001–ADR-007 dated 2026-10-19, later ADRs dated by phase)
 
 | ADR | Decision | Implementation phase | File |
 |---|---|---|---|
@@ -27,6 +27,7 @@ the index; never silently rewrite the historical rationale.
 | ADR-010 | Advisory input threat defense, trust labels, and session signals | Phase 3 | [../docs/adr/ADR-010-advisory-input-defense-and-session-signals.md](../docs/adr/ADR-010-advisory-input-defense-and-session-signals.md) |
 | ADR-011 | Server-issued, sealed intent manifests and concrete action constraints | Phase 4 | [../docs/adr/ADR-011-server-issued-intent-manifests.md](../docs/adr/ADR-011-server-issued-intent-manifests.md) |
 | ADR-012 | `risk-v2` bounded breadth factor + durable one-time human approvals bound to the canonical action digest | Phase 5 | [../docs/adr/ADR-012-risk-v2-and-human-approvals.md](../docs/adr/ADR-012-risk-v2-and-human-approvals.md) |
+| ADR-013 | Mandatory two-phase output DLP, exact destination trust, and complete-response release/suppression | Phase 6 | [../docs/adr/ADR-013-output-dlp-and-egress.md](../docs/adr/ADR-013-output-dlp-and-egress.md) |
 
 ## Implementation decisions (Phase 0a, within blueprint constraints)
 
@@ -149,3 +150,18 @@ the index; never silently rewrite the historical rationale.
 | The gateway does not auto-create approval requests; the Phase 8 host workflow must call the service with host-verified facts | Avoid inventing a route/UX contract and prevent model output from fabricating approval facts | ADR-012; known limitations |
 | Failure mapping is typed (`approval_invalid` / `approval_denied` / `approval_expired`) with no adapter call; storage errors log only the tool id | Preserve the no-execution guarantee and log hygiene on every failure path | ADR-012; security tests |
 | Consuming an approval burns it even if a later execution step fails | Deliberate anti-replay tradeoff; a retry requires a fresh approval | ADR-012; known limitation #44 |
+
+## Implementation decisions (Phase 6, within blueprint constraints; contract in ADR-013)
+
+| Decision | Rationale | Recorded in |
+|---|---|---|
+| `ToolGateway` requires an `OutputDefenseService`; no `None`/no-op default; the app loads `OUTPUT_DLP_PATH` and injects it | A gateway must not silently omit DLP; absence of configuration refuses startup rather than disabling inspection | ADR-013; `firewall/gateway.py`, `api/app.py`; wiring tests |
+| Two-phase inspection: egress on validated arguments before resource/risk/policy/approval/execution; release on the complete buffered result | Classify before any side effect and suppress before any bytes escape; ADR-003 streaming remains disabled | ADR-013; `dlp.py`, gateway tests |
+| Effective class = max(registry declaration, findings); findings can only raise it | Registration remains the floor; DLP must not become a policy authority or lower sensitivity | ADR-013; DLP/gateway tests |
+| Destination trust is exact-canonical and must exactly cover every registered `EXTERNAL_MUTATION` destination at startup (missing or dead entry refuses startup) | No wildcard ambiguity or untrusted-by-omission destinations; capability changes must update policy | ADR-013; `output_dlp.yaml`, wiring tests |
+| Closed outcomes: egress `PASS`/`BLOCK` (+ fail-closed error), release `PASS`/`REDACT`/`BLOCK`/`REVIEW`; `BLOCK`/`REVIEW`/failure set `result=None` + `response_blocked` | Typed, auditable behavior with no partial release; `REVIEW` is conservatively a block until a review transport exists | ADR-013; `decision.py`, `models.py`; unit/security tests |
+| Redaction is span-preserving/idempotent, merges overlapping spans under the highest-severity category, and starts credential redaction at the first value character | Prevent tails of longer matches or multi-word secrets from leaking; over-redaction is preferred | ADR-013; `dlp.py`; `e586c81`; DLP tests |
+| Oversize content, excessive fields/depth, unsafe paths, or a saturated finding report that would skip configured patterns are inspection failures; per-pattern truncation records the evaluated finding | A partial scan must not report PASS; a saturated report must not hide an unevaluated blocking pattern | ADR-013; `e8919cb`; DLP tests |
+| DLP evidence is an optional additive `dlp` record on existing schema-v1 events; no new event types or migration in Phase 6 | Avoid a premature taxonomy while keeping evidence correlated and redacted; first-class events/verifier are Phase 7 | ADR-013; `audit/models.py`; e2e tests |
+| Approval consumption additionally binds `side_effect_class` and the effective `data_class`; egress denial precedes approval and never consumes a grant | A stale approval created for a lower class must not authorize newly classified content | ADR-013; `approval.py`/repository; real-PostgreSQL tests |
+| Shipped detectors are five deterministic patterns (canary, private-key header, `sk-` API key, credential assignment, email); no classifier/entropy/semantic/multilingual support; false positives/negatives documented | Honest, testable detection with a clear boundary; no overclaim that PASS means safe | ADR-013; `config/output_dlp.yaml`; `docs/OUTPUT_DLP_FALSE_POSITIVES.md` |

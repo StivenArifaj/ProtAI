@@ -2,10 +2,10 @@
 
 Severity: **High** (blocks security goals) / **Medium** / **Low**. Status labels follow
 [README.md](README.md) ("RESOLVED (0b)"/"RESOLVED (1)"/"RESOLVED (2)"/"RESOLVED (3)"/
-"RESOLVED (4, in-process)"/"RESOLVED (5, in-process)" mark items closed in
-Phase 0b/1/2/3/4/5). "Section" refers to the
+"RESOLVED (4, in-process)"/"RESOLVED (5, in-process)"/"RESOLVED (6, gateway scope)" mark
+items closed in Phase 0b/1/2/3/4/5/6). "Section" refers to the
 master blueprint v1.2. The canonical long-form list (with phase pointers) is
-[../docs/KNOWN_LIMITATIONS.md](../docs/KNOWN_LIMITATIONS.md) (items 1–32); this file adds
+[../docs/KNOWN_LIMITATIONS.md](../docs/KNOWN_LIMITATIONS.md) (items 1–40); this file adds
 severity, status, and next actions. Keep both consistent.
 
 ## Security controls absent (High — do not claim otherwise)
@@ -13,12 +13,12 @@ severity, status, and next actions. Keep both consistent.
 | # | Issue | Severity | Status | Blueprint | Next action |
 |---|---|---|---|---|---|
 | 1 | Host authentication: **implemented** for the `/v1/*` path prefix (HMAC + timestamp + atomic nonce replay + size bounds, fail-closed); no `/v1/*` routes exist yet; principal resolution beyond dev/test fails closed | High | **PARTIAL (0b/1)** | §9, §21 | Later phase (principal metadata), Phase 8 (routes) |
-| 2 | Execution is mock-only and in-process: registry, gateway, execution authorization, `risk-v2`, manifest enforcement, one-time approvals, and mock adapters exist and are tested, but there are no real connectors and no sandbox | High | **PARTIAL (2-5)** | §§10–13 | Phase 10 (isolation); real connectors are out of v1 scope |
-| 3 | Input defense exists but is advisory and not consumed: deterministic heuristics, typed non-PASS failure semantics, trust labels, and session signals are implemented (Phase 3/ADR-010), but no `/v1` route or model path uses them; intent extraction and approvals are in-process; content DLP and output egress policy are still missing | High | **PARTIAL (3-5)** | §§3, 8, 15 | Phase 6 (DLP), Phase 8 (routes/provider) |
-| 4 | Audit: append repository + ADR-002 lock protocol + fixed vectors exist and are tested; the gateway emits decision/outcome events and Phase 5 approval request/decision/consumption/expiry events into the chain; the full taxonomy, retention, and verifier are missing | High | **PARTIAL (0b/2/5)** | §16 | Phase 7 |
+| 2 | Execution is mock-only and in-process: registry, gateway, execution authorization, `risk-v2`, manifest enforcement, one-time approvals, output DLP, and mock adapters exist and are tested, but there are no real connectors and no sandbox | High | **PARTIAL (2-6)** | §§10–13, 15 | Phase 10 (isolation); real connectors are out of v1 scope |
+| 3 | Input defense exists but is advisory and not consumed: deterministic heuristics, typed non-PASS failure semantics, trust labels, and session signals are implemented (Phase 3/ADR-010), but no `/v1` route or model path uses them; intent extraction and approvals are in-process; output DLP is consumed only at the gateway | High | **PARTIAL (3-6)** | §§3, 8, 15 | Phase 8 (routes/provider); input findings still have no consumer |
+| 4 | Audit: append repository + ADR-002 lock protocol + fixed vectors exist and are tested; the gateway emits decision/outcome and Phase 5 approval events into the chain; Phase 6 attaches an additive redacted `dlp` record. The full taxonomy, first-class DLP events, retention, and verifier are missing | High | **PARTIAL (0b/2/5/6)** | §16 | Phase 7 |
 | 5 | No AI SOC analytics | Medium | NOT IMPLEMENTED | §17 | Phase 10 |
 | 6 | No rate limiting or request deadlines; request-size bound exists (64 KiB, 413) | Medium | **PARTIAL (0b)** | §18.2 | Phase 8 |
-| 7 | Persisted state: `host_request_nonces`, `audit_events`, `session_security_state` (Phase 3), and `approval_requests` (Phase 5) apply via Alembic; no intent-use table (Phase 4 uses an in-memory tracker); no pruning job (expired session and approval rows are transitioned lazily on access; nonce/audit rows persist) | High | **PARTIAL (0b/3/4/5)** | §§13, 20.2 | Phase 7 (retention task); later operational phase (shared intent-use store) |
+| 7 | Persisted state: `host_request_nonces`, `audit_events`, `session_security_state` (Phase 3), and `approval_requests` (Phase 5) apply via Alembic; Phase 6 adds no table (additive audit JSON); no intent-use table (Phase 4 uses an in-memory tracker); no pruning job (expired session and approval rows are transitioned lazily on access; nonce/audit rows persist) | High | **PARTIAL (0b/3/4/5/6)** | §§13, 20.2 | Phase 7 (retention task); later operational phase (shared intent-use store) |
 
 ## Environment and tooling gaps
 
@@ -43,20 +43,28 @@ severity, status, and next actions. Keep both consistent.
 
 | 29 | Approvals are storage-and-gateway only: `ASK_USER` can execute once with a valid consumed approval, but there is no `/v1/approvals` route, approval UI, token-delivery transport, approver directory, notification channel, revocation operation, or background expiry sweeper; the gateway does not create requests automatically | Medium | **RESOLVED (5, in-process)** | §13 | Phase 8 (route/transport/workflow); expiry is lazy on decide/consume |
 | 30 | Manifest/intent binding exists **in-process only** with a mock extractor; no `/v1` route issues/transports a manifest and no signed serialization exists | Medium | **RESOLVED (4, in-process)** | §11.1–11.2 | Phase 8 (route/transport/provider) |
-| 31 | Content-level DLP absent: data class is a registration-declared fact; no canary/pattern inspection of payloads | High | BY DESIGN (2) | §15 | Phase 6 |
+| 31 | Content-level DLP was absent through Phase 5 (data class was a registration-declared fact). Phase 6 adds deterministic argument/result inspection, canary/pattern detection, destination-aware egress, redaction, and suppression at the gateway; it is not a classifier and has no real connectors | High | **RESOLVED (6, gateway scope)** — canary/private-key/API-key/blocking-credential egress denied with an unchanged sink; response `BLOCK`/`REVIEW`/failure suppressed whole | §15 | Phase 7 (event taxonomy/verifier); Phase 9 (evaluation); expand detectors only with tests |
 | 32 | Execution authorization is an in-process guardrail, not a sandbox: malicious in-process code could bypass private internals | High | BY DESIGN (2) | §14.2 | Phase 10 |
 | 33 | Concurrency bounds and the in-memory sink are per process/event loop; no cross-worker coordination | Medium | BY DESIGN (2) | §18.2 | Later operational phase |
 | 34 | `risk-v2` weights uncalibrated; factor set minimal (one breadth factor; no identity/session/history factors) | Low | BY DESIGN (2/5) | §11.3–11.4 | Phase 9 (calibration); expand factors only with an explicit version/ADR |
 | 36 | Detector heuristics are modest: English-pattern based, homoglyphs are flagged but not normalized before matching, quoted/educational content can still raise FLAG, and PASS means "no configured finding matched", not "safe" | Medium | BY DESIGN (3) | §7.3 | Phase 9 evaluation; expand patterns/normalization deliberately with tests |
-| 37 | Trust labels, detector findings, and session signals have no consumer yet (no routes/model); session state is not an authorization or scoring input. Intent manifests are consumed by the app gateway but no route/provider produces them; approvals are not wired to a host workflow | Medium | BY DESIGN (3-5) | §§7.4, 8 | Phase 8 (routes/model/workflow); Phase 9 (evaluation of session signals as factors) |
+| 37 | Trust labels, input-detector findings, and session signals have no consumer yet (no routes/model); session state is not an authorization or scoring input. Intent manifests are consumed by the app gateway but no route/provider produces them; approvals are not wired to a host workflow. Output DLP is consumed at the gateway | Medium | BY DESIGN (3-6) | §§7.4, 8 | Phase 8 (routes/model/workflow); Phase 9 (evaluation of session signals as factors) |
 | 38 | Abandoned session rows persist until touched (lazy expiry only); no scheduled pruning | Low | BY DESIGN (3) | §20.2 | Later operational phase (retention job) |
 | 39 | Intent manifests are sentinel-sealed in-process objects, not signed tokens; no route may accept a client-carried manifest without a signing/transport contract | Medium | BY DESIGN (4) | §11.1 | Phase 8 |
 | 40 | App uses the two-scenario mock intent extractor; general NLU and real local-model accuracy are unmeasured | Medium | BY DESIGN (4) | §8 | Phase 8 (provider), Phase 9 (evaluation) |
 | 41 | Intent `max_uses` tracking is per process/in memory (10,000 manifest cap, fail-closed); multi-worker instances enforce independently | Medium | BY DESIGN (4) | §11.1 | Later operational phase |
 | 42 | Manifest request binding uses a server-assigned `request_id` but no request-body digest; the Phase 8 route must generate unique ids and cannot let clients choose them | Low | BY DESIGN (4) | §11.1 | Phase 8 |
 | 43 | Intent constraints are exact-match only (no wildcards/ranges/floats); coarse extractor proposals may require clarification | Low | BY DESIGN (4) | §11.1 | Revisit only with documented semantics/tests |
-| 44 | Approval consumption burns the grant even if a later authorization/audit step fails before execution (deliberate anti-replay); the caller must request a new approval | Low | BY DESIGN (5) | §13 | Revisit only with a documented retry contract that cannot replay |
+| 44 | Approval consumption burns the grant even if a later authorization/audit step fails before execution (deliberate anti-replay); a DLP-raised data class also invalidates a stale approval; the caller must request a new approval | Low | BY DESIGN (5/6) | §13 | Revisit only with a documented retry contract that cannot replay |
 | 45 | Approval/resource ids are one flat distinct string set; two argument namespaces carrying the same textual id collapse to one target | Low | BY DESIGN (5) | §13 | Treat stable ids as globally meaningful; revisit if per-namespace ids are introduced |
+| 46 | Output DLP is deterministic pattern matching, not a classifier: five configured detectors, no entropy scan, semantic model, multilingual PII, or detection of secrets without a configured shape; `PASS` means "no configured pattern matched", not "safe" | Medium | BY DESIGN (6) | §15 | Phase 9 evaluation; expand detectors deliberately with false-positive tests |
+| 47 | Response `REVIEW` is operationally a whole-response block: no review queue, reviewer UI, release token, or post-review transport exists | Medium | BY DESIGN (6) | §15.4 | Phase 8 (review workflow/transport) |
+| 48 | DLP inspects only validated tool-bound arguments and the complete buffered result: no model prompts/streams, adapter-internal fetched content, or local-write destinations | Medium | BY DESIGN (6) | §15 | Phase 8 (model path) and later real-connector work |
+| 49 | Over-redaction is deliberate: credential redaction is line-scoped, can remove trailing comments/passphrases, and a redaction that violates a strict result schema or the size bound suppresses the entire response | Low | BY DESIGN (6) | §15.4 | Revisit only with a schema-aware redaction contract and tests |
+| 50 | No per-resource classification metadata: the effective class is the registry declaration raised by deterministic inspection, never a real connector's per-file/per-record label | Medium | BY DESIGN (6) | §15.1 | Real-connector phase |
+| 51 | Destination trust covers external mutations only, is exact-canonical (no wildcards), and has no per-tenant model; startup refuses missing/dead entries | Low | BY DESIGN (6) | §15.3 | Revisit with documented trust semantics |
+| 52 | DLP evidence is an additive field on existing schema-v1 events, not a first-class event taxonomy; there are no `EGRESS_INSPECTED`/`OUTPUT_INSPECTED`/`RESPONSE_*` events or verifier, and the DLP config hash is not in readiness metadata | Medium | BY DESIGN (6) | §16.1 | Phase 7 |
+| 53 | No live `/v1` DLP surface or streaming path; enforcement is in-process at the single gateway result boundary | Medium | BY DESIGN (6) | §§15, 18 | Phase 8 (routes); streaming stays disabled (ADR-003) |
 
 ## Behavioral notes (expected behavior, not defects)
 

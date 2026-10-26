@@ -5,7 +5,7 @@ blueprint. Full narrative and the per-request lifecycle: [../docs/ARCHITECTURE.m
 (mark status per component there as well). **Nothing under "Target v1" may be claimed as
 existing.**
 
-## Implemented today (Phases 0a–5 — VERIFIED 2026-10-26)
+## Implemented today (Phases 0a–6 — VERIFIED 2026-10-26)
 
 Components:
 
@@ -21,7 +21,8 @@ Components:
   `INPUT_DEFENSE_PATH` (Phase 3) with defaults under `config/`; session TTL 86400 s with
   max age 604800 s (validator enforces TTL ≤ max age); `INTENT_MANIFEST_TTL_SECONDS`
   default 300 s, bounded 1–3600 s (Phase 4); `APPROVAL_TTL_SECONDS` default 900 s,
-  bounded 60–86,400 s (Phase 5).
+  bounded 60–86,400 s (Phase 5); `OUTPUT_DLP_PATH` default `config/output_dlp.yaml`
+  (Phase 6).
 - `ai_security.security` (`constant_time.py`, `canonical_json.py`, `urls.py`,
   `safe_yaml.py`) and `ai_security.audit.hash_chain`: `hmac.compare_digest` wrappers
   (confinement enforced by the gate), canonical JSON bytes, destination
@@ -47,7 +48,8 @@ Components:
   operation bound to `(tenant_id, subject_id)`, bounded `LEAST(...)` counters, 24 h
   inactivity / 7 d absolute lazy expiry, signal-free rotation; Phase 5
   `approval_requests` repository — row-locked decisions/consumption, digest-only tokens,
-  lazy expiry, same-transaction audit.
+  lazy expiry, same-transaction audit, effective-class binding (Phase 6). Phase 6 adds no
+  table; DLP evidence is additive audit JSON.
 - `ai_security.policy` (`models`, `loader`, `self_checks`) + `../config/{policies,risk_thresholds,policy_self_checks}.yaml`:
   the validated policy document model (`ToolPolicy`, `PolicyBundle` with `version` +
   sha256 content hashes), the safe YAML loader (`yaml.safe_load` + duplicate-key
@@ -63,12 +65,14 @@ Components:
   (all `risk-v1` weights plus one bounded distinct-resource breadth factor, capped,
   factor codes/rationale audited, strict `resource_count`); the single `invoke_tool`
   gateway chokepoint (bindings → strict validation → deduplicated resources/destination
-  → adapter resource check → risk → deadline → engine → **manifest
+  → adapter resource check → **egress DLP + effective-class floor** (Phase 6) → risk →
+  deadline → engine → **manifest
   verification/constraint match** (Phase 4) → **one-time approval consumption for
   `ASK_USER`** (Phase 5) → digest-bound authorization → audit-first → bounded execution
-  → typed outcome, ADR-009/011/012); and the Phase 5 approval service (strict specs,
+  → **complete-response DLP release/redaction/suppression** (Phase 6) → typed outcome,
+  ADR-009/011/012/013); and the Phase 5 approval service (strict specs,
   256-bit token returned once/SHA-256 stored, verified-principal rule evaluation,
-  bounded TTL and lazy expiry).
+  bounded TTL and lazy expiry, Phase 6 effective-class binding).
 - `ai_security.tools` (`base.py`, `registry.py`, `mock_{email,files,external_sink,text}.py`):
   canonical `SideEffectClass` + strict `ToolArguments`/`ToolResult`; sentinel-guarded,
   digest-bound `ExecutionAuthorization`; immutable validated registrations with
@@ -76,6 +80,14 @@ Components:
   deterministic in-memory adapters that verify the digest immediately before the side
   effect.
 - `ai_security.data_security.classification`: canonical `DataClass` enum (exactly once).
+- `ai_security.data_security.dlp` + `../config/output_dlp.yaml`: Phase 6 mandatory output
+  defense. Strict versioned config (five deterministic detectors, bounded
+  patterns/limits, exact-canonical destination trust with startup coverage); egress
+  inspection of validated arguments before resource/risk/policy/execution; effective
+  class `max(registry, findings)`; complete-result release/redaction/suppression;
+  `PASS`/`REDACT`/`BLOCK`/`REVIEW`; span-preserving idempotent redaction; fail-closed on
+  oversize/errors; redacted findings (code/category/count/bounded paths) never contain
+  match text (ADR-013).
 - `ai_security.intent` (`models`, `extractors`, `service`, `validator`, `time_window`):
   Phase 4 server-only intent pipeline. `IntentManifestService` validates extractor
   proposals against registry/policy and issues a sentinel-sealed manifest bound to the
@@ -99,14 +111,18 @@ Components:
   No path into policy facts, the engine, the gateway, or execution (ADR-010).
 - `ai_security.api.app` (`../src/ai_security/api/app.py`): `create_app(settings)` factory
   plus module-level `app`. Startup refuses bad configuration, dev-resolver misuse,
-  policy-configuration errors, self-check mismatch, registry/policy inconsistency, and
-  invalid/incomplete input-defense config; builds `Database` + nonce registrar + audit
+  policy-configuration errors, self-check mismatch, registry/policy inconsistency,
+  invalid/incomplete input-defense config, invalid/missing output-DLP config, or a DLP
+  trust map that does not exactly cover registered external-mutation destinations; builds
+  `Database` + nonce registrar + audit
   chain + registry + intent service/tracker + approval repository/service + gateway +
-  input-defense service + session store; the gateway is constructed with the intent
-  tracker and approval service; adds the middleware; `/docs`, `/redoc`,
+  input-defense service + session store + output defense; the gateway is constructed with
+  the intent tracker, approval service, and output defense; adds the middleware; `/docs`,
+  `/redoc`,
   `/openapi.json` only in `development`/`test`. `app.state` exposes `tool_registry`,
   `tool_gateway`, `input_defense_config`, `input_defense_service`, `session_security`,
-  `intent_usage_tracker`, `intent_manifest_service`, and `approval_service`.
+  `intent_usage_tracker`, `intent_manifest_service`, `approval_service`,
+  `output_dlp_config`, and `output_defense`.
 - `ai_security.api.routes_health`: `GET /health/live` → 200 `{"status":"alive"}`;
   `GET /health/ready` → 200/503 with `checks: {config, database, policy_self_checks}`
   plus `policy_version`/`policy_hash`; only booleans and version metadata, never
@@ -134,9 +150,11 @@ engine produces decisions consumed only by the gateway; a valid intent manifest 
 required by the app-built gateway and is compared with the derived action before
 execution (manifest uses are tracked in memory). An engine `ASK_USER` additionally needs
 a matching, unexpired, one-time approval that is atomically consumed before execution.
-The input-defense service and session store are available on `app.state` but no route or
-model path consumes them yet. Nothing in a live request path uses detector findings or
-trust labels.
+Output DLP runs on validated arguments before risk/policy and on the complete buffered
+result before release; its effective class feeds risk/policy/approval/audit and its
+redacted evidence is attached to existing audit events. The input-defense service and
+session store are available on `app.state` but no route or model path consumes them yet.
+Nothing in a live request path uses detector findings or trust labels.
 
 ## Target v1 (blueprint §§3–4) — NOT IMPLEMENTED
 
@@ -158,17 +176,17 @@ Component map with planned phases:
 |---|---|---|---|
 | `identity/` (HMAC host auth, resolver guard) | 0b | **VERIFIED (0b)** | Authenticate host, verify principal before anything else |
 | `security/` (canonical bytes, constant-time helpers, safe YAML, URLs) | 0b/1/3 | **VERIFIED (0b/1/3)** | Signing message, `hmac.compare_digest` wrappers, canonical JSON, duplicate-key-safe YAML, destinations |
-| `persistence/` (SQLAlchemy 2.x async) | 0b/3/5 | **VERIFIED (0b/3/5)** | Engine/session, nonce store, audit append, bound session signals, row-locked approval state machine |
-| `migrations/` + `alembic.ini` | 0b/3/5 | **VERIFIED (0b/3/5)** | Schema management (ADR-006); baseline + session + approval tables |
-| `config/*.yaml` | 0b/1/2/3 | **VERIFIED (1-3)** — policies (incl. approval flags/rules), thresholds, 21 self-check fixtures, input-defense dispositions | Startup/CI self-check fixtures and strict runtime config |
+| `persistence/` (SQLAlchemy 2.x async) | 0b/3/5 | **VERIFIED (0b/3/5)** | Engine/session, nonce store, audit append, bound session signals, row-locked approval state machine (effective-class binding) |
+| `migrations/` + `alembic.ini` | 0b/3/5 | **VERIFIED (0b/3/5)** | Schema management (ADR-006); baseline + session + approval tables; Phase 6 adds no table |
+| `config/*.yaml` | 0b/1/2/3/6 | **VERIFIED (1-3/6)** — policies (incl. approval flags/rules), thresholds, 21 self-check fixtures, input-defense dispositions, output-DLP patterns/limits/trust map | Startup/CI self-check fixtures and strict runtime config |
 | `input_defense/` | 3 | **VERIFIED (3, advisory)** — heuristics, labels, context assembly, session math; no consumers | Input signals and provenance labels |
 | `intent/` | 4 | **VERIFIED (4, in-process)** — sealed request/principal/policy-bound manifests, exact constraints, bounded uses, mock extractor; no transport/provider | Bounded intent manifest, constraints, request binding |
 | `agent/` + providers | 4/8 | NOT IMPLEMENTED | Runtime; mock/local model adapters |
 | `firewall/policy_engine.py` + `decision.py` | 1 | **VERIFIED (1)** — deterministic §10.2 evaluation, stable reason codes, no I/O (ADR-008) | Policy evaluation over validated facts |
-| `firewall/` gateway + risk + approval | 2/5 | **VERIFIED (2/5)** — single `invoke_tool` chokepoint, digest-bound authorization, audit-first, `risk-v2`, row-locked one-time approvals for `ASK_USER` (ADR-009/012); no approval route/transport | The mandatory execution chokepoint |
+| `firewall/` gateway + risk + approval + DLP enforcement | 2/5/6 | **VERIFIED (2/5/6)** — single `invoke_tool` chokepoint, digest-bound authorization, audit-first, `risk-v2`, row-locked one-time approvals for `ASK_USER`, mandatory egress/response DLP (ADR-009/012/013); no approval route/transport | The mandatory execution chokepoint |
 | `tools/` (canonical enums in `base.py`; registry + mock adapters) | 1/2 | **VERIFIED (2)** — validated registry + deterministic mock adapters; no real connectors in v1 | Mock adapters only |
-| `data_security/` (`DataClass` in 1; DLP, egress in 6) | 1/6 | **PARTIAL (1)** — canonical `DataClass`; content classification/DLP/egress Phase 6 | Output and egress inspection |
-| `audit/` (hash chain) | 7 (scaffold 0b, emission 2) | **PARTIAL (0b/2)** — formula + append protocol + vectors + gateway emission verified; taxonomy/verifier Phase 7 | Serialized append, verifier |
+| `data_security/` (`DataClass` in 1; DLP, egress in 6) | 1/6 | **VERIFIED (1/6, deterministic)** — canonical `DataClass` + strict output-DLP config/detectors/redaction/destination trust; no classifier/entropy/semantic detection | Output and egress inspection |
+| `audit/` (hash chain) | 7 (scaffold 0b, emission 2/5/6) | **PARTIAL (0b/2/5/6)** — formula + append protocol + vectors + gateway/approval emission + additive redacted `dlp` evidence verified; taxonomy/verifier Phase 7 | Serialized append, verifier |
 | `api/` `/v1/*` routes | 8 | NOT IMPLEMENTED (middleware path enforced; services on `app.state`) | Request/tool/approval endpoints |
 | `soc/` (alert-only) | 10 | NOT IMPLEMENTED | Deterministic alerts; read-only analyzer |
 | `evaluation/` | 9 | NOT IMPLEMENTED | Dataset, metrics, reproducible reports |
@@ -184,6 +202,8 @@ in 0b), and a correctly signed request currently reaches 404 with no side effect
   tool directly, and the agent never calls real adapters directly (§12.1, §22.2).
 - `policy_engine.py` and `risk_engine.py` are deterministic and make no network calls
   ([../docs/ARCHITECTURE.md](../docs/ARCHITECTURE.md), import boundaries).
+- `data_security/dlp.py` is deterministic, configuration-driven, and makes no network,
+  model, or database calls; it never logs matched content.
 - The input detector is advisory: findings and trust labels never become policy facts or
   authorization inputs (§7, ADR-010).
 - Intent manifests and approvals can only narrow or gate execution: neither can produce

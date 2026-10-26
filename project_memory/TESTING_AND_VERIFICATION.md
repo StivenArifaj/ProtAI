@@ -3,7 +3,7 @@
 Rules: never claim a result that was not produced by a command actually run. Fresh
 re-runs and historical records are kept in separate tables. Evidence IDs (V1–V29 for
 0a/0b; V30–V35 for Phase 1; V36–V42 for Phase 2; V43–V50 for Phase 3; V51–V56 for
-Phase 4; V57+ for Phase 5) are referenced from
+Phase 4; V57–V62 for Phase 5; V63+ for Phase 6) are referenced from
 [IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md) and the phase records.
 
 ## How to verify (documented commands)
@@ -11,7 +11,7 @@ Phase 4; V57+ for Phase 5) are referenced from
 | Command | What it checks | Expected |
 |---|---|---|
 | `uv sync --frozen` | lockfile/install consistency | installs with no resolution drift |
-| `uv run pytest` | unit/integration/security tests | 734 passed (DB-backed integration skips cleanly if PostgreSQL is unreachable) |
+| `uv run pytest` | unit/integration/security tests | 766 passed (DB-backed integration skips cleanly if PostgreSQL is unreachable) |
 | `bash scripts/check.sh` | full local gate (8 steps) | exit 0; prints "All checks passed." |
 | `uv run alembic upgrade head` | migrations (needs §5.4 env; host `db`→`127.0.0.1`) | applies baseline to an empty DB; second run reports already at head |
 | `docker compose config -q` | Compose file syntax | exit 0 |
@@ -22,7 +22,7 @@ Phase 4; V57+ for Phase 5) are referenced from
 | `curl http://127.0.0.1:8080/health/ready` | readiness | 200 ready incl. `policy_version`/`policy_hash` (503 not_ready without DB or with drifted self-checks) |
 | unsigned/signed requests to `/v1/*` | host auth | unsigned → 400 `missing_headers`; valid signature → 404 (no routes yet) with nonce registered; replay → 401 `replayed_nonce` |
 | `uv run python -c "…load_policy_bundle…"` | policy bundle smoke | `version`, per-file hashes, `combined_hash`; 21 fixtures, 0 failures |
-| `uv run pytest tests/security tests/unit/test_gateway.py -q` | no-bypass invariants | 62 passed (denied/unknown/audit-failed calls never reach the adapter) |
+| `uv run pytest tests/security tests/unit/test_gateway.py -q` | no-bypass invariants | 70 passed (denied/unknown/audit-failed calls never reach the adapter; DLP denials included) |
 | `docker compose down` | teardown (volume preserved) | stack removed |
 
 Failure behavior: `check.sh` exits non-zero and prints `CHECK FAILED: <reason>`.
@@ -93,6 +93,29 @@ are now deduplicated in first-occurrence order before risk/digest/audit, with a
 regression test. Ruff format reformatted seven files after the approval suites landed.
 The app-wiring test was extended to assert `app.state.approval_service` is the same
 service injected into the gateway.
+
+## Fresh evidence (2026-10-26, Phase 6 session)
+
+| ID | Command / check | Result |
+|---|---|---|
+| V63 | Alembic `current` → `upgrade head` → `downgrade -1` → `upgrade head` → `check` (test DB, §5.4 env) | PASS — at `e5a1c2b3d4f6 (head)`; upgrade is a no-op; downgrade reaches `c7f1a2b3d4e5`; re-upgrade returns to head; "No new upgrade operations detected". Phase 6 adds no schema object |
+| V64 | `uv run --frozen pytest -q`; then `uv run --frozen mypy src`, `ruff check src tests`, `ruff format --check src tests` | PASS — **766 passed** (640 unit + 85 integration + 41 security); mypy clean (64 source files); ruff format/lint clean (112 files formatted) |
+| V65 | `uv run --frozen pytest tests/unit/test_output_dlp.py tests/unit/test_gateway.py tests/integration/test_gateway_approval.py tests/integration/test_gateway_wiring.py tests/integration/test_gateway_end_to_end.py tests/security/test_gateway_no_bypass.py tests/security/test_intent_no_grant.py -q` | PASS — **93 passed** (19 DLP config/detection/redaction/fail-closed, 29 gateway incl. 8 DLP cases, 7 real-PostgreSQL approval incl. 2 class-binding, 5 wiring incl. 3 trust-coverage, 3 e2e, 24 no-bypass, 6 intent) |
+
+Development-time findings fixed and regression-tested during Phase 6 (recorded for
+honesty): the original finding-cap logic could stop scanning after `max_findings` and
+skip a still-unevaluated blocking pattern; a saturated report now fails closed
+(`e8919cb`). Credential redaction originally consumed only one whitespace-delimited token,
+leaving the tail of a multi-word passphrase in the released result; redaction is now
+line-scoped from the first value character, and the config version is `1.0.1`
+(`e586c81`). Overlapping match spans originally risked leaving the tail of a longer match
+unredacted; spans are now merged under the highest-severity category. Response release
+changes result bytes, so end-to-end digest assertions compare `result_digest` with
+`dlp.content_digest` and use `dlp.released_digest` for the released bytes. The mock email
+adapter returns synthetic addresses, so response redaction intentionally changes sender
+fields in those fixtures. The approval-class-binding test uses an email finding raised to
+`INTERNAL` under a permissive test trust map because the shipped policy blocks
+`CONFIDENTIAL`/`RESTRICTED` external egress before approval is consulted.
 
 ## Fresh evidence (2026-10-19, Phase 3 session)
 
@@ -191,7 +214,7 @@ iterations, at the ruff format and lint steps. Removing the file restored exit 0
 The Phase 0b gate additionally fails if Gitleaks is missing or version-mismatched
 (deliberate pin, 8.30.1).
 
-## Test inventory (734 tests)
+## Test inventory (766 tests)
 
 Unit (`tests/unit/`):
 
@@ -234,8 +257,18 @@ Unit (`tests/unit/`):
 - `test_risk_engine.py` (30) — every `risk-v1` weight preserved under `risk-v2`, cap at
   100, external-destination requirement, breadth boundaries (0/1/2/4/5/8/9+), stable
   factor codes/rationale, invalid counts (bool/str/float/negative/oversize), version.
-- `test_gateway.py` (21) — see the Phase 2 completion record for the full scenario list;
-  Phase 5 adds duplicate-derived-resource-id dedup before risk/digest/audit.
+- `test_gateway.py` (29) — see the Phase 2 completion record for the base scenario list;
+  Phase 5 adds duplicate-derived-resource-id dedup before risk/digest/audit; Phase 6 adds
+  canary-never-sinks, destination-trust denial, egress inspection failure before risk,
+  response redaction/digest, canary/oversize/`REVIEW` suppression, and schema-breaking
+  redaction suppression.
+- `test_output_dlp.py` (19) — repository config and exact destination coverage; strict
+  loader (duplicate/unknown/bad version/non-UTF-8/missing); pattern and canonical
+  destination validation; canary detection without matched text; destination-aware class
+  decisions; registry floor; benign lookalikes; missing/forbidden destinations;
+  span-safe/idempotent/digest-preserving redaction; block/review distinction; oversize
+  fail-closed; guarded release helpers; overlapping-span merge; finding-cap fail-closed;
+  multi-word credential redaction.
 - `test_approver_rules.py` (24) — strict `role:`/`principal:` grammar (alternatives,
   limits, control characters, duplicates, unknown prefixes), verified-principal
   evaluation, tenant/self-approval/unsatisfiable-rule behavior.
@@ -265,7 +298,8 @@ Security (`tests/security/`):
   successfully recorded decision; result withheld on outcome-audit failure; direct
   adapter invocation without a gateway authorization fails closed; Phase 5 adds
   ASK_USER-without-approval, granted-execution metadata, non-granted outcome mapping,
-  storage-failure, absent-service, and BLOCK-ignores-approval no-execution cases.
+  storage-failure, absent-service, and BLOCK-ignores-approval no-execution cases;
+  Phase 6 supplies the mandatory output defense and keeps every denial sink-identical.
 - `test_input_defense_failure.py` (11) — oversize/unsupported/invalid-encoding stop before
   heuristics; detector/normalizer/classifier faults yield `DETECTOR_UNAVAILABLE`
   (never PASS, no raw content in reports); trust label preserved; no invocation surface.
@@ -279,9 +313,10 @@ Integration (`tests/integration/`):
   digest-only token storage, one-time/replay, action mutation, pending/approved expiry,
   denial, tenant/eligibility/self-approval, exactly-one-winner concurrency, and
   same-transaction audit linkage.
-- `test_gateway_approval.py` (5) — real-PostgreSQL gateway ASK_USER gating; approved
+- `test_gateway_approval.py` (7) — real-PostgreSQL gateway ASK_USER gating; approved
   execution with metadata; pending/denied/mismatch/expiry no-execution; BLOCK ignores and
-  does not consume an approval.
+  does not consume an approval; Phase 6 stale-class rejection and DLP-before-approval
+  no-consumption.
 - `test_health.py` (10) — liveness; readiness 200/503 incl. policy readiness override;
   `policy_version`/`policy_hash` assertions; docs gating all environments; non-leakage.
 - `test_host_auth_middleware.py` (13) — end-to-end denial matrix through the app:
@@ -305,10 +340,12 @@ Integration (`tests/integration/`):
 - `test_gateway_end_to_end.py` (3) — real-PostgreSQL chain: durable decision→outcome
   order and hash linkage, result digest = sha256 canonical result, no raw content in
   stored payloads, denied egress leaves the sink empty, audit outage → `BLOCK`/
-  `audit_unavailable`.
-- `test_gateway_wiring.py` (2) — `create_app` exposes a validated registry + gateway
+  `audit_unavailable`; Phase 6 asserts the redacted `dlp` record and released-digest
+  linkage.
+- `test_gateway_wiring.py` (5) — `create_app` exposes a validated registry + gateway
   (`ChainAuditRecorder`) and the approval service actually injected into the gateway;
-  startup refuses a policy tool with no registration.
+  startup refuses a policy tool with no registration; Phase 6 refuses a missing sink
+  trust entry, a dead trust entry, and a missing DLP file.
 - `test_intent_wiring.py` (4) — app exposes intent service/tracker and the gateway uses
   that tracker; TTL applied; end-to-end allow + use exhaustion; clarification and
   wrong-request manifest denial (real PostgreSQL).

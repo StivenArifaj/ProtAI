@@ -1,9 +1,9 @@
 # Implementation Status
 
-**Last inspected: 2026-10-26** (Phase 5 completion; Phases 0a–4 completed earlier).
+**Last inspected: 2026-10-26** (Phase 6 completion; Phases 0a–5 completed earlier).
 This file is the operational source of truth for what exists. Evidence IDs (V1–V29 for
 0a/0b, V30–V35 for Phase 1, V36–V42 for Phase 2, V43–V50 for Phase 3, V51–V56 for
-Phase 4, V57+ for Phase 5) are defined in
+Phase 4, V57–V62 for Phase 5, V63+ for Phase 6) are defined in
 [TESTING_AND_VERIFICATION.md](TESTING_AND_VERIFICATION.md). Keep this file and
 [../docs/IMPLEMENTATION_STATE.md](../docs/IMPLEMENTATION_STATE.md) consistent whenever
 phase state changes.
@@ -19,7 +19,8 @@ phase state changes.
 | Phase 3 — Input threat defense and provenance | **COMPLETE — VERIFIED** | [phases/PHASE_3_COMPLETE.md](phases/PHASE_3_COMPLETE.md); V43–V50 |
 | Phase 4 — Intent extraction and action validation | **COMPLETE — VERIFIED** | [phases/PHASE_4_COMPLETE.md](phases/PHASE_4_COMPLETE.md); V51–V56 |
 | Phase 5 — Risk engine and approval workflow | **COMPLETE — VERIFIED** | [phases/PHASE_5_COMPLETE.md](phases/PHASE_5_COMPLETE.md); V57–V62 |
-| Phases 6–10 | **NOT IMPLEMENTED** | [PHASE_ROADMAP.md](PHASE_ROADMAP.md) |
+| Phase 6 — Output DLP and egress policy | **COMPLETE — VERIFIED** | [phases/PHASE_6_COMPLETE.md](phases/PHASE_6_COMPLETE.md); V63–V66 |
+| Phases 7–10 | **NOT IMPLEMENTED** | [PHASE_ROADMAP.md](PHASE_ROADMAP.md) |
 
 Repository state: **git repository** since 2026-10-19, branch `main`, linear history:
 baseline `41e10da` (Phase 0a) + Phase 0b commits `0aa11d9`…`d180b89` + docs/memory
@@ -34,14 +35,17 @@ and the status/post-commit gate record commit `30c0f41`; Phase 4 commits `294359
 (implementation/tests), `74c502f` (ADR-011/docs), `786cb08` (memory/completion), and
 the V56 status record commit `c018955`; Phase 5 commits `ad9e76a`
 (implementation/tests/migration), `0b2f1c9` (ADR-012/docs), `8cce014`
-(memory/completion), and the final V62 status record commit. No remote configured.
+(memory/completion), and the final V62 status record commit `b70bbfb`; Phase 6 commits
+`df70cd9` (implementation/tests/config), `e8919cb` (finding-cap fail-closed),
+`e586c81` (complete credential-value redaction), with docs/memory commits and the final
+V66 status record commit after them. No remote configured.
 
 ## What exists (all VERIFIED)
 
 | Area | Files | Notes |
 |---|---|---|
 | Project metadata | `../pyproject.toml`, `../uv.lock`, `../.python-version`, `../.gitignore`, `../.env.example`, `../Makefile`, `../.gitleaks.toml` | Python `>=3.12,<3.13`; SQLAlchemy 2.x async + Alembic + PyYAML |
-| Application runtime | `../src/ai_security/{__init__,settings}.py`, `api/{app,dependencies,routes_health,middleware}.py` | App factory + module-level `app`; validated settings incl. policy/threshold/input-defense paths, session TTLs, `INTENT_MANIFEST_TTL_SECONDS`, and `APPROVAL_TTL_SECONDS`; health endpoints (config/database/policy_self_checks + `policy_version`/`policy_hash`); host-auth middleware on `/v1/*`; registry + gateway on `app.state` (Phase 2); `input_defense_config`/`input_defense_service`/`session_security` (Phase 3); `intent_usage_tracker`/`intent_manifest_service` (Phase 4); **Phase 5:** `approval_service` on `app.state`, gateway constructed with the approval service |
+| Application runtime | `../src/ai_security/{__init__,settings}.py`, `api/{app,dependencies,routes_health,middleware}.py` | App factory + module-level `app`; validated settings incl. policy/threshold/input-defense paths, session TTLs, `INTENT_MANIFEST_TTL_SECONDS`, `APPROVAL_TTL_SECONDS`, and `OUTPUT_DLP_PATH`; health endpoints (config/database/policy_self_checks + `policy_version`/`policy_hash`); host-auth middleware on `/v1/*`; registry + gateway on `app.state` (Phase 2); `input_defense_config`/`input_defense_service`/`session_security` (Phase 3); `intent_usage_tracker`/`intent_manifest_service` (Phase 4); `approval_service` (Phase 5); **Phase 6:** `output_dlp_config`/`output_defense` on `app.state`, mandatory output defense injected into the gateway |
 | Security primitives | `../src/ai_security/security/{constant_time,canonical_json,urls}.py`, `audit/hash_chain.py` | `compare_digest` wrappers (gate-confined); canonical JSON; ADR-002 hash formula + vectors; destination canonicalization |
 | Identity | `../src/ai_security/identity/{models,signing,host_auth,resolver,adapters,approver_rules}.py` | `Principal`; HMAC signing/verification (exact `v1` message + rejection surface); dev-resolver guard; fail-closed host resolver; test-only `TestPrincipalResolver`; **Phase 5:** strict `role:`/`principal:` approver-rule parser/evaluator |
 | Persistence | `../src/ai_security/persistence/{database,models,nonce_repository,audit_repository,session_repository,approval_repository}.py` | Async engine/session; atomic nonce upsert; ADR-002 advisory-lock audit append plus `append_in_session` (written to by the gateway via `ChainAuditRecorder`); **Phase 3:** `session_security_state` repository (binding on every op, bounded `LEAST(...)` counters, 24 h/7 d lazy expiry, signal-free rotation); **Phase 5:** row-locked approval decisions/consumption with same-transaction audit |
@@ -50,20 +54,21 @@ the V56 status record commit `c018955`; Phase 5 commits `ad9e76a`
 | Tool registry + mock adapters | `../src/ai_security/tools/registry.py`, `tools/mock_{email,files,external_sink,text}.py` | Immutable validated registrations; exact `(tool_id, action_id)` resolution; one-directional policy consistency; deterministic in-memory adapters with ownership checks + digest verification; `mock_files.search` registered but policy-disabled |
 | Input defense + provenance (advisory) | `../src/ai_security/input_defense/{models,config,normalize,heuristics,service,context_labels,sessions}.py`, `security/safe_yaml.py`, `../config/input_defense.yaml` | Strict exhaustive-disposition config (no PASS mapping, duplicate keys refused); bounded intake; copy-only normalization; 10 versioned heuristics with quoted-context downgrade; typed `IntakeReport` (codes/offsets/digests, no raw content); six trust labels + deterministic JSON context; typed `DETECTOR_UNAVAILABLE`; no path into policy/engine/gateway |
 | Intent extraction + manifests | `../src/ai_security/intent/{models,extractors,service,validator,time_window}.py` | Server-only issuer; mock 2-scenario extractor; strict local-model adapter interface (bounded JSON, duplicate-key/unknown-field rejection, 2 retries default, outage/timeout mapping); sentinel-sealed request/principal/tenant/policy-bound manifest with expiry + goal digest; exact action/resource/destination/parameter constraints and bounded uses; trusted-timezone TODAY/THIS_WEEK (DST-tested). No API transport/real provider yet |
-| Gateway + risk engine | `../src/ai_security/firewall/{gateway,models,risk_engine,approval}.py` | Single `invoke_tool` chokepoint (bindings, strict validation, derived/deduplicated resources, destination, resource checks, deadline, real engine, audit-first, timeouts/concurrency/result bounds, typed outcomes); **Phase 4:** manifest verification + exact constraint comparison + use reservation after policy `ALLOW`; **Phase 5:** `risk-v2` (all v1 weights + bounded breadth) and one-time approval consumption for engine `ASK_USER`, never overriding `BLOCK` |
-| Approval workflow | `../src/ai_security/firewall/approval.py`, `identity/approver_rules.py`, `persistence/approval_repository.py` | Strict request/decision/consumption API; 256-bit token returned once and stored only as SHA-256; verified-principal rule evaluation with tenant/self-approval checks; TTL 60–86,400 s (default 900); lazy expiry; row-locked state machine + same-transaction audit; no routes/UI/token transport/revocation/sweeper |
-| Audit emission | `../src/ai_security/audit/{models,writer}.py` | Phase-2 subset (`POLICY_EVALUATED`, `TOOL_EXECUTION_COMPLETED`, `TOOL_EXECUTION_FAILED`) plus Phase 5 `APPROVAL_REQUESTED`/`APPROVAL_DECIDED`/`APPROVAL_CONSUMED`/`APPROVAL_EXPIRED`, schema v1, payload-safe references; `AuditRecorder` protocol + `ChainAuditRecorder` |
+| Gateway + risk engine | `../src/ai_security/firewall/{gateway,models,risk_engine,approval}.py` | Single `invoke_tool` chokepoint (bindings, strict validation, derived/deduplicated resources, destination, resource checks, deadline, real engine, audit-first, timeouts/concurrency/result bounds, typed outcomes); **Phase 4:** manifest verification + exact constraint comparison + use reservation after policy `ALLOW`; **Phase 5:** `risk-v2` (all v1 weights + bounded breadth) and one-time approval consumption for engine `ASK_USER`, never overriding `BLOCK`; **Phase 6:** mandatory egress DLP after argument/intent validation and before resource/risk/policy/approval/execution, effective-class floor, and complete-response release/redaction/suppression (`response_blocked`) |
+| Output DLP + egress | `../src/ai_security/data_security/dlp.py`, `../config/output_dlp.yaml` | Strict versioned config (`1.0.1`): five deterministic detectors, bounded patterns/limits, exact-canonical destination trust with startup coverage; findings hold code/category/count/bounded field paths only; `PASS`/`REDACT`/`BLOCK`/`REVIEW`; span-preserving idempotent redaction; oversize/error fail-closed; no classifier/entropy/semantic detection |
+| Approval workflow | `../src/ai_security/firewall/approval.py`, `identity/approver_rules.py`, `persistence/approval_repository.py` | Strict request/decision/consumption API; 256-bit token returned once and stored only as SHA-256; verified-principal rule evaluation with tenant/self-approval checks; TTL 60–86,400 s (default 900); lazy expiry; row-locked state machine + same-transaction audit; Phase 6 binds consumption to the effective side-effect/data class; no routes/UI/token transport/revocation/sweeper |
+| Audit emission | `../src/ai_security/audit/{models,writer}.py` | Phase-2 subset (`POLICY_EVALUATED`, `TOOL_EXECUTION_COMPLETED`, `TOOL_EXECUTION_FAILED`) plus Phase 5 `APPROVAL_REQUESTED`/`APPROVAL_DECIDED`/`APPROVAL_CONSUMED`/`APPROVAL_EXPIRED`, schema v1, payload-safe references; Phase 6 adds an optional additive redacted `dlp` record (no new event types/migration); `AuditRecorder` protocol + `ChainAuditRecorder` |
 | Policy engine | `../src/ai_security/firewall/policy_engine.py`, `policy/{models,loader,self_checks}.py`, `../config/{policies,risk_thresholds,policy_self_checks}.yaml` | Deterministic §10.2 engine over validated facts; safe YAML loader (duplicate-key rejection); versioned bundle (sha256 + combined hash); **21 fixtures** (7 mandated names + Phase 2 rows) at startup + readiness |
-| Tests | `../tests/conftest.py`, `unit/` (27 test files + helper), `integration/` (13 test files + helpers), `security/` (3 files) | **734 tests** (613 unit + 80 integration + 41 security), all passing (V57/V58); DB-backed integration skips cleanly when PostgreSQL is unreachable |
+| Tests | `../tests/conftest.py`, `unit/` (28 test files + helper), `integration/` (13 test files + helpers), `security/` (3 files) | **766 tests** (640 unit + 85 integration + 41 security), all passing (V64/V65); DB-backed integration skips cleanly when PostgreSQL is unreachable |
 | Quality gate | `../scripts/check.sh` | 8 steps incl. pinned Gitleaks 8.30.1 (dir+git) and constant-time confinement |
 | Containers | `../Dockerfile`, `../docker-compose.yml` | Digest pins; non-root uid 10001; COPY `config/ migrations/ alembic.ini`; Compose dev `HOST_AUTH_KEYS_JSON` |
 | Git | commits above | `gitleaks git` clean across history (V29/V37/V58/V61) |
-| Spec-adjacent docs | [../docs/](../docs/) (9 files + `adr/ADR-001..012`) | Status columns honest; matrix doc reflects gateway-enforced facts; ADR-009 records the Phase 2 contract, ADR-010 the Phase 3 advisory-detection/session contract, ADR-011 the Phase 4 manifest/constraint contract, ADR-012 the Phase 5 `risk-v2`/approval contract |
-| Memory (this directory) | `project_memory/*` | Updated 2026-10-26 for Phase 5 completion |
+| Spec-adjacent docs | [../docs/](../docs/) (10 files + `adr/ADR-001..013`) | Status columns honest; matrix doc reflects gateway-enforced facts; ADR-009 records the Phase 2 contract, ADR-010 the Phase 3 advisory-detection/session contract, ADR-011 the Phase 4 manifest/constraint contract, ADR-012 the Phase 5 `risk-v2`/approval contract, ADR-013 the Phase 6 output-DLP/egress contract; `OUTPUT_DLP_FALSE_POSITIVES.md` records tested false positives/negatives |
+| Memory (this directory) | `project_memory/*` | Updated 2026-10-26 for Phase 6 completion |
 
 ## Security controls — what is actually enforced today
 
-Implemented and tested (Phases 0a/0b/1/2/3/4/5):
+Implemented and tested (Phases 0a/0b/1/2/3/4/5/6):
 
 - **Host authentication (0b):** every request whose path starts with `/v1/` — routes
   exist or not — must carry a valid HMAC-SHA256 signature
@@ -134,33 +139,54 @@ Implemented and tested (Phases 0a/0b/1/2/3/4/5):
   mutation, denial, pending, and expiry never execute; concurrent consumption has exactly
   one winner. The gateway consults approval only for engine `ASK_USER`; a valid grant
   makes that exact action executable once, while `BLOCK`/hard denials ignore it.
+- **Output DLP and egress policy (6, ADR-013):** every gateway requires an
+  `OutputDefenseService` built from the strict versioned `config/output_dlp.yaml`; there
+  is no no-op default. Egress inspects validated arguments after intent/argument checks
+  and before resource/risk/policy/approval/execution; five deterministic detectors
+  (canary, private-key header, `sk-` API key, credential assignment, email) can only
+  raise the registry data class. Canary/private-key/API-key/blocking-credential content
+  is denied with `dlp_egress_blocked` and an unchanged sink; inspection failure is
+  `dlp_inspection_failed`. An exact-canonical destination trust map must cover every
+  registered `EXTERNAL_MUTATION` destination at startup (missing/dead entries refuse
+  startup); the mock sink is `PUBLIC`-only. Complete buffered results are released,
+  redacted, or suppressed as a whole (`PASS`/`REDACT`/`BLOCK`/`REVIEW`); `BLOCK`/`REVIEW`/
+  failure return `response_blocked` with no result. Findings/audit evidence contain
+  stable codes/categories/counts/bounded field paths, config version/hash, digests, and
+  sizes — never matched text, raw arguments, or result bodies. Approval consumption is
+  bound to the effective side-effect/data class. False positives/negatives are documented
+  in `../docs/OUTPUT_DLP_FALSE_POSITIVES.md`.
 
 NOT implemented (do not claim otherwise): `/v1/*` business routes and agent runtime (the
-gateway, detector, intent service, and approval service are in-process/in tests only),
-manifest transport or signed serialization, approval routes/UI/token-delivery transport,
-automatic approval-request creation, approver directory/notifications/revocation, a
-background expiry sweeper, real model provider/general NLU integration (the app uses the
-two-scenario mock extractor), cross-process intent-use limits, content-level DLP/canary
-inspection, output sanitization, real connectors, process isolation/sandbox, request rate
-limiting, audit verifier/retention, SOC, and any consumer of detector findings/trust
-labels. See [../docs/SECURITY_INVARIANTS.md](../docs/SECURITY_INVARIANTS.md) (#6/#7/#8/
-#20/#24 are now implemented with #5 extended; #2/#10/#11/#14/#15/#16/#19 remain partial;
-the file is authoritative for every row).
+gateway, detector, intent service, approval service, and output defense are
+in-process/in tests only), manifest transport or signed serialization, approval
+routes/UI/token-delivery transport, automatic approval-request creation, approver
+directory/notifications/revocation, a background expiry sweeper, real model
+provider/general NLU integration (the app uses the two-scenario mock extractor),
+cross-process intent-use limits, classifier/entropy/semantic/multilingual DLP,
+per-resource classification metadata, model-prompt or adapter-internal content
+inspection, response-review transport, real connectors, process isolation/sandbox,
+request rate limiting, the full audit taxonomy/verifier/retention, SOC, and any consumer
+of detector findings/trust labels. See
+[../docs/SECURITY_INVARIANTS.md](../docs/SECURITY_INVARIANTS.md) (#6/#7/#8/#9/#21 are now
+implemented with #5 extended; #2/#10/#11/#14/#15/#16/#19 remain partial; the file is
+authoritative for every row).
 
 ## Current-session verification (2026-10-26, fresh runs)
 
 All PASS — full commands and results in [TESTING_AND_VERIFICATION.md](TESTING_AND_VERIFICATION.md):
 
-- `uv run --frozen pytest -q` → **734 passed** (613 unit + 80 integration + 41
-  security), including real-PostgreSQL approval lifecycle/concurrency tests.
-- `uv run --frozen mypy` → clean, 63 source files; `ruff check`/`format` clean.
-- `bash scripts/check.sh` → exit 0, all 8 steps; Gitleaks 8.30.1 dir+git "no leaks
-  found" (27 commits scanned pre-commit; V58).
-- Phase 5 targeted suites → **157 passed** (11 approval lifecycle, 5 gateway approval,
-  2 wiring, 1 migration, 30 risk, 24 approver rules, 60 settings, 24 no-bypass; V59).
-- Alembic `upgrade head` → `downgrade -1` → `upgrade head` → `check` → clean, single
-  head `e5a1c2b3d4f6` (V60).
-- Dedup regression → 1 passed (V61). Phase 4/3/0b evidence retained.
+- `uv run --frozen pytest -q` → **766 passed** (640 unit + 85 integration + 41
+  security), including real-PostgreSQL approval/class-binding tests (V64).
+- `uv run --frozen mypy` → clean, 64 source files; `ruff check`/`format` clean (112
+  files formatted; V64).
+- Phase 6 targeted suites → **93 passed** (19 DLP, 29 gateway incl. 8 DLP cases, 7
+  real-PostgreSQL approval incl. 2 class-binding, 5 wiring incl. 3 trust-coverage, 3
+  e2e, 24 no-bypass, 6 intent; V65).
+- Alembic `current` → `upgrade head` → `downgrade -1` → `upgrade head` → `check` → at
+  `e5a1c2b3d4f6 (head)`, down to `c7f1a2b3d4e5`, back to head; "No new upgrade
+  operations detected" (V63).
+- Full `bash scripts/check.sh` post-commit run is V66 (recorded in the final Phase 6
+  status commit). Phase 5 evidence (V57–V62) retained.
 
 ## Environment (verified this session)
 
@@ -170,11 +196,14 @@ Gitleaks 8.30.1 installed; no markdown linter installed. The project virtualenv 
 recreated at `/Users/stiven/Desktop/ProtAI/.venv` after the repository moved. Current
 stack state: `db` running (preserved for tests), `api` stopped.
 
-## Deferred to Phase 6 (planned, not implemented)
+## Deferred to Phase 7 (planned, not implemented)
 
-Output DLP and egress policy (blueprint §21): test canaries, configurable sensitive
-patterns, a data-classification model, destination-aware egress checks, and release
-outcomes. Required: canary data never reaches an unauthorized mock sink, DLP logs remain
-redacted, and false-positive cases are documented. Intent stays authority-free, the
-detector stays advisory, and the approval boundary (ADR-012) must remain intact. Read
-blueprint §§6, 12-13 before starting.
+Audit persistence and verification (blueprint §16, §21): full structured event taxonomy
+with stable names/schema versions, correlation IDs, component/policy versions, reason
+codes, durations, and safe references; first-class DLP events promoted from the additive
+`dlp` field; an exact-stored-bytes chain verifier with mutation/reordering detection and
+fixed canonical-byte vectors; retention/data-handling documentation; and privacy tests
+proving raw secrets/full payloads are absent from default logs. The append protocol,
+concurrency test, and additive DLP evidence already exist (ADR-002/ADR-013); preserve the
+ADR-008 through ADR-013 boundaries and keep all suites/gate green. Read blueprint §16
+before starting.

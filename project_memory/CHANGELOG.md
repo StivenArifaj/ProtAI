@@ -4,6 +4,35 @@ Concise, dated history of project activity. Newest first.
 
 ## 2026-10-26
 
+- **Phase 6 (output DLP and egress policy) implemented and verified:** new
+  `data_security/dlp.py` + strict `config/output_dlp.yaml` (`1.0.1`) provide five
+  deterministic detectors (synthetic canary, private-key header, `sk-` API key,
+  credential assignment, email), bounded scan/finding limits, span-preserving idempotent
+  redaction, and an exact-canonical destination trust map that must cover every
+  registered `EXTERNAL_MUTATION` destination at startup. `ToolGateway` now requires an
+  `OutputDefenseService`: egress inspection runs on validated arguments after
+  intent/argument checks and before resource/risk/policy/approval/execution; findings can
+  only raise the registry data class (effective-class floor); `BLOCK`-scope findings deny
+  regardless of destination and `CLASSIFY` findings compare with the destination's
+  maximum class. Response release inspects the complete buffered result and returns
+  `PASS`/`REDACT`/`BLOCK`/`REVIEW`; `BLOCK`/`REVIEW`/inspection failure suppress the whole
+  result as `response_blocked`, while `REDACT` preserves the original digest and records
+  `dlp.released_digest`. Audit gains an optional additive redacted `dlp` record on
+  existing schema-v1 events (no new table/migration); approval consumption is additionally
+  bound to the effective side-effect/data class. Two verification fixes: `e8919cb`
+  (saturated finding report no longer skips an unevaluated blocking pattern; fails closed)
+  and `e586c81` (credential redaction covers a complete multi-word value; config `1.0.1`).
+  Contract recorded in ADR-013; false positives/negatives in
+  [../docs/OUTPUT_DLP_FALSE_POSITIVES.md](../docs/OUTPUT_DLP_FALSE_POSITIVES.md). Evidence
+  V63–V66 in [TESTING_AND_VERIFICATION.md](TESTING_AND_VERIFICATION.md) — **766 tests**
+  (640 unit + 85 integration + 41 security), 8/8 gate, mypy 64 files, Alembic unchanged.
+  Commits `df70cd9` (implementation/tests/config), `e8919cb`, `e586c81`, plus docs/memory
+  commits. Phase record: [phases/PHASE_6_COMPLETE.md](phases/PHASE_6_COMPLETE.md).
+- **Phase 6 non-goals held:** no real connectors or per-resource classification; no
+  classifier/entropy/semantic/multilingual detection; no review queue/transport
+  (`REVIEW` blocks the whole response); no local-write destination trust; no model-prompt
+  or adapter-internal inspection; no first-class DLP audit events/verifier or live `/v1`
+  DLP route (Phase 7/8).
 - **Phase 5 (risk engine and human approvals) implemented and verified:** `risk-v2`
   preserves every `risk-v1` weight and adds one bounded distinct-resource breadth factor
   (2–4/5–8/9+ → +5/+10/+15, cap 100) with strict `resource_count` validation and stable
