@@ -1,12 +1,13 @@
 # Threat Model
 
-Status: **partially implemented through Phase 5.** This document transcribes the v1
+Status: **partially implemented through Phase 6.** This document transcribes the v1
 threat model from blueprint v1.2 section 2 with an implementation-status column. Phases
-0a-5 delivered host authentication/replay defense, the deterministic policy engine, the
+0a-6 delivered host authentication/replay defense, the deterministic policy engine, the
 mock-tool gateway, advisory input-threat detection with trust labels and session signals,
-server-issued intent manifests with concrete action constraints, `risk-v2`, and durable
-one-time human approvals. DLP, the full audit taxonomy/verifier, and real connectors remain
-future work. The detector and trust labels are not yet consumed
+server-issued intent manifests with concrete action constraints, `risk-v2`, durable
+one-time human approvals, and deterministic output DLP with destination-aware egress and
+complete-response release/suppression. The full audit taxonomy/verifier and real
+connectors remain future work. The input detector and trust labels are not yet consumed
 by a request path, and intent extraction is in-process with a mock extractor, so rows 1-3
 remain Partial. The repository must not be presented as providing controls not marked
 here. Update the status column as each phase lands; every row eventually needs the
@@ -14,15 +15,15 @@ here. Update the status column as each phase lands; every row eventually needs t
 
 ## Threats
 
-| # | Threat | Example | Primary defenses (target v1) | Required test evidence | Status (Phase 5) |
+| # | Threat | Example | Primary defenses (target v1) | Required test evidence | Status (Phase 6) |
 |---|---|---|---|---|---|
 | 1 | Direct prompt injection | User asks the model to ignore policy or reveal hidden instructions | Input signals, bounded system context, action policy, output checks | Direct-injection fixtures plus tool-denial tests | Partial (3): versioned heuristics raise typed findings with quoted-context downgrade (unit-tested), but no request path consumes them yet and no model exists to influence; end-to-end denial proof arrives with Phase 8 |
 | 2 | Indirect prompt injection | A web page/email/document instructs exfiltration | Provenance labels, context isolation, detector signals, firewall enforcement | Malicious retrieved-content tests end-to-end | Partial (3): external email content is labelled `EXTERNAL_UNTRUSTED` even for authenticated requesters, and external-only heuristics flag assistant-directed instructions; actions remain gateway-enforced. End-to-end retrieved-content tests with a model/agent arrive in later phases |
 | 3 | Multi-turn manipulation | Benign-looking messages set up a later unsafe action | Session-linked events, context review, per-action authorization | Multi-turn scenario tests | Partial (3): bound, bounded-counter session state with TTL/max-age and signal-free rotation exists behind a tenant/subject-checked repository (real-PostgreSQL tests); escalation logic and per-action session linkage remain Phase 8/9 (not an authorization or scoring input yet); intent manifests and approvals are per request |
 | 4 | Tool/action mismatch | "Summarize" request becomes "forward the source" | Intent/action validator, forbidden-action rules, destination checks | Exact arguments and side-effect tests | Partial (4): exact `(tool_id, action_id)` resolution, strict arguments/resources/destination, real policy engine, plus server-issued manifests compared against the derived action with exact resource/destination/parameter/use limits (within the app's in-process execution path); a real route/model remains Phase 8 |
 | 5 | Privilege escalation | Model requests a file outside the user's scope | Verified principal, resource-scoped policy, connector ACL | Cross-user/cross-scope denial tests | Partial (2): verified principal binding + mock ownership checks; real connector ACLs with Phase 10 |
-| 6 | Data exfiltration | Sensitive content goes to a public URL/recipient | Data classification, sink/destination policy, DLP before egress | Canary must not reach mock sink | Partial (2): mock egress sink unchanged on every denial (tested); content-level DLP Phase 6 |
-| 7 | Path/URL confusion | `../`, symlinks, encoded traversal, deceptive hostnames | Canonicalization, allowlisted resource IDs, safe URL parser | Normalization and traversal tests | Partial (1-2): canonical destination parser + resource-ID scope; real filesystem handling Phase 6 |
+| 6 | Data exfiltration | Sensitive content goes to a public URL/recipient | Data classification, sink/destination policy, DLP before egress | Canary must not reach mock sink | **Implemented (Phase 6, in-process/mock scope):** mandatory output-DLP on validated arguments before risk/policy/execution; canary/private-key/API-key/blocking-credential findings deny with `dlp_egress_blocked` and an unchanged sink; an exact canonical destination trust map (startup coverage required) bounds classified content; response canaries/oversize/`REVIEW` suppress the whole buffered result. **Narrower than the target:** deterministic pattern matching only (no classifier/entropy/semantic detection), and no real connectors exist. False positives/negatives documented. |
+| 7 | Path/URL confusion | `../`, symlinks, encoded traversal, deceptive hostnames | Canonicalization, allowlisted resource IDs, safe URL parser | Normalization and traversal tests | Partial (1-2): canonical destination parser + resource-ID scope; Phase 6 adds exact-canonical destination trust (no wildcards). Real filesystem handling remains out of scope (no real connectors; sandbox Phase 10) |
 | 8 | Replay/approval abuse | Old approval reused after argument change | One-time token, action digest, expiry, principal/policy binding | Replay, mutation, expiry tests | **Implemented (Phase 5, in-process host):** 256-bit token returned once/stored only as SHA-256; approval binds request/principal/tenant/tool/action/canonical action digest/resources/destination/policy version+hash; decisions and `SELECT ... FOR UPDATE` consumption commit with audit events in one transaction; five-way concurrency yields one winner; pending/denied/expired/mutated/replayed approvals never execute, and a valid approval never overrides `BLOCK` (unit, security, real-PostgreSQL integration). Route/token transport and revocation remain Phase 8 |
 | 9 | Detector/provider outage | Classifier or LLM times out | Explicit failure mode; authorization never depends on detector availability | Timeout/exception tests; no bypass | Partial (3-4): intake/normalizer/heuristic/classifier faults yield explicit `DETECTOR_UNAVAILABLE` non-PASS findings; extractor timeout/outage/malformed output yields no manifest and the wired gateway denies execution (unit + security + integration tests); no real provider is wired yet, and Phase 2 already fails closed on engine/audit outages |
 | 10 | Audit manipulation | Event modified or deleted | Append-only writer, hash chain, protected checkpoint/export | Tamper-detection test and documented limits | Not implemented (Phase 7) |
@@ -61,5 +62,11 @@ body inside an authenticated user request remains external content).
 4. Gateway -> database boundary: policy/approval/audit persistence with serialized
    audit appends and same-transaction approval decision/consumption events (Phase 5);
    the full chain verifier is Phase 7.
-5. Gateway -> external destinations: egress disabled by default; destination allowlists
-   (Phase 6).
+5. Gateway -> external destinations: egress is disabled by default in the starter policy
+   and enforced by exact-match destination allowlisting plus a Phase 6 exact-canonical
+   destination trust map. DLP inspects validated tool-bound arguments before execution;
+   a classification can only raise the registry data class. No real destination exists.
+6. Gateway -> caller / host application: the complete buffered tool result is inspected
+   before release. `PASS` releases, `REDACT` releases an explicit span-preserving
+   transformation linked by digest, and `BLOCK`/`REVIEW`/inspection failure suppress the
+   whole response. No token streaming exists in v1 (ADR-003).

@@ -1,6 +1,6 @@
 # Known Limitations
 
-As of **Phase 5 (risk v2 and human approvals, 2026-10-26)**. This list must
+As of **Phase 6 (output DLP and egress policy, 2026-10-26)**. This list must
 be updated every phase; anything not explicitly implemented must remain listed here or in
 `docs/IMPLEMENTATION_STATE.md`.
 
@@ -19,9 +19,9 @@ be updated every phase; anything not explicitly implemented must remain listed h
    quarantine, or re-rank anything. Detection accuracy is modest (regex heuristics over
    normalized text): homoglyphs are detected as indicators but not converted before
    matching, coverage is English-pattern based, quoted/educational content can still
-   raise FLAG findings, and novel/paraphrased or non-text attacks can be missed. Content-
-   level DLP/canary inspection and output sanitization remain Phase 6/8; content
-   classification is a registration-declared fact, not inspection.
+   raise FLAG findings, and novel/paraphrased or non-text attacks can be missed. Phase 6
+   output DLP is a separate deterministic control at the gateway; it is not an input
+   classifier, and input content still has no classification consumer.
 3. **Approvals are storage-and-gateway only.** Phase 5 adds a durable
    `approval_requests` table, `ApprovalService`, verified-principal rule evaluation, and
    one-time gateway consumption, but there is **no `/v1/approvals` route, approval UI,
@@ -41,9 +41,11 @@ be updated every phase; anything not explicitly implemented must remain listed h
 5. **Audit coverage is a subset.** The gateway emits `POLICY_EVALUATED` and
    `TOOL_EXECUTION_COMPLETED`/`_FAILED` into the ADR-002 chain; Phase 5 adds
    `APPROVAL_REQUESTED`/`APPROVAL_DECIDED`/`APPROVAL_CONSUMED`/`APPROVAL_EXPIRED`.
-   The full taxonomy, verifier, retention, and query/API surfaces are Phase 7. A denial
-   whose audit append fails is kept as a denial (no side effect exists) and the append
-   is logged; decision audit failure on a would-be `ALLOW` blocks execution.
+   Phase 6 attaches an optional additive `dlp` record (redacted findings, classes,
+   digests, destination trust) to those existing events rather than adding DLP event
+   types. The full taxonomy, verifier, retention, and query/API surfaces are Phase 7. A
+   denial whose audit append fails is kept as a denial (no side effect exists) and the
+   append is logged; decision audit failure on a would-be `ALLOW` blocks execution.
 6. **No AI SOC.** No analytics component exists.
 7. **No rate limiting or request deadlines.** `/v1/*` routes do not exist; the gateway
    enforces per-call deadlines and per-tool concurrency, but Phase 8 adds request-level
@@ -58,12 +60,15 @@ be updated every phase; anything not explicitly implemented must remain listed h
    in-process/in tests only until Phase 8.
 10. **Risk scoring is a small, uncalibrated factor set.** `risk-v2` preserves the
     `risk-v1` side-effect/destination/registration-data-class weights and adds only a
-    bounded 2-4/5-8/9+ resource-breadth factor (5/10/15). There are still no anomaly,
+    bounded 2-4/5-8/9+ resource-breadth factor (5/10/15). Since Phase 6 the data class
+    used for risk/policy is the *effective* class: the registration's declared class
+    raised by deterministic DLP findings (never lowered). There are still no anomaly,
     identity, session, or historical factors, and weights remain experimental; Phase 9
     calibrates them. Thresholds (40/80) are unchanged. No score or approval can override
     a hard denial. An adapter/registration change that does not change the policy or
     threshold files does not change the combined policy hash; rotate policy
-    version/hash when registration facts change.
+    version/hash when registration facts change. DLP configuration changes rotate the
+    DLP config hash, not the policy hash.
 11. **Concurrency bounds are per process/per event loop.** `asyncio.Semaphore` limits are
     not shared across workers (no Redis/DB limiter); the in-memory sink is not shared
     between processes either. Multi-worker deployment is a later operational concern.
@@ -71,7 +76,9 @@ be updated every phase; anything not explicitly implemented must remain listed h
     detects file drift (503) but does not reload. Atomic reload (blueprint section 10.6)
     is future work.
 13. **Destination allowlisting is exact-match only.** No wildcard or pattern matching in
-    v1; non-ASCII paths/queries and IPv6 zone IDs are rejected outright.
+    v1; non-ASCII paths/queries and IPv6 zone IDs are rejected outright. Phase 6's
+    destination trust map is also exact-canonical and must cover every registered
+    external-mutation destination exactly (missing or dead entries refuse startup).
 14. **Capability inventory exceeds the enabled policy.** `mock_files.search` is
     registered (blueprint section 14.1) but absent from the starter policy, so it is
     registered-but-disabled and denied `unknown_tool`. Enabling it requires a policy edit
@@ -94,11 +101,12 @@ be updated every phase; anything not explicitly implemented must remain listed h
 18. **No SBOM.** CycloneDX artifact generation is Phase 10.
 19. **Minimal schema.** The tables are `host_request_nonces`, `audit_events` (baseline
     `d15b46c49950`), `session_security_state` (Phase 3, `c7f1a2b3d4e5`), and
-    `approval_requests` (Phase 5, `e5a1c2b3d4f6`). Expired session rows and pending/
-    approved approval rows are transitioned lazily on access; there is no scheduled
-    retention/expiry sweeper. The nonce and audit tables likewise grow until operational
-    cleanup lands. Event payloads live inside `audit_events.canonical_event_bytes`, not a
-    queryable typed table.
+    `approval_requests` (Phase 5, `e5a1c2b3d4f6`). Phase 6 adds no table: DLP evidence is
+    an additive optional JSON field on existing audit events under schema v1. Expired
+    session rows and pending/approved approval rows are transitioned lazily on access;
+    there is no scheduled retention/expiry sweeper. The nonce and audit tables likewise
+    grow until operational cleanup lands. Event payloads live inside
+    `audit_events.canonical_event_bytes`, not a queryable typed table.
 20. **No CI configuration.** `scripts/check.sh` (8 steps) is the gate.
 
 ## Verification gaps in this environment
@@ -145,3 +153,37 @@ be updated every phase; anything not explicitly implemented must remain listed h
     canonical destinations, and scalar parameter values only (no wildcards, prefixes,
     ranges, or float values). This can require clarification for legitimate requests
     that the extractor expresses too coarsely; it never widens execution.
+33. **Output DLP is deterministic pattern matching, not a classifier.** The shipped
+    `1.0.1` configuration has five patterns (canary shape, private-key header, `sk-` API
+    key, credential assignment, email). There is no entropy scan, semantic model,
+    multilingual PII support, or detection of secrets without a configured shape.
+    `PASS` means "no configured pattern matched", never "the content is safe"; false
+    negatives/positives are documented in `docs/OUTPUT_DLP_FALSE_POSITIVES.md`.
+34. **Response `REVIEW` is operationally a block.** No review queue, reviewer UI, release
+    token, or post-review transport exists; `BLOCK`, `REVIEW`, and failed inspection all
+    suppress the complete result (`InvocationOutcome.response_blocked`). A caller cannot
+    retrieve a suppressed result.
+35. **DLP inspects only validated tool arguments and the complete buffered result.** It
+    does not inspect model prompts/streams (no model path exists), content fetched
+    inside a future real adapter, or local-write destinations (only external mutations
+    require a destination). Read-only actions are inspected but must not present a
+    destination; doing so is an inspection failure.
+36. **Over-redaction is deliberate and can suppress valid responses.** Credential
+    redaction is line-scoped and starts at the first non-space value character, so a
+    trailing comment or multi-word passphrase is removed whole; a redaction that violates
+    a strict result schema or the result-size bound suppresses the entire response rather
+    than releasing an invalid value.
+37. **No per-resource classification metadata.** The effective class is the registry
+    declaration raised by deterministic inspection of the arguments/result; a real
+    connector's per-file/per-record labels are future work. A registration is still the
+    floor and cannot be lowered by content.
+38. **Destination trust covers only external mutations.** It is an exact-canonical map
+    with startup coverage of registered `EXTERNAL_MUTATION` destinations; local-write
+    policy and per-tenant destination trust are not modeled in Phase 6.
+39. **DLP evidence is not yet a first-class audit taxonomy.** There are no
+    `EGRESS_INSPECTED`/`OUTPUT_INSPECTED`/`RESPONSE_*` events and no verifier for the
+    additive `dlp` field; both are Phase 7. The DLP config version/hash is recorded in
+    evidence but is not yet part of readiness metadata.
+40. **No live `/v1` DLP surface.** As with every phase so far, Phase 6 enforcement is
+    in-process and exercised by tests; no route accepts a request or returns a model
+    response. The gateway remains the only execution path.

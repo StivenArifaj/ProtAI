@@ -1,6 +1,7 @@
 # Policy Decision Matrix
 
-Status: **implemented (Phases 1-2, approval gate Phase 5).** This document mirrors the mandatory v1 baseline
+Status: **implemented (Phases 1-2; approval gate Phase 5; output DLP/egress Phase 6).**
+This document mirrors the mandatory v1 baseline
 from blueprint v1.2 section 10.3 as a specification; the deterministic engine
 (`src/ai_security/firewall/policy_engine.py`) enforces it against
 `config/policies.yaml` + `config/risk_thresholds.yaml`, and the fixture suite
@@ -18,6 +19,18 @@ supply the score.
 Side-effect classes are the canonical `SideEffectClass` enum
 (`READ_ONLY`, `LOCAL_MUTATION`, `EXTERNAL_MUTATION`, `DESTRUCTIVE`); data classes are
 the canonical `DataClass` enum (`PUBLIC`, `INTERNAL`, `CONFIDENTIAL`, `RESTRICTED`).
+Since Phase 6 the data class used for risk, policy, approval binding, and audit is the
+**effective class**: `max(registry declaration, deterministic DLP findings)`. DLP can only
+raise it, never lower it (ADR-013).
+
+Output DLP is a separate gate, not a new policy-engine input. Egress inspection runs on
+validated arguments after principal/binding/intent checks and before resource
+authorization, risk, policy, approval consultation, or execution; a non-`PASS` report is
+a pre-execution denial (`dlp_egress_blocked`, or `dlp_inspection_failed` when inspection
+cannot complete), so it never reaches the engine and no approval can override it. Response
+inspection runs after execution on the complete buffered result; `BLOCK`/`REVIEW`/failure
+suppress the whole response (`RESPONSE_BLOCKED`) while preserving the engine's decision
+and reason. `PASS`/`REDACT` release bytes; `REDACT` records `dlp.released_digest`.
 
 | Preconditions / side-effect class | Data class and destination | Risk 0-39 | Risk 40-79 | Risk 80-100 | V1 rule |
 |---|---|---|---|---|---|
@@ -76,16 +89,28 @@ fail closed (`BLOCK`); no string aliases and no coercion into an allowed class.
   deadlines, evaluation errors).
 - Gateway operational reason codes are part of the observable contract:
   `binding_mismatch`, `deadline_exceeded` (engine facts), `policy_evaluation_error`,
-  `audit_unavailable` (gateway fail-closed overrides), and the Phase 5 approval codes
-  `approval_granted`, `approval_denied`, `approval_expired`, `approval_invalid`.
+  `audit_unavailable` (gateway fail-closed overrides), the Phase 5 approval codes
+  `approval_granted`, `approval_denied`, `approval_expired`, `approval_invalid`, and
+  the Phase 6 DLP codes `dlp_egress_blocked` / `dlp_inspection_failed`.
   `ASK_USER` remains a no-execution result unless the caller presents an `approval_id`
   that the gateway atomically consumes as an approved, unexpired, exact-action grant.
   The engine decision stays `ASK_USER`; approval is an execution gate, not an `ALLOW`.
   A `BLOCK`/hard deny never consults approval. Pending, denied, expired, replayed,
   mismatched, forged, or storage-unavailable approvals execute nothing.
+- Phase 6 egress/response behavior: the gateway requires an `OutputDefenseService` (no
+  no-op default), loads the strict versioned `config/output_dlp.yaml`, and refuses startup
+  unless the destination trust map exactly covers every registered
+  `EXTERNAL_MUTATION` destination. `BLOCK`-scope patterns deny regardless of destination;
+  `CLASSIFY` patterns compare the raised class with the destination's `max_data_class`.
+  Response `BLOCK`/`REVIEW`/inspection failure return `result=None` with
+  `InvocationOutcome.response_blocked`; redaction is span-preserving/idempotent and must
+  still satisfy the registered result schema/size or the whole response is suppressed.
+  Audit evidence is an optional additive `dlp` field on existing events (schema v1); DLP
+  event types and the verifier are Phase 7.
 - Known deviations / limits (documented, tested): destinations match exactly (no
   wildcards in v1); no policy hot-reload (readiness detects file drift; the running
-  process keeps its startup-loaded bundle); data class is a registration fact until
-  content-level DLP (Phase 6); Phase 4 manifests are enforced as post-policy
-  constraints and do not enter engine facts; approval routes/UI/token transport,
-  revocation, and background expiry are Phase 8 (ADR-012).
+  process keeps its startup-loaded bundle); data class is the registration floor raised
+  by deterministic, pattern-based inspection (no classifier, entropy, semantic, or
+  multilingual detection; no per-resource metadata); Phase 4 manifests are enforced as
+  post-policy constraints and do not enter engine facts; approval routes/UI/token
+  transport, revocation, and background expiry are Phase 8 (ADR-012).

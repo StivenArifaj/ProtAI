@@ -4,10 +4,11 @@ Repository foundation for the AI Agent Security & Safety Platform. The authorita
 specification is `AI_Agent_Security_Platform_Master_Blueprint_v1.2.md` in the repository
 root; the archived v1.0 is under `archive/` and is superseded.
 
-**Current state: Phases 0a-5 complete and verified** (repository foundation; security
+**Current state: Phases 0a-6 complete and verified** (repository foundation; security
 foundation; typed contracts + deterministic policy engine; tool registry + enforced
 gateway; advisory input defense + context provenance; intent extraction + manifest
-validation; risk v2 + durable one-time human approvals). Implemented today: enforced
+validation; risk v2 + durable one-time human approvals; output DLP + destination-aware
+egress policy). Implemented today: enforced
 configuration validation; host HMAC authentication + replay rejection on the `/v1/*`
 path prefix; deterministic policy engine with 21 startup/readiness self-check fixtures;
 typed tool registry + mock-only adapters; the `invoke_tool` gateway as the only execution
@@ -18,14 +19,17 @@ input-defense config with bounded intake, copy-only normalization, versioned inj
 heuristics, typed non-PASS failure semantics, trust-labelled context assembly, and a
 tenant/subject-bound session signal store; server-issued sealed intent manifests with
 exact action/resource/destination/parameter/use constraints and trusted-timezone relative
-dates; and durable, action-bound approval requests with strict approver rules, digest-only
+dates; durable, action-bound approval requests with strict approver rules, digest-only
 tokens, and row-locked one-time consumption, enforced by the gateway for engine
-`ASK_USER`. Detection is advisory and intent/approval can only narrow or gate execution:
-neither can produce an `ALLOW` or bypass policy. **No `/v1` business or approval routes,
-manifest/approval transport, real model provider, content DLP, real
-connectors, sandbox, or audit verifier exist yet** — do not present the system as
-providing them. See `docs/IMPLEMENTATION_STATE.md`, `docs/SECURITY_INVARIANTS.md`, and
-`docs/KNOWN_LIMITATIONS.md`.
+`ASK_USER`; and mandatory output DLP that inspects validated tool-bound arguments before
+execution and the complete buffered result before release, with deterministic pattern
+detection, exact-canonical destination trust, span-preserving redaction, and full-response
+suppression. Detection is advisory and intent/approval/DLP can only narrow, gate, or raise
+sensitivity: none can produce an `ALLOW` or bypass policy. **No `/v1` business or approval
+routes, manifest/approval transport, real model provider, classifier/entropy-based DLP,
+real connectors, sandbox, or audit verifier exist yet** — do not present the system as
+providing them. See `docs/IMPLEMENTATION_STATE.md`, `docs/SECURITY_INVARIANTS.md`,
+`docs/OUTPUT_DLP_FALSE_POSITIVES.md`, and `docs/KNOWN_LIMITATIONS.md`.
 
 ## Prerequisites
 
@@ -37,7 +41,7 @@ providing them. See `docs/IMPLEMENTATION_STATE.md`, `docs/SECURITY_INVARIANTS.md
 
 ```bash
 uv sync --frozen          # install from the committed lockfile
-uv run pytest             # full suite (734 unit/integration/security tests)
+uv run pytest             # full suite (766 unit/integration/security tests)
 bash scripts/check.sh     # full local gate: lockfile, ruff, mypy, pytest, invariant greps
 ```
 
@@ -84,6 +88,10 @@ rules enforced at startup:
 - `DATABASE_URL` must use the `postgresql+asyncpg://` scheme (ADR-005).
 - The sample database password (`firewall_dev_only`) is refused outside
   `development`/`test`.
+- `OUTPUT_DLP_PATH` defaults to `config/output_dlp.yaml`; the strict versioned file is
+  required at startup, and its exact-canonical destination trust map must cover every
+  registered external-mutation destination. Invalid, missing, or non-covering
+  configuration refuses startup.
 
 Configuration errors fail startup with a clear message; the process never starts in a
 partially configured state.
@@ -97,3 +105,4 @@ partially configured state.
 - `docs/DECISIONS.md` + `docs/adr/` — architecture decision records
 - `docs/IMPLEMENTATION_STATE.md` — what exists, what is verified, what is deferred
 - `docs/KNOWN_LIMITATIONS.md` — known gaps of the current phase
+- `docs/OUTPUT_DLP_FALSE_POSITIVES.md` — tested DLP hard negatives, false positives, false negatives
