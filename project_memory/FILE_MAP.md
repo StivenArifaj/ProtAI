@@ -165,7 +165,7 @@ root; entries in tables below use [../](../) where needed for links.
 | [../docs/SECURITY_INVARIANTS.md](../docs/SECURITY_INVARIANTS.md) | 25 mandatory invariants (blueprint §20.2) with Phase 5 statuses (#6/#7/#8/#20/#24 implemented; #9 partial pending content DLP; scope statement 0a-5) | VERIFIED (doc) |
 | [../docs/POLICY_DECISION_MATRIX.md](../docs/POLICY_DECISION_MATRIX.md) | Mandated v1 decision matrix (implemented by the Phase 1 engine and consumed by the Phase 2 gateway; reason-code mapping documented) | VERIFIED (doc) |
 | [../docs/DECISIONS.md](../docs/DECISIONS.md) | ADR index (summaries + links; no full ADRs) | VERIFIED (doc) |
-| [../docs/IMPLEMENTATION_STATE.md](../docs/IMPLEMENTATION_STATE.md) | Blueprint §22.4 phase-state document; 57-row verification record; 0a/0b/1/2/3/4/5 DoD checklists | VERIFIED |
+| [../docs/IMPLEMENTATION_STATE.md](../docs/IMPLEMENTATION_STATE.md) | Blueprint §22.4 phase-state document; 58-row verification record; 0a/0b/1/2/3/4/5 DoD checklists | VERIFIED |
 | [../docs/KNOWN_LIMITATIONS.md](../docs/KNOWN_LIMITATIONS.md) | Limitations items 1-32 with phase pointers | VERIFIED |
 | [../docs/adr/ADR-001-host-hmac-authentication.md](../docs/adr/ADR-001-host-hmac-authentication.md) | HMAC host auth + dev-resolver guard (Phase 0b) | VERIFIED (ADR, Accepted) |
 | [../docs/adr/ADR-002-audit-hash-chain.md](../docs/adr/ADR-002-audit-hash-chain.md) | Audit hash-chain append + canonical bytes (Phase 7; scaffold 0b) | VERIFIED (ADR, Accepted) |

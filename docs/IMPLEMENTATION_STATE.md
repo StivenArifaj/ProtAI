@@ -39,7 +39,7 @@ model provider, or the full audit verifier. See `docs/SECURITY_INVARIANTS.md` an
 | Quality gate | `scripts/check.sh` | 8 steps: lockfile, ruff format, ruff lint, mypy, pytest, pinned Gitleaks (dir+git), prohibited-pattern greps, constant-time confinement |
 | Containers | `Dockerfile`, `docker-compose.yml` | Digest-pinned bases; non-root uid 10001; COPY `config/ migrations/ alembic.ini`; Compose `api` carries the disposable dev `HOST_AUTH_KEYS_JSON` |
 | Docs | `docs/*` (9 files), `docs/adr/ADR-001..012` | Status columns honest; ADR-008 records the Phase 1 engine contract, ADR-009 the Phase 2 registry/gateway contract, ADR-010 the Phase 3 advisory-detection/session contract, ADR-011 the Phase 4 manifest/constraint contract, ADR-012 the Phase 5 `risk-v2`/approval contract; matrix doc reflects gateway-enforced facts |
-| Git | baseline `41e10da`; 0b commits `0aa11d9`…`d180b89`; docs `c95f2a6`; Phase 1 commits `cffdd62`, `eaae462`, `b91729b`; Phase 2 commits `5725256`…`c7a0f8d`; Phase 3 commits `faafe13`…`30c0f41`; Phase 4 commits `2943593`, `74c502f`, `786cb08`, `c018955`; Phase 5 commits (implementation/tests, ADR-012/docs, memory/completion) | Repository under git since 2026-10-19; linear history on `main`; no remote configured |
+| Git | baseline `41e10da`; 0b commits `0aa11d9`…`d180b89`; docs `c95f2a6`; Phase 1 commits `cffdd62`, `eaae462`, `b91729b`; Phase 2 commits `5725256`…`c7a0f8d`; Phase 3 commits `faafe13`…`30c0f41`; Phase 4 commits `2943593`, `74c502f`, `786cb08`, `c018955`; Phase 5 commits `ad9e76a` (implementation/tests/migration), `0b2f1c9` (ADR-012/docs), `8cce014` (memory/completion); final V62 status record commit follows | Repository under git since 2026-10-19; linear history on `main`; no remote configured |
 | Spec | `AI_Agent_Security_Platform_Master_Blueprint_v1.2.md`, `archive/..._v1.0_superseded.md` | v1.2 authoritative; v1.0 archived |
 
 Deliberately deferred beyond Phase 5: output DLP/canary (Phase 6), full audit
@@ -467,6 +467,7 @@ Rows 53+ continue the numbered record. Full evidence:
 | 55 | Targeted Phase 5 suites (`test_approval_flow`, `test_gateway_approval`, `test_gateway_wiring`, `test_migrations`, `test_risk_engine`, `test_approver_rules`, `test_settings`, `test_gateway_no_bypass`) | PASS — **157 passed** (11 real-PostgreSQL approval lifecycle/concurrency, 5 gateway approval gating, 2 wiring, 1 migration, 30 risk, 24 approver rules, 60 settings, 24 no-bypass) |
 | 56 | `alembic upgrade head` → `downgrade -1` → `upgrade head` → `check` | PASS — `e5a1c2b3d4f6` applies, downgrades to `c7f1a2b3d4e5`, re-applies cleanly; "No new upgrade operations detected" |
 | 57 | Dedup regression (`test_duplicate_derived_resource_ids_are_collapsed_before_risk_and_audit`) | PASS — duplicate resource-id argument values collapse to one distinct target before risk, approval digest, authorization, and audit |
+| 58 | Post-commit `bash scripts/check.sh` after `ad9e76a`/`0b2f1c9`/`8cce014` (V62) | PASS — exit 0, all 8 steps; 734 tests; ruff/mypy clean (63 source files); Gitleaks 8.30.1 dir+git clean across 30 commits |
 
 ## Definition of Done checklist (blueprint section 21, Phase 5)
 
@@ -479,7 +480,7 @@ Rows 53+ continue the numbered record. Full evidence:
 | Verified principal/rule/tenant gates approval; no self-approval by default | PASS — strict rule parser/evaluator; tenant equality; self-approval only with explicit `self_approval_allowed`; requester-only unsatisfiable rules refused before creation |
 | No secrets/raw content stored or logged | PASS — token returned once, only SHA-256 stored; approval rows carry canonical facts and provenance, not arguments/content; tests assert token digests and redacted audit payloads |
 | Execution still occurs only via `invoke_tool`; policy remains sole `ALLOW` producer | PASS — approval only makes an engine `ASK_USER` executable; the engine decision stays `ASK_USER`, `ALLOW` needs none, and `BLOCK` dominates; single gateway chokepoint unchanged |
-| Quality gate green; docs/memory/ADR updated | PASS — rows 53-57; ADR-012; this file; `SECURITY_INVARIANTS`, `KNOWN_LIMITATIONS`, `THREAT_MODEL`, `ARCHITECTURE`, `POLICY_DECISION_MATRIX`, README, memory refresh |
+| Quality gate green; docs/memory/ADR updated | PASS — rows 53-58; ADR-012; this file; `SECURITY_INVARIANTS`, `KNOWN_LIMITATIONS`, `THREAT_MODEL`, `ARCHITECTURE`, `POLICY_DECISION_MATRIX`, README, memory refresh |
 
 ## How to continue (next session)
 

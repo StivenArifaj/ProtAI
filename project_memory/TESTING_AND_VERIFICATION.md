@@ -77,6 +77,7 @@ unused `IntentManifest` import (removed for ruff/mypy).
 | V59 | `uv run --frozen pytest tests/integration/test_approval_flow.py tests/integration/test_gateway_approval.py tests/integration/test_gateway_wiring.py tests/integration/test_migrations.py tests/unit/test_risk_engine.py tests/unit/test_approver_rules.py tests/unit/test_settings.py tests/security/test_gateway_no_bypass.py -q` | PASS — **157 passed** (11 approval lifecycle/expiry/mutation/replay/exactly-one-winner, 5 gateway approval gating/no-execution, 2 wiring, 1 migration, 30 risk, 24 approver rules, 60 settings, 24 no-bypass) |
 | V60 | `alembic upgrade head` → `downgrade -1` → `upgrade head` → `check` (test DB) | PASS — `e5a1c2b3d4f6` applies, downgrades to `c7f1a2b3d4e5`, re-applies cleanly; "No new upgrade operations detected" |
 | V61 | `uv run --frozen pytest tests/unit/test_gateway.py -k duplicate_derived_resource_ids -q` | PASS — 1 passed, 20 deselected (duplicate derived resource ids collapse before risk/digest/audit) |
+| V62 | Post-commit re-run: `bash scripts/check.sh` after `ad9e76a`/`0b2f1c9`/`8cce014` | PASS — exit 0, all 8 steps; ruff format/lint clean; mypy clean (63 source files); 734 tests; Gitleaks 8.30.1 dir+git "no leaks found" (30 commits scanned); prohibited-pattern greps clean; `compare_digest` confined |
 
 Development-time findings fixed and regression-tested during Phase 5 (recorded for
 honesty): direct `hmac.compare_digest` calls initially appeared in `firewall/approval.py`

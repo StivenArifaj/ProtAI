@@ -32,9 +32,9 @@ gate records) + Phase 3 commits `faafe13` (input defense/context/session impleme
 tests), `3bd5c69` (ADR-010 + docs), `1fe5588` (memory refresh + phase completion record),
 and the status/post-commit gate record commit `30c0f41`; Phase 4 commits `2943593`
 (implementation/tests), `74c502f` (ADR-011/docs), `786cb08` (memory/completion), and
-the V56 status record commit `c018955`; Phase 5 commits (implementation/tests/migration,
-ADR-012/docs, memory/completion) and the V62 post-commit status record. No remote
-configured.
+the V56 status record commit `c018955`; Phase 5 commits `ad9e76a`
+(implementation/tests/migration), `0b2f1c9` (ADR-012/docs), `8cce014`
+(memory/completion), and the final V62 status record commit. No remote configured.
 
 ## What exists (all VERIFIED)
 

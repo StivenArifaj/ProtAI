@@ -4,8 +4,8 @@
 **Blueprint:** v1.2 §§11.3-11.4, 12.3, 13.1-13.3, 16.1, 20.2 #15/#20/#24, §21 Phase 5
 **ADR:** [../../docs/adr/ADR-012-risk-v2-and-human-approvals.md](../../docs/adr/ADR-012-risk-v2-and-human-approvals.md)
 **Evidence:** V57-V62 in [../TESTING_AND_VERIFICATION.md](../TESTING_AND_VERIFICATION.md)
-**Commits:** implementation/tests/migration, ADR-012/docs, memory/completion; final V62
-status record commit follows.
+**Commits:** `ad9e76a` (implementation/tests/migration), `0b2f1c9` (ADR-012/docs),
+`8cce014` (memory/completion); final V62 status record commit follows.
 
 ## Definition of Done — verdict
 
@@ -143,8 +143,8 @@ Totals: **734 passed** (613 unit + 80 integration + 41 security).
   single head `e5a1c2b3d4f6`.
 - V61: dedup regression — 1 passed (duplicate derived resource ids collapse before
   risk/digest/audit).
-- V62: post-commit gate — recorded after the Phase 5 commits (see
-  `TESTING_AND_VERIFICATION.md`).
+- V62: post-commit gate — PASS, exit 0, all 8 steps; 734 tests, mypy 63 source files,
+  Gitleaks 8.30.1 dir+git clean across 30 commits.
 
 ## Next
 
