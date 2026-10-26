@@ -530,7 +530,7 @@ class OutputDefenseService:
         findings: list[DlpFinding] = []
         truncated = False
         limit = self._config.limits.max_matches_per_pattern
-        for spec, compiled in self._patterns:
+        for index, (spec, compiled) in enumerate(self._patterns):
             count = 0
             matched_fields: list[str] = []
             for path, text in fields:
@@ -558,7 +558,15 @@ class OutputDefenseService:
                     )
                 )
             if len(findings) >= self._config.limits.max_findings:
+                # A saturated finding report cannot prove that later patterns did not
+                # match. Stopping here would let an unscanned BLOCK pattern slip past
+                # classification, so any remaining pattern makes the inspection fail
+                # closed instead of returning a partial verdict.
                 truncated = True
+                if index + 1 < len(self._patterns):
+                    raise DlpInspectionError(
+                        "finding cap reached before all sensitive patterns were evaluated"
+                    )
                 break
         findings.sort(key=lambda finding: finding.code)
         return tuple(findings), truncated

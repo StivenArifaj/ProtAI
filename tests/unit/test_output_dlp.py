@@ -403,3 +403,54 @@ def test_overlapping_matches_are_merged_without_releasing_a_tail() -> None:
         defense.inspect_output(data=redacted, declared_data_class=DataClass.public).outcome
         is DlpOutcome.pass_
     )
+
+
+def test_finding_cap_never_skips_an_unscanned_blocking_pattern() -> None:
+    """A saturated finding report must fail closed, not return a partial verdict.
+
+    The first pattern matches immediately and exhausts ``max_findings``. The second
+    pattern is never evaluated under a naive loop, so a later BLOCK category could be
+    missed. Both phases must report a failed inspection instead.
+    """
+    config = OutputDlpConfig(
+        schema_version=1,
+        version="finding-cap-test",
+        limits=DlpLimits(max_scan_bytes=1024, max_findings=1, max_matches_per_pattern=4),
+        patterns=(
+            SensitivePattern(
+                code="first",
+                category=DlpCategory.pii_email,
+                pattern=r"first@example\.com",
+                data_class=DataClass.internal,
+                egress=EgressScope.classify,
+                release=DlpRelease.redact,
+            ),
+            SensitivePattern(
+                code="second",
+                category=DlpCategory.synthetic_canary,
+                pattern=r"CANARY_SECRET_[A-Z0-9_]{4,}",
+                data_class=DataClass.restricted,
+                egress=EgressScope.block,
+                release=DlpRelease.block,
+            ),
+        ),
+        destinations=(),
+    )
+    defense = OutputDefenseService(LoadedOutputDlpConfig(config=config, sha256="e" * 64))
+    payload = {"body": "first@example.com CANARY_SECRET_REGRESSION"}
+
+    output = defense.inspect_output(data=payload, declared_data_class=DataClass.public)
+    assert output.outcome is DlpOutcome.block
+    assert output.inspection_error is True
+    assert output.findings == ()
+    assert output.max_data_class is DataClass.restricted
+
+    egress = defense.inspect_egress(
+        data=payload,
+        declared_data_class=DataClass.public,
+        destination=None,
+        require_destination=False,
+    )
+    assert egress.outcome is DlpOutcome.block
+    assert egress.inspection_error is True
+    assert egress.findings == ()
