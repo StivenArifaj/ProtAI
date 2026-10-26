@@ -168,7 +168,7 @@ root; entries in tables below use [../](../) where needed for links.
 | [../docs/SECURITY_INVARIANTS.md](../docs/SECURITY_INVARIANTS.md) | 25 mandatory invariants (blueprint §20.2) with Phase 6 statuses (#6/#7/#8/#9/#21 implemented; #14 DLP evidence; scope statement 0a-6) | VERIFIED (doc) |
 | [../docs/POLICY_DECISION_MATRIX.md](../docs/POLICY_DECISION_MATRIX.md) | Mandated v1 decision matrix (implemented by the Phase 1 engine and consumed by the Phase 2 gateway; reason-code mapping documented) | VERIFIED (doc) |
 | [../docs/DECISIONS.md](../docs/DECISIONS.md) | ADR index (summaries + links; no full ADRs) | VERIFIED (doc) |
-| [../docs/IMPLEMENTATION_STATE.md](../docs/IMPLEMENTATION_STATE.md) | Blueprint §22.4 phase-state document; 61-row verification record through Phase 6 (final row 62/V66 added post-commit); 0a/0b/1/2/3/4/5/6 DoD checklists | VERIFIED |
+| [../docs/IMPLEMENTATION_STATE.md](../docs/IMPLEMENTATION_STATE.md) | Blueprint §22.4 phase-state document; 62-row verification record through Phase 6; 0a/0b/1/2/3/4/5/6 DoD checklists | VERIFIED |
 | [../docs/KNOWN_LIMITATIONS.md](../docs/KNOWN_LIMITATIONS.md) | Limitations items 1-40 with phase pointers | VERIFIED |
 | [../docs/OUTPUT_DLP_FALSE_POSITIVES.md](../docs/OUTPUT_DLP_FALSE_POSITIVES.md) | Tested benign cases, known false positives, intentional false negatives, fail-closed cases, tuning guidance | VERIFIED (doc) |
 | [../docs/adr/ADR-001-host-hmac-authentication.md](../docs/adr/ADR-001-host-hmac-authentication.md) | HMAC host auth + dev-resolver guard (Phase 0b) | VERIFIED (ADR, Accepted) |

@@ -551,6 +551,7 @@ Rows 59+ continue the numbered record. Full evidence:
 | 59 | `alembic current` → `upgrade head` → `downgrade -1` → `upgrade head` → `check` (test DB, §5.4 env) | PASS — at `e5a1c2b3d4f6 (head)`; `upgrade head` is a no-op; `downgrade -1` reaches `c7f1a2b3d4e5`; re-upgrade returns to head; "No new upgrade operations detected". Phase 6 adds no schema object |
 | 60 | `uv run --frozen pytest -q`; then `uv run --frozen mypy src`, `ruff check src tests`, `ruff format --check src tests` | PASS — **766 passed** (640 unit + 85 integration + 41 security) including real-PostgreSQL approval/DLP binding tests; mypy clean (64 source files); ruff format/lint clean |
 | 61 | Targeted Phase 6 suites: `test_output_dlp.py`, `test_gateway.py`, `test_gateway_approval.py`, `test_gateway_wiring.py`, `test_gateway_end_to_end.py`, `test_gateway_no_bypass.py`, `test_intent_no_grant.py` | PASS — **93 passed** (19 DLP config/detection/redaction/fail-closed, 8 gateway DLP execution/response cases, 2 approval class-binding, 3 startup trust-coverage, plus unchanged e2e/no-bypass/intent suites) |
+| 62 | Post-commit `bash scripts/check.sh` after docs `98cfdde` and memory `9e78933` | PASS — exit 0, all 8 steps; ruff format/lint clean (166 files formatted); mypy clean (64 source files); **766 passed** (640 unit + 85 integration + 41 security); Gitleaks 8.30.1 dir+git "no leaks found" (**36 commits scanned**); prohibited-pattern greps clean; `compare_digest` confined to `security/constant_time.py` |
 
 ## Definition of Done checklist (blueprint section 21, Phase 6)
 
@@ -561,7 +562,7 @@ Rows 59+ continue the numbered record. Full evidence:
 | DLP logs/evidence stay redacted | PASS — findings store stable code/category/count/bounded field paths only; tests serialize reports/audit payloads and require canary values, email strings, and credential values to be absent; field paths reject control characters and length over 256 |
 | False-positive cases are documented | PASS — `docs/OUTPUT_DLP_FALSE_POSITIVES.md` records tested benign cases, known false positives, intentional false negatives, fail-closed cases, and tuning guidance; benign-lookalike regression tests exist in `test_output_dlp.py` |
 | Gateway remains the only execution path | PASS — the mandatory `OutputDefenseService` is constructor-injected; no adapter call occurs on any egress denial or release suppression; execution authorization and the single `invoke_tool` chokepoint are unchanged; no-bypass security tests stay green |
-| All prior suites and the 8-step gate stay green; docs/memory/ADR updated | PASS — rows 59-61; **766** tests; mypy 64 files; ADR-013; this file; `SECURITY_INVARIANTS`, `KNOWN_LIMITATIONS`, `THREAT_MODEL`, `ARCHITECTURE`, `POLICY_DECISION_MATRIX`, `OUTPUT_DLP_FALSE_POSITIVES`, README, `.env.example`, memory refresh; post-commit gate recorded in the final status commit (V66) |
+| All prior suites and the 8-step gate stay green; docs/memory/ADR updated | PASS — rows 59-62; **766** tests; mypy 64 files; ADR-013; this file; `SECURITY_INVARIANTS`, `KNOWN_LIMITATIONS`, `THREAT_MODEL`, `ARCHITECTURE`, `POLICY_DECISION_MATRIX`, `OUTPUT_DLP_FALSE_POSITIVES`, README, `.env.example`, memory refresh; post-commit gate V66 green after `98cfdde`/`9e78933` |
 
 ## How to continue (next session)
 

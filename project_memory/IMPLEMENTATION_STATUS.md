@@ -178,15 +178,18 @@ All PASS — full commands and results in [TESTING_AND_VERIFICATION.md](TESTING_
 - `uv run --frozen pytest -q` → **766 passed** (640 unit + 85 integration + 41
   security), including real-PostgreSQL approval/class-binding tests (V64).
 - `uv run --frozen mypy` → clean, 64 source files; `ruff check`/`format` clean (112
-  files formatted; V64).
+  `src`/`tests` files formatted; V64).
 - Phase 6 targeted suites → **93 passed** (19 DLP, 29 gateway incl. 8 DLP cases, 7
   real-PostgreSQL approval incl. 2 class-binding, 5 wiring incl. 3 trust-coverage, 3
   e2e, 24 no-bypass, 6 intent; V65).
 - Alembic `current` → `upgrade head` → `downgrade -1` → `upgrade head` → `check` → at
   `e5a1c2b3d4f6 (head)`, down to `c7f1a2b3d4e5`, back to head; "No new upgrade
   operations detected" (V63).
-- Full `bash scripts/check.sh` post-commit run is V66 (recorded in the final Phase 6
-  status commit). Phase 5 evidence (V57–V62) retained.
+- Full `bash scripts/check.sh` → exit 0, all 8 steps; ruff format/lint clean (166
+  files); mypy clean (64 source files); **766 passed**; Gitleaks 8.30.1 dir+git "no
+  leaks found" (36 commits scanned); prohibited-pattern and constant-time-confinement
+  checks clean (V66, post-commit after `98cfdde`/`9e78933`). Phase 5 evidence (V57–V62)
+  retained.
 
 ## Environment (verified this session)
 

@@ -5,8 +5,8 @@
 **ADR:** [../../docs/adr/ADR-013-output-dlp-and-egress.md](../../docs/adr/ADR-013-output-dlp-and-egress.md)
 **Evidence:** V63-V66 in [../TESTING_AND_VERIFICATION.md](../TESTING_AND_VERIFICATION.md)
 **Commits:** `df70cd9` (implementation/tests/config), `e8919cb` (finding-cap fail-closed),
-`e586c81` (complete credential-value redaction); docs/memory commits follow, with the
-final V66 status record commit after them.
+`e586c81` (complete credential-value redaction), `98cfdde` (ADR-013/docs),
+`9e78933` (memory/completion), plus this final V66 status record commit.
 
 ## Definition of Done — verdict
 
@@ -17,7 +17,7 @@ final V66 status record commit after them.
 | DLP logs/evidence remain redacted | PASS | Findings store code/category/count/bounded field paths only; tests serialize reports and audit payloads and require canary, email, and credential values to be absent; paths reject control characters and over-length values |
 | False-positive cases are documented | PASS | [../../docs/OUTPUT_DLP_FALSE_POSITIVES.md](../../docs/OUTPUT_DLP_FALSE_POSITIVES.md) records tested benign cases, known false positives, intentional false negatives, fail-closed behavior, and tuning guidance; benign-lookalike regression tests exist |
 | Gateway remains the only execution path | PASS | Mandatory constructor-injected `OutputDefenseService`; no adapter call on any egress denial or release suppression; the single `invoke_tool` chokepoint and digest-bound execution authorization are unchanged |
-| All prior suites and the 8-step gate stay green | PASS | V63-V66: **766 passed** (640 unit + 85 integration + 41 security), mypy 64 source files, ruff clean, Gitleaks clean |
+| All prior suites and the 8-step gate stay green | PASS | V63-V66: **766 passed** (640 unit + 85 integration + 41 security), mypy 64 source files, ruff clean, Gitleaks clean (36 commits) |
 | ADR-008/009/010/011/012 contracts untouched | PASS | Policy remains the sole `ALLOW` producer; gateway/intent/approval boundaries intact; approval only gains effective-class binding; all prior suites green |
 
 ## Delivered
@@ -149,7 +149,11 @@ Totals: **766 passed** (640 unit + 85 integration + 41 security); 32 new tests.
   (64 source files); ruff format/lint clean (112 files formatted).
 - V65: targeted Phase 6 suites — **93 passed** (19 DLP, 8 gateway DLP, 2 approval
   class-binding, 3 startup trust coverage, plus unchanged e2e/no-bypass/intent suites).
-- V66: post-commit `bash scripts/check.sh` — recorded in the final status commit.
+- V66: post-commit `bash scripts/check.sh` after docs `98cfdde` and memory `9e78933` —
+  PASS, exit 0, all 8 steps; ruff format/lint clean (166 files); mypy clean (64 source
+  files); **766 passed** (640 unit + 85 integration + 41 security); Gitleaks 8.30.1
+  dir+git "no leaks found" (36 commits scanned); prohibited-pattern greps clean;
+  `compare_digest` confined to `security/constant_time.py`.
 
 ## Next
 
