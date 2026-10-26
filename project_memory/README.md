@@ -53,7 +53,7 @@ rule and decision procedure.
 Rules: never upgrade a label without running the evidence; never mark something
 implemented because a document describes it; record discrepancies instead of hiding them.
 
-## Current snapshot (2026-10-19)
+## Current snapshot (2026-10-26)
 
 - **Phase 0a (repository foundation): COMPLETE and VERIFIED.** See
   [phases/PHASE_0A_COMPLETE.md](phases/PHASE_0A_COMPLETE.md).
@@ -67,23 +67,27 @@ implemented because a document describes it; record discrepancies instead of hid
   [phases/PHASE_3_COMPLETE.md](phases/PHASE_3_COMPLETE.md).
 - **Phase 4 (intent extraction and action validation): COMPLETE and VERIFIED.** See
   [phases/PHASE_4_COMPLETE.md](phases/PHASE_4_COMPLETE.md).
-- The repository is **under git** (baseline `41e10da` + Phase 0b/1/2/3/4 commits on
+- **Phase 5 (risk engine and approval workflow): COMPLETE and VERIFIED.** See
+  [phases/PHASE_5_COMPLETE.md](phases/PHASE_5_COMPLETE.md); ADR-012.
+- The repository is **under git** (baseline `41e10da` + Phase 0b/1/2/3/4/5 commits on
   `main`; no remote configured).
 - Enforced today: `/v1/*` host HMAC authentication + atomic replay rejection + request
   bounds; dev-resolver guard; deterministic policy engine + 21 self-check fixtures
   (startup/readiness); typed tool registry + startup consistency; mock-only adapters;
   the `invoke_tool` gateway as the only execution path (digest-bound execution
-  authorization, deadlines, timeouts, concurrency/result bounds, audit-first); `risk-v1`
-  scoring; audit decision/outcome events in the ADR-002 chain; strict advisory input
-  detection (config/intake/normalization/heuristics/typed findings), trust-labelled
-  context assembly, and bound session signals; server-issued sealed intent manifests
-  with exact action/resource/destination/parameter/use constraints, trusted-timezone
-  relative dates, and gateway enforcement (mock extractor only); pinned Gitleaks in the
-  gate. **Absent:** `/v1` routes + agent runtime, manifest transport, real model
-  provider, approvals, content DLP, real connectors, process isolation, rate limits,
+  authorization, deadlines, timeouts, concurrency/result bounds, audit-first); `risk-v2`
+  scoring (all `risk-v1` weights + one bounded resource-breadth factor); audit
+  decision/outcome events in the ADR-002 chain; strict advisory input detection
+  (config/intake/normalization/heuristics/typed findings), trust-labelled context
+  assembly, and bound session signals; server-issued sealed intent manifests with exact
+  action/resource/destination/parameter/use constraints and trusted-timezone relative
+  dates (mock extractor only); durable one-time human approvals bound to the canonical
+  action digest with row-locked consumption and same-transaction audit; pinned Gitleaks
+  in the gate. **Absent:** `/v1` routes + agent runtime, manifest/approval transport,
+  real model provider, content DLP, real connectors, process isolation, rate limits,
   audit verifier, and any consumer of detector findings/labels — do not present the
   system as providing them.
-- **Phase 5 (risk engine and approval workflow) is the next task** — see
+- **Phase 6 (output DLP and egress policy) is the next task** — see
   [NEXT_SESSION.md](NEXT_SESSION.md).
 
 ## Files in this directory
@@ -93,7 +97,7 @@ implemented because a document describes it; record discrepancies instead of hid
 | [README.md](README.md) | Entry point, reading order, update rules. |
 | [PROJECT_CONTEXT.md](PROJECT_CONTEXT.md) | Identity, scope, non-goals, stack, operator context. |
 | [IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md) | Source of truth for what exists now (labels + evidence pointers). |
-| [NEXT_SESSION.md](NEXT_SESSION.md) | Exact handoff for the next task (Phase 5). |
+| [NEXT_SESSION.md](NEXT_SESSION.md) | Exact handoff for the next task (Phase 6). |
 | [ARCHITECTURE_MAP.md](ARCHITECTURE_MAP.md) | Current implemented architecture and target v1 map. |
 | [SECURITY_REQUIREMENTS.md](SECURITY_REQUIREMENTS.md) | Complete security contract with status per control and blueprint refs. |
 | [DECISION_LOG.md](DECISION_LOG.md) | Consolidated decisions; links to ADRs (ADRs live in `docs/adr/`). |
@@ -110,6 +114,7 @@ implemented because a document describes it; record discrepancies instead of hid
 | [phases/PHASE_2_PLAN.md](phases/PHASE_2_PLAN.md) / [phases/PHASE_2_COMPLETE.md](phases/PHASE_2_COMPLETE.md) | Phase 2 plan and completion record. |
 | [phases/PHASE_3_PLAN.md](phases/PHASE_3_PLAN.md) / [phases/PHASE_3_COMPLETE.md](phases/PHASE_3_COMPLETE.md) | Phase 3 plan and completion record. |
 | [phases/PHASE_4_PLAN.md](phases/PHASE_4_PLAN.md) / [phases/PHASE_4_COMPLETE.md](phases/PHASE_4_COMPLETE.md) | Phase 4 plan and completion record. |
+| [phases/PHASE_5_PLAN.md](phases/PHASE_5_PLAN.md) / [phases/PHASE_5_COMPLETE.md](phases/PHASE_5_COMPLETE.md) | Phase 5 plan and completion record. |
 | [phases/PHASE_TEMPLATE.md](phases/PHASE_TEMPLATE.md) | Template for future phase records. |
 
 ## Relationship to `docs/`

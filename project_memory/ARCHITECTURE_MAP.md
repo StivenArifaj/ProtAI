@@ -5,7 +5,7 @@ blueprint. Full narrative and the per-request lifecycle: [../docs/ARCHITECTURE.m
 (mark status per component there as well). **Nothing under "Target v1" may be claimed as
 existing.**
 
-## Implemented today (Phases 0a–4 — VERIFIED 2026-10-19)
+## Implemented today (Phases 0a–5 — VERIFIED 2026-10-26)
 
 Components:
 
@@ -20,30 +20,34 @@ Components:
   `POLICY_SELF_CHECKS_PATH`, `POLICY_PATH`, `RISK_THRESHOLDS_PATH`, and
   `INPUT_DEFENSE_PATH` (Phase 3) with defaults under `config/`; session TTL 86400 s with
   max age 604800 s (validator enforces TTL ≤ max age); `INTENT_MANIFEST_TTL_SECONDS`
-  default 300 s, bounded 1–3600 s (Phase 4).
+  default 300 s, bounded 1–3600 s (Phase 4); `APPROVAL_TTL_SECONDS` default 900 s,
+  bounded 60–86,400 s (Phase 5).
 - `ai_security.security` (`constant_time.py`, `canonical_json.py`, `urls.py`,
   `safe_yaml.py`) and `ai_security.audit.hash_chain`: `hmac.compare_digest` wrappers
   (confinement enforced by the gate), canonical JSON bytes, destination
   canonicalization (https-only, IDNA host, percent-encoding normalization, exact-match),
   duplicate-key-safe YAML parsing used by both loaders, and the ADR-002 hash formula +
   fixed vectors.
-- `ai_security.identity` (`models`, `signing`, `host_auth`, `resolver`, `adapters`):
-  `Principal` (strict, frozen, IANA timezone validated); HMAC signing/verification with
-  the exact newline-joined `v1` message and the full rejection surface;
-  `DevPrincipalResolver` (constructible only in dev/test), fail-closed
-  `HostPrincipalResolver`, and the test-only `TestPrincipalResolver`.
+- `ai_security.identity` (`models`, `signing`, `host_auth`, `resolver`, `adapters`,
+  `approver_rules`): `Principal` (strict, frozen, IANA timezone validated); HMAC
+  signing/verification with the exact newline-joined `v1` message and the full rejection
+  surface; `DevPrincipalResolver` (constructible only in dev/test), fail-closed
+  `HostPrincipalResolver`, the test-only `TestPrincipalResolver`, and the Phase 5 strict
+  `role:`/`principal:` approver-rule parser/evaluator.
 - `ai_security.api.middleware.HostAuthMiddleware`: pure-ASGI, keyed on the `/v1/` path
   prefix; enforces content-length/capped body → signature/timestamp/replay → replays the
   buffered body; denial codes `missing_headers`/…/`replayed_nonce`/`request_too_large`
   with 400/401/413/503; puts `VerifiedHostContext` in `scope["state"]["host_auth"]`.
 - `ai_security.persistence` (`database`, `models`, `nonce_repository`,
-  `audit_repository`, `session_repository`): async engine/session (`pool_pre_ping`, 2 s
-  connect timeout, never-raising `healthy()`); atomic nonce upsert
+  `audit_repository`, `session_repository`, `approval_repository`): async engine/session
+  (`pool_pre_ping`, 2 s connect timeout, never-raising `healthy()`); atomic nonce upsert
   (`ON CONFLICT ... WHERE expires_at < now() RETURNING`); ADR-002 advisory-lock audit
-  append (canonical bytes stored, unique `(chain_id, sequence_number)`); Phase 3
-  `session_security_state` repository — every operation bound to
-  `(tenant_id, subject_id)`, bounded `LEAST(...)` counters, 24 h inactivity / 7 d
-  absolute lazy expiry, signal-free rotation.
+  append plus `append_in_session` (canonical bytes stored, unique
+  `(chain_id, sequence_number)`); Phase 3 `session_security_state` repository — every
+  operation bound to `(tenant_id, subject_id)`, bounded `LEAST(...)` counters, 24 h
+  inactivity / 7 d absolute lazy expiry, signal-free rotation; Phase 5
+  `approval_requests` repository — row-locked decisions/consumption, digest-only tokens,
+  lazy expiry, same-transaction audit.
 - `ai_security.policy` (`models`, `loader`, `self_checks`) + `../config/{policies,risk_thresholds,policy_self_checks}.yaml`:
   the validated policy document model (`ToolPolicy`, `PolicyBundle` with `version` +
   sha256 content hashes), the safe YAML loader (`yaml.safe_load` + duplicate-key
@@ -52,15 +56,19 @@ Components:
   evaluated against the real engine at startup (refusal) and on every readiness probe
   (live drift detection).
 - `ai_security.firewall` (`decision`, `policy_engine`, `risk_engine`, `models`,
-  `gateway`): stable decision contract (`FirewallDecision`, `DecisionReason` codes,
-  `DecisionRecord` with policy version/hash); the deterministic engine implementing the
-  blueprint §10.2 order over strict validated facts (deny-by-default, no I/O, no model
-  calls, ADR-008); `risk-v1` deterministic scoring (side-effect/destination/registration
-  data class, capped, factor codes audited); and the single `invoke_tool` gateway
-  chokepoint (bindings → strict validation → derived resources/destination → adapter
-  resource check → risk → deadline → engine → **manifest verification/constraint match**
-  (Phase 4) → digest-bound authorization → audit-first → bounded execution → typed
-  outcome, ADR-009/011).
+  `gateway`, `approval`): stable decision contract (`FirewallDecision`,
+  `DecisionReason` codes, `DecisionRecord` with policy version/hash); the deterministic
+  engine implementing the blueprint §10.2 order over strict validated facts
+  (deny-by-default, no I/O, no model calls, ADR-008); `risk-v2` deterministic scoring
+  (all `risk-v1` weights plus one bounded distinct-resource breadth factor, capped,
+  factor codes/rationale audited, strict `resource_count`); the single `invoke_tool`
+  gateway chokepoint (bindings → strict validation → deduplicated resources/destination
+  → adapter resource check → risk → deadline → engine → **manifest
+  verification/constraint match** (Phase 4) → **one-time approval consumption for
+  `ASK_USER`** (Phase 5) → digest-bound authorization → audit-first → bounded execution
+  → typed outcome, ADR-009/011/012); and the Phase 5 approval service (strict specs,
+  256-bit token returned once/SHA-256 stored, verified-principal rule evaluation,
+  bounded TTL and lazy expiry).
 - `ai_security.tools` (`base.py`, `registry.py`, `mock_{email,files,external_sink,text}.py`):
   canonical `SideEffectClass` + strict `ToolArguments`/`ToolResult`; sentinel-guarded,
   digest-bound `ExecutionAuthorization`; immutable validated registrations with
@@ -93,11 +101,12 @@ Components:
   plus module-level `app`. Startup refuses bad configuration, dev-resolver misuse,
   policy-configuration errors, self-check mismatch, registry/policy inconsistency, and
   invalid/incomplete input-defense config; builds `Database` + nonce registrar + audit
-  chain + registry + intent service/tracker + gateway + input-defense service + session
-  store; the gateway is constructed with the intent tracker; adds the middleware;
-  `/docs`, `/redoc`, `/openapi.json` only in `development`/`test`. `app.state` exposes
-  `tool_registry`, `tool_gateway`, `input_defense_config`, `input_defense_service`,
-  `session_security`, `intent_usage_tracker`, `intent_manifest_service`.
+  chain + registry + intent service/tracker + approval repository/service + gateway +
+  input-defense service + session store; the gateway is constructed with the intent
+  tracker and approval service; adds the middleware; `/docs`, `/redoc`,
+  `/openapi.json` only in `development`/`test`. `app.state` exposes `tool_registry`,
+  `tool_gateway`, `input_defense_config`, `input_defense_service`, `session_security`,
+  `intent_usage_tracker`, `intent_manifest_service`, and `approval_service`.
 - `ai_security.api.routes_health`: `GET /health/live` → 200 `{"status":"alive"}`;
   `GET /health/ready` → 200/503 with `checks: {config, database, policy_self_checks}`
   plus `policy_version`/`policy_hash`; only booleans and version metadata, never
@@ -105,8 +114,9 @@ Components:
 - `ai_security.api.dependencies`: `get_settings`, `get_database`, `database_ready`,
   `policy_self_checks_ok` (both probes overridable in tests).
 - `migrations/` + `alembic.ini`: async env reading settings; `d15b46c49950`
-  (`host_request_nonces`, `audit_events`) and `c7f1a2b3d4e5` (`session_security_state`);
-  `make migrate`; upgrade/downgrade/upgrade + `alembic check` verified.
+  (`host_request_nonces`, `audit_events`), `c7f1a2b3d4e5` (`session_security_state`), and
+  `e5a1c2b3d4f6` (`approval_requests`, single head); `make migrate`;
+  upgrade/downgrade/upgrade + `alembic check` verified.
 
 Request flow today:
 
@@ -118,13 +128,15 @@ uvicorn → FastAPI app
                   → replay body) → (no routes yet) → 404 after successful auth
 ```
 
-Data: PostgreSQL 17 holds the three tables; nonces are registered per signed request and
+Data: PostgreSQL 17 holds four tables; nonces are registered per signed request and
 gateway calls write decision/outcome events (in tests and in-process callers). The policy
 engine produces decisions consumed only by the gateway; a valid intent manifest is
 required by the app-built gateway and is compared with the derived action before
-execution (manifest uses are tracked in memory). The input-defense service and session
-store are available on `app.state` but no route or model path consumes them yet. Nothing
-in a live request path uses detector findings or trust labels.
+execution (manifest uses are tracked in memory). An engine `ASK_USER` additionally needs
+a matching, unexpired, one-time approval that is atomically consumed before execution.
+The input-defense service and session store are available on `app.state` but no route or
+model path consumes them yet. Nothing in a live request path uses detector findings or
+trust labels.
 
 ## Target v1 (blueprint §§3–4) — NOT IMPLEMENTED
 
@@ -146,16 +158,16 @@ Component map with planned phases:
 |---|---|---|---|
 | `identity/` (HMAC host auth, resolver guard) | 0b | **VERIFIED (0b)** | Authenticate host, verify principal before anything else |
 | `security/` (canonical bytes, constant-time helpers, safe YAML, URLs) | 0b/1/3 | **VERIFIED (0b/1/3)** | Signing message, `hmac.compare_digest` wrappers, canonical JSON, duplicate-key-safe YAML, destinations |
-| `persistence/` (SQLAlchemy 2.x async) | 0b/3 | **VERIFIED (0b/3)** | Engine/session, nonce store, audit append, bound session signals |
-| `migrations/` + `alembic.ini` | 0b/3 | **VERIFIED (0b/3)** | Schema management (ADR-006); baseline + session table |
-| `config/*.yaml` | 0b/1/2/3 | **VERIFIED (1-3)** — policies, thresholds, 21 self-check fixtures, input-defense dispositions | Startup/CI self-check fixtures and strict runtime config |
+| `persistence/` (SQLAlchemy 2.x async) | 0b/3/5 | **VERIFIED (0b/3/5)** | Engine/session, nonce store, audit append, bound session signals, row-locked approval state machine |
+| `migrations/` + `alembic.ini` | 0b/3/5 | **VERIFIED (0b/3/5)** | Schema management (ADR-006); baseline + session + approval tables |
+| `config/*.yaml` | 0b/1/2/3 | **VERIFIED (1-3)** — policies (incl. approval flags/rules), thresholds, 21 self-check fixtures, input-defense dispositions | Startup/CI self-check fixtures and strict runtime config |
 | `input_defense/` | 3 | **VERIFIED (3, advisory)** — heuristics, labels, context assembly, session math; no consumers | Input signals and provenance labels |
-| `intent/` | 4 | NOT IMPLEMENTED | Bounded intent manifest, constraints, request binding |
+| `intent/` | 4 | **VERIFIED (4, in-process)** — sealed request/principal/policy-bound manifests, exact constraints, bounded uses, mock extractor; no transport/provider | Bounded intent manifest, constraints, request binding |
 | `agent/` + providers | 4/8 | NOT IMPLEMENTED | Runtime; mock/local model adapters |
 | `firewall/policy_engine.py` + `decision.py` | 1 | **VERIFIED (1)** — deterministic §10.2 evaluation, stable reason codes, no I/O (ADR-008) | Policy evaluation over validated facts |
-| `firewall/` gateway + risk | 2 | **VERIFIED (2)** — single `invoke_tool` chokepoint, digest-bound authorization, audit-first, `risk-v1` (ADR-009); approvals Phase 5 | The mandatory execution chokepoint |
+| `firewall/` gateway + risk + approval | 2/5 | **VERIFIED (2/5)** — single `invoke_tool` chokepoint, digest-bound authorization, audit-first, `risk-v2`, row-locked one-time approvals for `ASK_USER` (ADR-009/012); no approval route/transport | The mandatory execution chokepoint |
 | `tools/` (canonical enums in `base.py`; registry + mock adapters) | 1/2 | **VERIFIED (2)** — validated registry + deterministic mock adapters; no real connectors in v1 | Mock adapters only |
-| `data_security/` (`DataClass` in 1; DLP, egress in 6) | 1/6 | **PARTIAL (1)** — canonical `DataClass`; classification/DLP/egress Phase 6 | Output and egress inspection |
+| `data_security/` (`DataClass` in 1; DLP, egress in 6) | 1/6 | **PARTIAL (1)** — canonical `DataClass`; content classification/DLP/egress Phase 6 | Output and egress inspection |
 | `audit/` (hash chain) | 7 (scaffold 0b, emission 2) | **PARTIAL (0b/2)** — formula + append protocol + vectors + gateway emission verified; taxonomy/verifier Phase 7 | Serialized append, verifier |
 | `api/` `/v1/*` routes | 8 | NOT IMPLEMENTED (middleware path enforced; services on `app.state`) | Request/tool/approval endpoints |
 | `soc/` (alert-only) | 10 | NOT IMPLEMENTED | Deterministic alerts; read-only analyzer |
@@ -174,6 +186,9 @@ in 0b), and a correctly signed request currently reaches 404 with no side effect
   ([../docs/ARCHITECTURE.md](../docs/ARCHITECTURE.md), import boundaries).
 - The input detector is advisory: findings and trust labels never become policy facts or
   authorization inputs (§7, ADR-010).
+- Intent manifests and approvals can only narrow or gate execution: neither can produce
+  `ALLOW` or override `BLOCK`; approval is consulted only for an engine `ASK_USER`
+  (§§11, 13, ADR-011/012).
 - Development order ≠ runtime order: typed schemas + policy + unbypassable mock gateway
   first; input detection before powerful tools (§21 work-order note).
 - Detectors never become the policy authority; model output is never authorization.

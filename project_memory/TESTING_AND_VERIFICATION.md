@@ -2,16 +2,16 @@
 
 Rules: never claim a result that was not produced by a command actually run. Fresh
 re-runs and historical records are kept in separate tables. Evidence IDs (V1–V29 for
-0a/0b; V30–V35 for Phase 1; V36–V42 for Phase 2; V43–V50 for Phase 3; V51+ for Phase 4)
-are referenced from [IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md) and the phase
-records.
+0a/0b; V30–V35 for Phase 1; V36–V42 for Phase 2; V43–V50 for Phase 3; V51–V56 for
+Phase 4; V57+ for Phase 5) are referenced from
+[IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md) and the phase records.
 
 ## How to verify (documented commands)
 
 | Command | What it checks | Expected |
 |---|---|---|
 | `uv sync --frozen` | lockfile/install consistency | installs with no resolution drift |
-| `uv run pytest` | unit/integration/security tests | 661 passed (DB-backed integration skips cleanly if PostgreSQL is unreachable) |
+| `uv run pytest` | unit/integration/security tests | 734 passed (DB-backed integration skips cleanly if PostgreSQL is unreachable) |
 | `bash scripts/check.sh` | full local gate (8 steps) | exit 0; prints "All checks passed." |
 | `uv run alembic upgrade head` | migrations (needs §5.4 env; host `db`→`127.0.0.1`) | applies baseline to an empty DB; second run reports already at head |
 | `docker compose config -q` | Compose file syntax | exit 0 |
@@ -22,7 +22,7 @@ records.
 | `curl http://127.0.0.1:8080/health/ready` | readiness | 200 ready incl. `policy_version`/`policy_hash` (503 not_ready without DB or with drifted self-checks) |
 | unsigned/signed requests to `/v1/*` | host auth | unsigned → 400 `missing_headers`; valid signature → 404 (no routes yet) with nonce registered; replay → 401 `replayed_nonce` |
 | `uv run python -c "…load_policy_bundle…"` | policy bundle smoke | `version`, per-file hashes, `combined_hash`; 21 fixtures, 0 failures |
-| `uv run pytest tests/security tests/unit/test_gateway.py -q` | no-bypass invariants | 31 passed (denied/unknown/audit-failed calls never reach the adapter) |
+| `uv run pytest tests/security tests/unit/test_gateway.py -q` | no-bypass invariants | 62 passed (denied/unknown/audit-failed calls never reach the adapter) |
 | `docker compose down` | teardown (volume preserved) | stack removed |
 
 Failure behavior: `check.sh` exits non-zero and prints `CHECK FAILED: <reason>`.
@@ -67,6 +67,31 @@ gateway calls in one `async def scenario()` and awaiting `app.state.database.dis
 the local-model timeout test initially passed `timeout_seconds=0.01`, below the
 constructor's 0.1 s minimum (corrected to 0.1); the service module briefly carried an
 unused `IntentManifest` import (removed for ruff/mypy).
+
+## Fresh evidence (2026-10-26, Phase 5 session)
+
+| ID | Command / check | Result |
+|---|---|---|
+| V57 | `uv run --frozen pytest -q` | PASS — **734 passed** (613 unit + 80 integration + 41 security), incl. real-PostgreSQL approval/audit/concurrency tests against Compose PostgreSQL |
+| V58 | `bash scripts/check.sh` | PASS — exit 0, all 8 steps; ruff format/lint clean; mypy clean (63 source files); 734 tests; Gitleaks 8.30.1 dir+git "no leaks found" (27 commits scanned); prohibited-pattern greps clean; `compare_digest` confined to `security/constant_time.py` |
+| V59 | `uv run --frozen pytest tests/integration/test_approval_flow.py tests/integration/test_gateway_approval.py tests/integration/test_gateway_wiring.py tests/integration/test_migrations.py tests/unit/test_risk_engine.py tests/unit/test_approver_rules.py tests/unit/test_settings.py tests/security/test_gateway_no_bypass.py -q` | PASS — **157 passed** (11 approval lifecycle/expiry/mutation/replay/exactly-one-winner, 5 gateway approval gating/no-execution, 2 wiring, 1 migration, 30 risk, 24 approver rules, 60 settings, 24 no-bypass) |
+| V60 | `alembic upgrade head` → `downgrade -1` → `upgrade head` → `check` (test DB) | PASS — `e5a1c2b3d4f6` applies, downgrades to `c7f1a2b3d4e5`, re-applies cleanly; "No new upgrade operations detected" |
+| V61 | `uv run --frozen pytest tests/unit/test_gateway.py -k duplicate_derived_resource_ids -q` | PASS — 1 passed, 20 deselected (duplicate derived resource ids collapse before risk/digest/audit) |
+
+Development-time findings fixed and regression-tested during Phase 5 (recorded for
+honesty): direct `hmac.compare_digest` calls initially appeared in `firewall/approval.py`
+and `persistence/approval_repository.py`; both were replaced with
+`security.constant_time.constant_time_hex32_equal` after the confinement test failed.
+The gateway's `_failed_execution` result metadata initially dropped
+`approval_id`/`approver_subject_id` (caught by the real-PostgreSQL execution-failure
+test); both now propagate. Expiry originally applied only to approved rows on consume;
+pending rows now also transition to `expired` (with an audit event) on decide/consume.
+The gateway originally counted duplicate derived resource-id values toward the breadth
+factor and passed them to approval storage (whose spec requires uniqueness); resource ids
+are now deduplicated in first-occurrence order before risk/digest/audit, with a
+regression test. Ruff format reformatted seven files after the approval suites landed.
+The app-wiring test was extended to assert `app.state.approval_service` is the same
+service injected into the gateway.
 
 ## Fresh evidence (2026-10-19, Phase 3 session)
 
@@ -165,15 +190,16 @@ iterations, at the ruff format and lint steps. Removing the file restored exit 0
 The Phase 0b gate additionally fails if Gitleaks is missing or version-mismatched
 (deliberate pin, 8.30.1).
 
-## Test inventory (661 tests)
+## Test inventory (734 tests)
 
 Unit (`tests/unit/`):
 
-- `test_settings.py` (59) — 0a validation + masking + docs flag; 0b host-auth key
+- `test_settings.py` (60) — 0a validation + masking + docs flag; 0b host-auth key
   schemas, duplicate rejection, sample-secret refusal, resolver guard, TTL/tolerance
   relation, `policy_self_checks_path`; 1 `policy_path`/`risk_thresholds_path` defaults,
   overrides, empty-path rejection; 3 input-defense path/session TTL defaults, TTL ≤
-  max-age, positive windows; Phase 4 intent-manifest TTL default/bounds.
+  max-age, positive windows; Phase 4 intent-manifest TTL default/bounds; Phase 5
+  approval TTL default/bounds.
 - `test_constant_time.py` (16) — equality helpers incl. unequal-length and hex paths.
 - `test_canonical_json.py` (17) — canonical text/bytes stability and edge cases.
 - `test_hash_chain.py` (17) — ADR-002 formula, genesis, fixed vectors, hex conversion.
@@ -185,26 +211,33 @@ Unit (`tests/unit/`):
 - `test_urls.py` (36) — scheme/host/port/path/query canonicalization, IDNA hosts,
   percent-encoding, rejection cases (whitespace, controls, userinfo, fragment, zone id,
   trailing dot), exact-match equality.
-- `test_policy_models.py` (38) — strict policy/threshold documents, anchored tool ids,
-  strict enum/int rejection, bundle hashes, threshold ordering.
+- `test_policy_models.py` (40) — strict policy/threshold documents, anchored tool ids,
+  strict enum/int rejection, bundle hashes, threshold ordering, self-approval flag
+  consistency.
 - `test_policy_loader.py` (20) — safe loading, duplicate keys, missing/non-UTF-8/malformed
   documents, `PolicyConfigError` behavior.
-- `test_policy_engine.py` (64) — table-driven matrix (allowed/forbidden/malformed/
+- `test_policy_engine.py` (71) — table-driven matrix (allowed/forbidden/malformed/
   cross-scope/unknown/error), evaluation-order precedence, thresholds, provenance,
   determinism, malformed requests.
 - `test_policy_self_checks.py` (33) — repo fixture file passes completely; mandated rows
   present; runner detects decision/reason mismatches; malformed fixture shapes rejected;
   readiness report behavior.
-- `test_action_digest.py` (7) — canonical action digest stability, field sensitivity,
+- `test_action_digest.py` (14) — canonical action digest stability, field sensitivity,
   key-order invariance, hex shape.
-- `test_tool_registry.py` (24) — registration validation matrix (DESTRUCTIVE refusal,
+- `test_tool_registry.py` (28) — registration validation matrix (DESTRUCTIVE refusal,
   schema strictness, resource/destination annotation checks, bounds, bool rejection),
-  duplicate resolution, startup consistency failures (`ToolRegistryConfigError`).
-- `test_mock_adapters.py` (14) — mock email/files/sink/text behavior, ownership checks,
+  duplicate resolution, startup consistency failures (`ToolRegistryConfigError`),
+  Phase 5 approver-rule syntax/policy consistency.
+- `test_mock_adapters.py` (15) — mock email/files/sink/text behavior, ownership checks,
   unauthorized-call refusal (`UngatedExecutionError`), digest tamper rejection.
-- `test_risk_engine.py` (9) — `risk-v1` weights, cap at 100, external-destination
-  requirement, factor codes, version reporting.
-- `test_gateway.py` (20) — see the Phase 2 completion record for the full scenario list.
+- `test_risk_engine.py` (30) — every `risk-v1` weight preserved under `risk-v2`, cap at
+  100, external-destination requirement, breadth boundaries (0/1/2/4/5/8/9+), stable
+  factor codes/rationale, invalid counts (bool/str/float/negative/oversize), version.
+- `test_gateway.py` (21) — see the Phase 2 completion record for the full scenario list;
+  Phase 5 adds duplicate-derived-resource-id dedup before risk/digest/audit.
+- `test_approver_rules.py` (24) — strict `role:`/`principal:` grammar (alternatives,
+  limits, control characters, duplicates, unknown prefixes), verified-principal
+  evaluation, tenant/self-approval/unsatisfiable-rule behavior.
 - `test_input_normalization.py` (12) — copy-only normalization, zero-width/control/
   escape/Base64/NFKC/mixed-script signals, iterative JSON depth, invalid UTF-8.
 - `test_input_heuristics.py` (20) — attack matrix, quoted/educational downgrade,
@@ -226,10 +259,12 @@ Unit (`tests/unit/`):
 
 Security (`tests/security/`):
 
-- `test_gateway_no_bypass.py` (12) — denied/unknown/malformed/expired/audit-failed calls
+- `test_gateway_no_bypass.py` (24) — denied/unknown/malformed/expired/audit-failed calls
   never execute (spy adapter byte equality on the sink); no execution without a
   successfully recorded decision; result withheld on outcome-audit failure; direct
-  adapter invocation without a gateway authorization fails closed.
+  adapter invocation without a gateway authorization fails closed; Phase 5 adds
+  ASK_USER-without-approval, granted-execution metadata, non-granted outcome mapping,
+  storage-failure, absent-service, and BLOCK-ignores-approval no-execution cases.
 - `test_input_defense_failure.py` (11) — oversize/unsupported/invalid-encoding stop before
   heuristics; detector/normalizer/classifier faults yield `DETECTOR_UNAVAILABLE`
   (never PASS, no raw content in reports); trust label preserved; no invocation surface.
@@ -239,6 +274,13 @@ Security (`tests/security/`):
 
 Integration (`tests/integration/`):
 
+- `test_approval_flow.py` (11) — real-PostgreSQL approval creation/decision/consumption,
+  digest-only token storage, one-time/replay, action mutation, pending/approved expiry,
+  denial, tenant/eligibility/self-approval, exactly-one-winner concurrency, and
+  same-transaction audit linkage.
+- `test_gateway_approval.py` (5) — real-PostgreSQL gateway ASK_USER gating; approved
+  execution with metadata; pending/denied/mismatch/expiry no-execution; BLOCK ignores and
+  does not consume an approval.
 - `test_health.py` (10) — liveness; readiness 200/503 incl. policy readiness override;
   `policy_version`/`policy_hash` assertions; docs gating all environments; non-leakage.
 - `test_host_auth_middleware.py` (13) — end-to-end denial matrix through the app:
@@ -247,9 +289,14 @@ Integration (`tests/integration/`):
   non-`/v1` paths unauthenticated.
 - `test_nonce_repository.py` (5) — fresh/duplicate/expired re-registration/DB failure
   (incl. raw connection errors) paths.
+- `test_input_defense_wiring.py` (4) — app wiring of the advisory service/config,
+  invalid-config refusal, no execution surface.
+- `test_session_security_state.py` (9) — tenant/subject binding, guessed-ID isolation,
+  bounded counters, inactivity/absolute expiry, signal-free rotation (real PostgreSQL).
 - `test_audit_append.py` (5) — chain continuity, genesis, canonical bytes recompute,
   5-writer concurrency contiguity, unique-sequence guard.
-- `test_migrations.py` (1) — upgrade idempotency on the test database.
+- `test_migrations.py` (1) — upgrade idempotency on the test database (single Alembic
+  head incl. the Phase 5 approval table).
 - `test_policy_self_checks_wiring.py` (8) — startup refuses on missing policy/threshold
   file, invalid policy, and fixture mismatch; valid bundle passes startup + readiness
   with version/hash; live policy-version drift flips to 503 while the startup bundle
@@ -259,7 +306,8 @@ Integration (`tests/integration/`):
   stored payloads, denied egress leaves the sink empty, audit outage → `BLOCK`/
   `audit_unavailable`.
 - `test_gateway_wiring.py` (2) — `create_app` exposes a validated registry + gateway
-  (`ChainAuditRecorder`); startup refuses a policy tool with no registration.
+  (`ChainAuditRecorder`) and the approval service actually injected into the gateway;
+  startup refuses a policy tool with no registration.
 - `test_intent_wiring.py` (4) — app exposes intent service/tracker and the gateway uses
   that tracker; TTL applied; end-to-end allow + use exhaustion; clarification and
   wrong-request manifest denial (real PostgreSQL).

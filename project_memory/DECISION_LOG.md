@@ -26,6 +26,7 @@ the index; never silently rewrite the historical rationale.
 | ADR-009 | Tool registry, execution authorization, and the enforced gateway | Phase 2 | [../docs/adr/ADR-009-tool-registry-and-enforced-gateway.md](../docs/adr/ADR-009-tool-registry-and-enforced-gateway.md) |
 | ADR-010 | Advisory input threat defense, trust labels, and session signals | Phase 3 | [../docs/adr/ADR-010-advisory-input-defense-and-session-signals.md](../docs/adr/ADR-010-advisory-input-defense-and-session-signals.md) |
 | ADR-011 | Server-issued, sealed intent manifests and concrete action constraints | Phase 4 | [../docs/adr/ADR-011-server-issued-intent-manifests.md](../docs/adr/ADR-011-server-issued-intent-manifests.md) |
+| ADR-012 | `risk-v2` bounded breadth factor + durable one-time human approvals bound to the canonical action digest | Phase 5 | [../docs/adr/ADR-012-risk-v2-and-human-approvals.md](../docs/adr/ADR-012-risk-v2-and-human-approvals.md) |
 
 ## Implementation decisions (Phase 0a, within blueprint constraints)
 
@@ -100,7 +101,7 @@ the index; never silently rewrite the historical rationale.
 | Gitleaks install method on macOS | **DECIDED:** operator installs (brew); gate pins 8.30.1 and fails clearly when missing/mismatched | done |
 | Git initialization + baseline commit scope | **DONE:** baseline `41e10da` + 0b commits + Phase 1 commit series; no remote | done |
 | ADR format enrichment ("alternatives considered" / "tests/verification" sections) | Still open; ADR-008 was created with the established Status/Context/Decision/Consequences/References shape | next ADR |
-| `risk_score` fact source | **DECIDED (2, ADR-009):** computed by the versioned `risk-v1` engine in the gateway (side-effect/destination/registration-data-class factors); never caller-supplied. Factor expansion + approvals in Phase 5; calibration in Phase 9 | done (calibration later) |
+| `risk_score` fact source | **DECIDED (2/5, ADR-009/012):** computed by the versioned `risk-v2` engine in the gateway (all `risk-v1` factors + one bounded distinct-resource breadth factor); never caller-supplied. Calibration remains Phase 9 | done (calibration later) |
 | Policy hot-reload (atomic reload per §10.6) | Open; readiness detects drift today, process keeps startup bundle | Not scheduled (documented limitation) |
 
 ## Implementation decisions (Phase 3, within blueprint constraints; contract in ADR-010)
@@ -132,3 +133,19 @@ the index; never silently rewrite the historical rationale.
 | Relative dates resolve only from the host-signed principal timezone; missing/invalid timezone fails closed | Prompt/model/IP/header time sources are attacker-influenced; DST correctness is testable | ADR-011; time-window tests |
 | `IntentUsageTracker` in-memory with 10,000 live-manifest cap | Simple fail-closed enforcement for a single-process app; shared state is a later operational concern | ADR-011; `docs/KNOWN_LIMITATIONS.md` |
 | No `/v1` manifest transport or signed serialization in Phase 4 | The blueprint assigns routes/providers to Phase 8; an in-process sealed object avoids inventing a transport contract | ADR-011; known limitations |
+
+## Implementation decisions (Phase 5, within blueprint constraints; contract in ADR-012)
+
+| Decision | Rationale | Recorded in |
+|---|---|---|
+| `risk-v2` preserves every `risk-v1` weight and adds exactly one bounded breadth factor (2–4/5–8/9+ distinct resources → +5/+10/+15, cap 100) | Additive, testable evolution without silently rewriting prior scores; a version bump is required for algorithm changes | ADR-012; `firewall/risk_engine.py`; risk tests |
+| Packaged resource ids are validated then deduplicated in first-occurrence order before risk/digest/audit | Two argument names may carry the same target; the approval contract requires a distinct set and duplicate values must not inflate breadth | ADR-012; `firewall/gateway.py`; dedup regression |
+| Approver rules are a strict declarative grammar (`role:<role>` / `principal:<subject>` with `|`), parsed at registry startup | No executable expressions; malformed/oversized/duplicate rules fail startup; evaluation uses only the verified principal | ADR-012; `identity/approver_rules.py`; rule/registry tests |
+| Self-approval is default-deny and requires `self_approval_allowed`, valid only with `approval_eligible`; a requester-only rule with self-approval disabled is refused before storage | Prevents a policy from creating an unsatisfiable or self-granting approval path | ADR-012; policy model tests; approval tests |
+| Approval tokens are 256-bit CSPRNG values returned once; the row stores only the SHA-256 digest; IDs are 32 lowercase hex | Token theft from storage is not replayable; digest comparison uses the project constant-time helper | ADR-012; `firewall/approval.py`; lifecycle tests |
+| TTL defaults to 900 s and is bounded to 60–86,400 s; expiry is lazy on decide/consume (pending or approved → expired + audit) | Bounded approval lifetime without a background sweeper dependency; every observed expiry is audited | ADR-012; settings/approval tests |
+| `SELECT ... FOR UPDATE` decisions/consumption; decision/consumption audit appended in the same transaction via `append_in_session` | Exactly one consumer under concurrency; no state transition without its evidence | ADR-012; `persistence/approval_repository.py`; concurrency/audit tests |
+| Approval is consulted only for an engine `ASK_USER`; `ALLOW` needs none and `BLOCK`/hard deny ignores it without consuming | Approval is a gate, never policy authority; hard denies stay dominant | ADR-012; gateway approval/security tests |
+| The gateway does not auto-create approval requests; the Phase 8 host workflow must call the service with host-verified facts | Avoid inventing a route/UX contract and prevent model output from fabricating approval facts | ADR-012; known limitations |
+| Failure mapping is typed (`approval_invalid` / `approval_denied` / `approval_expired`) with no adapter call; storage errors log only the tool id | Preserve the no-execution guarantee and log hygiene on every failure path | ADR-012; security tests |
+| Consuming an approval burns it even if a later execution step fails | Deliberate anti-replay tradeoff; a retry requires a fresh approval | ADR-012; known limitation #44 |

@@ -2,6 +2,31 @@
 
 Concise, dated history of project activity. Newest first.
 
+## 2026-10-26
+
+- **Phase 5 (risk engine and human approvals) implemented and verified:** `risk-v2`
+  preserves every `risk-v1` weight and adds one bounded distinct-resource breadth factor
+  (2–4/5–8/9+ → +5/+10/+15, cap 100) with strict `resource_count` validation and stable
+  factor codes/rationale. New `firewall/approval.py` + `identity/approver_rules.py` +
+  `persistence/approval_repository.py` + migration `e5a1c2b3d4f6` implement durable,
+  tenant/action-bound approval requests with a strict `role:`/`principal:` rule grammar,
+  a 256-bit token returned once and stored only as SHA-256, a 60–86,400 s TTL (default
+  900), lazy expiry, verified-principal decisions with default-deny self-approval, and
+  `SELECT ... FOR UPDATE` exactly-once consumption with same-transaction audit. The
+  gateway now validates/deduplicates derived resource ids before risk/digest/audit and
+  consults approval only for an engine `ASK_USER`; a valid consumed grant makes that
+  exact action executable once, while `BLOCK`/hard denials ignore one. New reason codes
+  `approval_granted`/`approval_denied`/`approval_expired`/`approval_invalid`; audit gains
+  `APPROVAL_REQUESTED`/`APPROVAL_DECIDED`/`APPROVAL_CONSUMED`/`APPROVAL_EXPIRED`;
+  `APPROVAL_TTL_SECONDS` added; app wiring exposes `approval_service` and injects it into
+  the gateway. Contract recorded in ADR-012. Evidence V57–V62 in
+  [TESTING_AND_VERIFICATION.md](TESTING_AND_VERIFICATION.md) — **734 tests** (613 unit +
+  80 integration + 41 security), 8/8 gate, mypy 63 files, Alembic single head. Phase
+  record: [phases/PHASE_5_COMPLETE.md](phases/PHASE_5_COMPLETE.md).
+- **Phase 5 non-goals held:** no `/v1/approvals` routes/UI/token transport, no automatic
+  request creation, no approver directory/notifications/revocation, no background expiry
+  sweeper, and no weight calibration (Phase 9).
+
 ## 2026-10-19
 
 - **Phase 4 (intent extraction and action validation) implemented and verified** (same
