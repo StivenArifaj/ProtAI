@@ -80,7 +80,7 @@ destinations:
 def test_repository_configuration_loads_and_covers_the_registered_sink() -> None:
     loaded = load_output_dlp_config(CONFIG)
     defense = OutputDefenseService(loaded)
-    assert loaded.config.version == "1.0.0"
+    assert loaded.config.version == "1.0.1"
     assert loaded.sha256 == hashlib.sha256(Path(CONFIG).read_bytes()).hexdigest()
     assert {pattern.code for pattern in loaded.config.patterns} == {
         "synthetic_canary",
@@ -454,3 +454,21 @@ def test_finding_cap_never_skips_an_unscanned_blocking_pattern() -> None:
     assert egress.outcome is DlpOutcome.block
     assert egress.inspection_error is True
     assert egress.findings == ()
+
+
+def test_credential_redaction_covers_a_multi_word_value() -> None:
+    """A passphrase must not leave its tail after the first whitespace token."""
+    defense = service()
+    payload = {
+        "body": "password: correct horse battery staple",
+        "safe": "keep me",
+    }
+    report = defense.inspect_output(data=payload, declared_data_class=DataClass.public)
+    assert report.outcome is DlpOutcome.redact
+    assert report.finding_codes == ("credential_assignment",)
+
+    redacted, changed = defense.redact_payload(payload, report=report)
+    assert changed is True
+    assert redacted == {"body": "[REDACTED:CREDENTIAL]", "safe": "keep me"}
+    again = defense.inspect_output(data=redacted, declared_data_class=DataClass.public)
+    assert again.outcome is DlpOutcome.pass_

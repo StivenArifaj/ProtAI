@@ -9,7 +9,7 @@
 # `CLASSIFY` lets the exact destination trust map decide. `release` controls what a
 # matching response finding does to the complete buffered result.
 schema_version: 1
-version: "1.0.0"
+version: "1.0.1"
 limits:
   max_scan_bytes: 262144
   max_findings: 32
@@ -35,7 +35,7 @@ patterns:
     release: BLOCK
   - code: credential_assignment
     category: CREDENTIAL
-    pattern: "(?i)\\b(?:password|passwd|secret|api[_-]?key|access[_-]?token|refresh[_-]?token)\\s*[:=]\\s*[\"']?(?!\\[REDACTED:)[^\\s\"']{6,}"
+    pattern: "(?i)\\b(?:password|passwd|secret|api[_-]?key|access[_-]?token|refresh[_-]?token)\\s*[:=]\\s*[\"']?(?!\\[REDACTED:)[^\\s\\r\\n\"'][^\\r\\n]{5,}"
     data_class: CONFIDENTIAL
     egress: BLOCK
     release: REDACT
