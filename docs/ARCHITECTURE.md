@@ -1,15 +1,16 @@
 # Architecture
 
-Status: **implemented through Phase 6.** This document describes the intended v1
+Status: **implemented through Phase 7.** This document describes the intended v1
 architecture from blueprint v1.2 (sections 3-4) and marks what actually exists today.
 Host authentication, the deterministic policy engine, the mock-tool gateway, advisory
 input threat detection with trust labels and session signals, server-issued intent
 manifests with concrete action constraints, `risk-v2`, durable one-time human approvals,
-and mandatory output DLP with destination-aware egress and complete-response
-release/suppression exist and are tested; real connectors, a real model provider,
-approval transport, and the audit verifier do not. The detector is
-advisory and the intent layer can only narrow execution; neither is consumed by a live
-`/v1` route yet. Only components marked Implemented below may be cited as controls.
+mandatory output DLP with destination-aware egress and complete-response
+release/suppression, and the full structured audit lifecycle with an exact-stored-bytes
+verifier exist and are tested; real connectors, a real model provider, approval transport,
+and an external audit anchor do not. The detector is advisory and the intent layer can
+only narrow execution; neither is consumed by a live `/v1` route yet. Only components
+marked Implemented below may be cited as controls.
 
 ## Logical flow (target v1)
 
@@ -75,12 +76,15 @@ enforcement is not an agent security system (blueprint section 3.2).
 17. Tool output re-labeled untrusted when returned to the model.
 18. Complete buffered output DLP before release: `PASS`/`REDACT`/`BLOCK`/`REVIEW`;
     `BLOCK`/`REVIEW`/failure suppress the whole response (Phase 6; streaming disabled).
-19. Completion/failure/DLP metadata recorded.
+19. Mandatory structured audit lifecycle: request receipt, proposal, egress inspection,
+    decision, approval consumption, execution start/outcome, output inspection, and
+    response release/suppression; every mandatory pre-execution append gates execution and
+    a post-execution failure withholds the result (Phase 7).
 20. Safe response; no hidden policies, credentials, stack traces, or other users' data.
 
 ## Component map and current status
 
-| Package / component | Blueprint role | Status (Phase 6) |
+| Package / component | Blueprint role | Status (Phase 7) |
 |---|---|---|
 | `src/ai_security/api/` | HTTP adapter, health endpoints | **Implemented:** `create_app` factory, `/health/live`, `/health/ready`, host-auth middleware, registry + gateway wiring on `app.state` (plus `output_dlp_config`/`output_defense`); `/v1/*` business routes do not exist yet |
 | `src/ai_security/settings.py` | Validated configuration | **Implemented:** fail-closed validation incl. host keys, replay window, request bound, policy/threshold/self-check paths, input-defense path, session windows, intent-manifest TTL, the bounded approval TTL (60-86,400 s; default 900), and `OUTPUT_DLP_PATH` |
@@ -92,13 +96,13 @@ enforcement is not an agent security system (blueprint section 3.2).
 | `firewall/` | Gateway, policy engine, risk engine, approvals | **Implemented (1-6):** decision/engine/risk (`risk-v2` with one bounded breadth factor), the single `invoke_tool` gateway with audit-first ordering, bindings, deadlines, bounds, manifest/constraint enforcement, one-time approval consumption for engine `ASK_USER`, egress DLP before risk/policy, and complete-response release/redaction/suppression; approval request/decision service is in-process only |
 | `tools/` (registry + mock adapters) | Tool capability layer | **Implemented (2):** validated registry + startup consistency (incl. external-destination inventory for the DLP trust map), digest-bound execution authorization, deterministic in-memory email/files/sink/text adapters |
 | `data_security/` | Classification, DLP, egress | **Implemented (1/6, deterministic):** canonical `DataClass`; strict versioned output-DLP config; five deterministic detectors; span-preserving redaction; exact-canonical destination trust map with startup coverage; `PASS`/`REDACT`/`BLOCK`/`REVIEW` outcomes. No classifier/entropy/semantic detection |
-| `audit/` | Hash-chained audit events | **Partial (0b/2/6):** ADR-002 append protocol, hash chain, Phase-2 decision/outcome emitter, Phase-5 approval events, and an additive redacted `dlp` record; full taxonomy/verifier/retention Phase 7 |
-| `persistence/` | SQLAlchemy async repositories | **Implemented (0b/3/5/6):** engine/session, nonce + audit repositories, `session_security_state` repository, and `approval_requests` repository (row-locked decisions/consumption, digest-only tokens, same-transaction audit); Phase 6 adds no table |
+| `audit/` | Hash-chained audit events | **Implemented (0b/2/5/7):** ADR-002 append protocol and hash chain, full §16.1 taxonomy with event-specific required fields, mandatory gateway/approval/intent lifecycle emission, first-class redacted DLP events, and a read-only verifier over exact stored bytes with typed content-free failures. Names for future ingress/alerting events are defined but producerless; no external anchor/query API (ADR-014) |
+| `persistence/` | SQLAlchemy async repositories | **Implemented (0b/3/5/7):** engine/session, nonce + audit repositories (derived indexed metadata columns for correlation), `session_security_state` repository, and `approval_requests` repository (row-locked decisions/consumption, digest-only tokens, same-transaction audit) |
 | `soc/` | Alert-only analytics | Not implemented (Phase 10) |
 | `config/*.yaml` | Policies, thresholds, self-checks | **Implemented (1-3/6):** `policies.yaml`, `risk_thresholds.yaml`, 21-fixture `policy_self_checks.yaml`, exhaustive-disposition `input_defense.yaml`, and strict `output_dlp.yaml` (`1.0.1`: five patterns, limits, exact destination trust map) |
-| `migrations/`, `alembic.ini` | Alembic schema management | **Implemented (0b/3/5):** baseline + `session_security_state` + `approval_requests` migrations; upgrade/downgrade verified; `alembic check` clean |
+| `migrations/`, `alembic.ini` | Alembic schema management | **Implemented (0b/3/5/7):** baseline + `session_security_state` + `approval_requests` + audit-metadata migrations; upgrade/downgrade verified; `alembic check` clean |
 | `evaluation/` | Dataset, metrics, reports | Not implemented (Phase 9) |
-| `docs/adr/` | Decision records | **Implemented:** ADR-001..013 recorded |
+| `docs/adr/` | Decision records | **Implemented:** ADR-001..014 recorded |
 
 ## Import boundaries (enforced from Phase 1 onward; check.sh enforces prohibited patterns)
 

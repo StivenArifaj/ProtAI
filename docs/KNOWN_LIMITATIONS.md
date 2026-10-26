@@ -1,6 +1,6 @@
 # Known Limitations
 
-As of **Phase 6 (output DLP and egress policy, 2026-10-26)**. This list must
+As of **Phase 7 (audit persistence and verification, 2026-10-26)**. This list must
 be updated every phase; anything not explicitly implemented must remain listed here or in
 `docs/IMPLEMENTATION_STATE.md`.
 
@@ -38,14 +38,16 @@ be updated every phase; anything not explicitly implemented must remain listed h
    `/v1` route issues or transports a manifest, and the app uses the two-scenario mock
    extractor rather than general natural-language understanding. Trust labels and
    detector findings still have no consumer.
-5. **Audit coverage is a subset.** The gateway emits `POLICY_EVALUATED` and
-   `TOOL_EXECUTION_COMPLETED`/`_FAILED` into the ADR-002 chain; Phase 5 adds
-   `APPROVAL_REQUESTED`/`APPROVAL_DECIDED`/`APPROVAL_CONSUMED`/`APPROVAL_EXPIRED`.
-   Phase 6 attaches an optional additive `dlp` record (redacted findings, classes,
-   digests, destination trust) to those existing events rather than adding DLP event
-   types. The full taxonomy, verifier, retention, and query/API surfaces are Phase 7. A
-   denial whose audit append fails is kept as a denial (no side effect exists) and the
-   append is logged; decision audit failure on a would-be `ALLOW` blocks execution.
+5. **Audit lifecycle coverage is limited to the paths that exist.** The gateway emits
+   the full request→proposal→inspection→decision→execution→inspection→response sequence;
+   the approval service emits `APPROVAL_REQUESTED`/`_DECIDED`/`_CONSUMED`/`_EXPIRED`; the
+   intent service can emit `INTENT_CREATED`/`_FAILED`. `PRINCIPAL_RESOLVED`/`_REJECTED`,
+   `INPUT_INSPECTED`, and `SECURITY_ALERT_RAISED` have **no producer** until the Phase 8
+   ingress and Phase 10 alerting work; their names exist but no code fakes them. Audit
+   rows are queryable by derived columns, but there is no query API/UI. A denial whose
+   append fails remains a denial (no side effect exists) and the append is logged;
+   pre-execution audit failure on a would-be action denies, and post-execution failure
+   withholds the result.
 6. **No AI SOC.** No analytics component exists.
 7. **No rate limiting or request deadlines.** `/v1/*` routes do not exist; the gateway
    enforces per-call deadlines and per-tool concurrency, but Phase 8 adds request-level
@@ -99,14 +101,16 @@ be updated every phase; anything not explicitly implemented must remain listed h
     the scan runs when the operator runs the gate. `.gitleaks.toml` allowlists exactly
     the one documented disposable Compose dev key.
 18. **No SBOM.** CycloneDX artifact generation is Phase 10.
-19. **Minimal schema.** The tables are `host_request_nonces`, `audit_events` (baseline
-    `d15b46c49950`), `session_security_state` (Phase 3, `c7f1a2b3d4e5`), and
-    `approval_requests` (Phase 5, `e5a1c2b3d4f6`). Phase 6 adds no table: DLP evidence is
-    an additive optional JSON field on existing audit events under schema v1. Expired
-    session rows and pending/approved approval rows are transitioned lazily on access;
-    there is no scheduled retention/expiry sweeper. The nonce and audit tables likewise
-    grow until operational cleanup lands. Event payloads live inside
-    `audit_events.canonical_event_bytes`, not a queryable typed table.
+19. **Minimal schema plus derived audit metadata.** The tables are `host_request_nonces`,
+    `audit_events` (baseline `d15b46c49950`; Phase 7 derived metadata migration
+    `f7a8b9c0d1e2`), `session_security_state` (Phase 3, `c7f1a2b3d4e5`), and
+    `approval_requests` (Phase 5, `e5a1c2b3d4f6`). Audit payloads still live in
+    `audit_events.canonical_event_bytes`; the Phase 7 columns (`event_type`,
+    `request_id`, `trace_id`, `call_id`, `occurred_at`, `component`) are derived and
+    verifier-checked, not authoritative. Expired session rows and pending/approved
+    approval rows are transitioned lazily on access; there is no scheduled
+    retention/expiry sweeper, so the nonce, session, approval, and audit tables grow until
+    an operator prunes them. No purge automation exists.
 20. **No CI configuration.** `scripts/check.sh` (8 steps) is the gate.
 
 ## Verification gaps in this environment
@@ -180,10 +184,16 @@ be updated every phase; anything not explicitly implemented must remain listed h
 38. **Destination trust covers only external mutations.** It is an exact-canonical map
     with startup coverage of registered `EXTERNAL_MUTATION` destinations; local-write
     policy and per-tenant destination trust are not modeled in Phase 6.
-39. **DLP evidence is not yet a first-class audit taxonomy.** There are no
-    `EGRESS_INSPECTED`/`OUTPUT_INSPECTED`/`RESPONSE_*` events and no verifier for the
-    additive `dlp` field; both are Phase 7. The DLP config version/hash is recorded in
-    evidence but is not yet part of readiness metadata.
+39. **The audit chain has no external anchor.** A plain local hash chain is
+    tamper-evident, not tamper-proof. Mutation, reordering, and middle deletion are
+    detected, but deleting the newest event(s) leaves a shorter chain that still verifies;
+    an attacker who can rewrite the database consistently can produce a different valid
+    chain. Detecting truncation/rewrite requires an externally stored head
+    hash + sequence checkpoint (transparency log, signed daily digest, or separate
+    store), which Phase 7 does not deploy. The verifier is read-only, loads one chain into
+    memory, and is intended for the v1 single-chain deployment; no scheduled verification
+    job, audit query API/UI, per-event signature, or automated retention exists. Guidance:
+    `docs/AUDIT_RETENTION_AND_DATA_HANDLING.md`.
 40. **No live `/v1` DLP surface.** As with every phase so far, Phase 6 enforcement is
     in-process and exercised by tests; no route accepts a request or returns a model
     response. The gateway remains the only execution path.

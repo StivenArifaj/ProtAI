@@ -4,11 +4,11 @@ Repository foundation for the AI Agent Security & Safety Platform. The authorita
 specification is `AI_Agent_Security_Platform_Master_Blueprint_v1.2.md` in the repository
 root; the archived v1.0 is under `archive/` and is superseded.
 
-**Current state: Phases 0a-6 complete and verified** (repository foundation; security
+**Current state: Phases 0a-7 complete and verified** (repository foundation; security
 foundation; typed contracts + deterministic policy engine; tool registry + enforced
 gateway; advisory input defense + context provenance; intent extraction + manifest
 validation; risk v2 + durable one-time human approvals; output DLP + destination-aware
-egress policy). Implemented today: enforced
+egress policy; full audit taxonomy + correlation + exact-bytes verification). Implemented today: enforced
 configuration validation; host HMAC authentication + replay rejection on the `/v1/*`
 path prefix; deterministic policy engine with 21 startup/readiness self-check fixtures;
 typed tool registry + mock-only adapters; the `invoke_tool` gateway as the only execution
@@ -24,12 +24,18 @@ tokens, and row-locked one-time consumption, enforced by the gateway for engine
 `ASK_USER`; and mandatory output DLP that inspects validated tool-bound arguments before
 execution and the complete buffered result before release, with deterministic pattern
 detection, exact-canonical destination trust, span-preserving redaction, and full-response
-suppression. Detection is advisory and intent/approval/DLP can only narrow, gate, or raise
+suppression. Phase 7 adds the complete structured audit lifecycle (request, proposal,
+inspection, decision, approval consumption, execution, output inspection, response) with
+first-class redacted DLP events, indexed correlation metadata, a read-only verifier over
+the exact stored hash-chain bytes with typed tamper findings, and audit/log privacy tests.
+Detection is advisory and intent/approval/DLP can only narrow, gate, or raise
 sensitivity: none can produce an `ALLOW` or bypass policy. **No `/v1` business or approval
 routes, manifest/approval transport, real model provider, classifier/entropy-based DLP,
-real connectors, sandbox, or audit verifier exist yet** — do not present the system as
+real connectors, sandbox, external audit anchor, automated retention, or audit query
+API/UI exist yet** — do not present the system as
 providing them. See `docs/IMPLEMENTATION_STATE.md`, `docs/SECURITY_INVARIANTS.md`,
-`docs/OUTPUT_DLP_FALSE_POSITIVES.md`, and `docs/KNOWN_LIMITATIONS.md`.
+`docs/OUTPUT_DLP_FALSE_POSITIVES.md`, `docs/AUDIT_RETENTION_AND_DATA_HANDLING.md`, and
+`docs/KNOWN_LIMITATIONS.md`.
 
 ## Prerequisites
 
@@ -41,7 +47,7 @@ providing them. See `docs/IMPLEMENTATION_STATE.md`, `docs/SECURITY_INVARIANTS.md
 
 ```bash
 uv sync --frozen          # install from the committed lockfile
-uv run pytest             # full suite (766 unit/integration/security tests)
+uv run pytest             # full suite (827 unit/integration/security tests)
 bash scripts/check.sh     # full local gate: lockfile, ruff, mypy, pytest, invariant greps
 ```
 
@@ -106,3 +112,4 @@ partially configured state.
 - `docs/IMPLEMENTATION_STATE.md` — what exists, what is verified, what is deferred
 - `docs/KNOWN_LIMITATIONS.md` — known gaps of the current phase
 - `docs/OUTPUT_DLP_FALSE_POSITIVES.md` — tested DLP hard negatives, false positives, false negatives
+- `docs/AUDIT_RETENTION_AND_DATA_HANDLING.md` — stored/excluded audit fields, retention, export/backup/deletion, integrity limits

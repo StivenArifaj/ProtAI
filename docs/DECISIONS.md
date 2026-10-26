@@ -8,7 +8,8 @@ Phase 2 registry/gateway contract; ADR-010 records the Phase 3 advisory input-de
 trust-label, and session-signal contract; ADR-011 records the Phase 4 server-issued
 intent-manifest and constraint contract; ADR-012 records the Phase 5 `risk-v2` and
 durable one-time approval contract; ADR-013 records the Phase 6 output-DLP and
-destination-aware egress contract.
+destination-aware egress contract; ADR-014 records the Phase 7 audit taxonomy,
+correlation metadata, and exact-bytes verifier contract.
 
 | ADR | Title | Status | Implementation phase |
 |---|---|---|---|
@@ -25,6 +26,7 @@ destination-aware egress contract.
 | [ADR-011](adr/ADR-011-server-issued-intent-manifests.md) | Server-issued, sealed intent manifests and concrete action constraints | Accepted | Phase 4 |
 | [ADR-012](adr/ADR-012-risk-v2-and-human-approvals.md) | Versioned risk v2 and durable, one-time human approvals | Accepted | Phase 5 |
 | [ADR-013](adr/ADR-013-output-dlp-and-egress.md) | Mandatory output DLP, exact destination trust, and complete-response release/suppression | Accepted | Phase 6 |
+| [ADR-014](adr/ADR-014-audit-taxonomy-and-verification.md) | Audit event taxonomy, derived correlation metadata, exact-stored-bytes verifier, and retention boundary | Accepted | Phase 7 |
 
 ## Adding a new ADR
 
