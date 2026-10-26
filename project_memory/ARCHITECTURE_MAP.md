@@ -5,7 +5,7 @@ blueprint. Full narrative and the per-request lifecycle: [../docs/ARCHITECTURE.m
 (mark status per component there as well). **Nothing under "Target v1" may be claimed as
 existing.**
 
-## Implemented today (Phases 0a–6 — VERIFIED 2026-10-26)
+## Implemented today (Phases 0a–7 — VERIFIED 2026-10-26)
 
 Components:
 
@@ -48,8 +48,18 @@ Components:
   operation bound to `(tenant_id, subject_id)`, bounded `LEAST(...)` counters, 24 h
   inactivity / 7 d absolute lazy expiry, signal-free rotation; Phase 5
   `approval_requests` repository — row-locked decisions/consumption, digest-only tokens,
-  lazy expiry, same-transaction audit, effective-class binding (Phase 6). Phase 6 adds no
-  table; DLP evidence is additive audit JSON.
+  lazy expiry, same-transaction audit, effective-class binding (Phase 6); **Phase 7**
+  `audit_events` gains derived/indexed `event_type`, `request_id`, `trace_id`, `call_id`,
+  `occurred_at`, and `component` columns populated by the append path from the exact
+  payload while stored bytes remain authoritative. Phase 6 adds no table; Phase 7's
+  metadata migration is additive.
+- `ai_security.audit` (`models`, `writer`, `hash_chain`, `verifier`): **Phase 7** full
+  blueprint §16.1 taxonomy (plus `APPROVAL_CONSUMED`) with event-type-conditional
+  required fields and strict payload constructors; `ChainAuditRecorder` over the single
+  repository; and a read-only `verify_chain` that reads one consistent snapshot,
+  recomputes the ADR-002 hash from exact stored canonical bytes, and checks sequence
+  contiguity, previous-hash linkage, canonical JSON, and derived-metadata agreement with
+  typed content-free failures. No external anchor or scheduled verification.
 - `ai_security.policy` (`models`, `loader`, `self_checks`) + `../config/{policies,risk_thresholds,policy_self_checks}.yaml`:
   the validated policy document model (`ToolPolicy`, `PolicyBundle` with `version` +
   sha256 content hashes), the safe YAML loader (`yaml.safe_load` + duplicate-key
@@ -70,9 +80,14 @@ Components:
   verification/constraint match** (Phase 4) → **one-time approval consumption for
   `ASK_USER`** (Phase 5) → digest-bound authorization → audit-first → bounded execution
   → **complete-response DLP release/redaction/suppression** (Phase 6) → typed outcome,
-  ADR-009/011/012/013); and the Phase 5 approval service (strict specs,
-  256-bit token returned once/SHA-256 stored, verified-principal rule evaluation,
-  bounded TTL and lazy expiry, Phase 6 effective-class binding).
+  ADR-009/011/012/013/014); **Phase 7** makes the audit lifecycle mandatory and ordered:
+  proposal/receipt before validation, egress inspection before policy, execution-start
+  before the adapter, completion/failure before output inspection, and response events
+  before release, with fail-closed pre-execution gating and post-execution result
+  withholding. The Phase 5 approval service (strict specs, 256-bit token returned
+  once/SHA-256 stored, verified-principal rule evaluation, bounded TTL and lazy expiry,
+  Phase 6 effective-class binding) emits its lifecycle events; intent issuance emits
+  best-effort `INTENT_CREATED`/`INTENT_FAILED`.
 - `ai_security.tools` (`base.py`, `registry.py`, `mock_{email,files,external_sink,text}.py`):
   canonical `SideEffectClass` + strict `ToolArguments`/`ToolResult`; sentinel-guarded,
   digest-bound `ExecutionAuthorization`; immutable validated registrations with
@@ -117,12 +132,12 @@ Components:
   `Database` + nonce registrar + audit
   chain + registry + intent service/tracker + approval repository/service + gateway +
   input-defense service + session store + output defense; the gateway is constructed with
-  the intent tracker, approval service, and output defense; adds the middleware; `/docs`,
-  `/redoc`,
+  the intent tracker, approval service, and output defense; the intent service receives
+  the audit recorder; adds the middleware; `/docs`, `/redoc`,
   `/openapi.json` only in `development`/`test`. `app.state` exposes `tool_registry`,
   `tool_gateway`, `input_defense_config`, `input_defense_service`, `session_security`,
   `intent_usage_tracker`, `intent_manifest_service`, `approval_service`,
-  `output_dlp_config`, and `output_defense`.
+  `output_dlp_config`, `output_defense`, and the audit chain/recorder.
 - `ai_security.api.routes_health`: `GET /health/live` → 200 `{"status":"alive"}`;
   `GET /health/ready` → 200/503 with `checks: {config, database, policy_self_checks}`
   plus `policy_version`/`policy_hash`; only booleans and version metadata, never
@@ -130,8 +145,9 @@ Components:
 - `ai_security.api.dependencies`: `get_settings`, `get_database`, `database_ready`,
   `policy_self_checks_ok` (both probes overridable in tests).
 - `migrations/` + `alembic.ini`: async env reading settings; `d15b46c49950`
-  (`host_request_nonces`, `audit_events`), `c7f1a2b3d4e5` (`session_security_state`), and
-  `e5a1c2b3d4f6` (`approval_requests`, single head); `make migrate`;
+  (`host_request_nonces`, `audit_events`), `c7f1a2b3d4e5` (`session_security_state`),
+  `e5a1c2b3d4f6` (`approval_requests`), and `f7a8b9c0d1e2` (audit metadata columns,
+  indexes, guarded backfill; single head); `make migrate`;
   upgrade/downgrade/upgrade + `alembic check` verified.
 
 Request flow today:
@@ -145,16 +161,20 @@ uvicorn → FastAPI app
 ```
 
 Data: PostgreSQL 17 holds four tables; nonces are registered per signed request and
-gateway calls write decision/outcome events (in tests and in-process callers). The policy
-engine produces decisions consumed only by the gateway; a valid intent manifest is
-required by the app-built gateway and is compared with the derived action before
-execution (manifest uses are tracked in memory). An engine `ASK_USER` additionally needs
-a matching, unexpired, one-time approval that is atomically consumed before execution.
-Output DLP runs on validated arguments before risk/policy and on the complete buffered
-result before release; its effective class feeds risk/policy/approval/audit and its
-redacted evidence is attached to existing audit events. The input-defense service and
-session store are available on `app.state` but no route or model path consumes them yet.
-Nothing in a live request path uses detector findings or trust labels.
+gateway calls append the complete mandatory lifecycle (receipt → proposal → egress
+inspection → policy decision → approval consumption when granted → execution →
+output inspection → response) to the audit chain, with approval/intent producers
+contributing their own events. The policy engine produces decisions consumed only by the
+gateway; a valid intent manifest is required by the app-built gateway and is compared
+with the derived action before execution (manifest uses are tracked in memory). An engine
+`ASK_USER` additionally needs a matching, unexpired, one-time approval that is atomically
+consumed before execution. Output DLP runs on validated arguments before risk/policy and
+on the complete buffered result before release; its effective class feeds
+risk/policy/approval/audit and its redacted evidence is attached to first-class
+inspection/response events. The input-defense service and session store are available on
+`app.state` but no route or model path consumes them yet. Nothing in a live request path
+uses detector findings or trust labels. `audit/verifier.py` can verify a chain from a
+consistent snapshot but is not scheduled or exposed by a route.
 
 ## Target v1 (blueprint §§3–4) — NOT IMPLEMENTED
 
@@ -186,8 +206,8 @@ Component map with planned phases:
 | `firewall/` gateway + risk + approval + DLP enforcement | 2/5/6 | **VERIFIED (2/5/6)** — single `invoke_tool` chokepoint, digest-bound authorization, audit-first, `risk-v2`, row-locked one-time approvals for `ASK_USER`, mandatory egress/response DLP (ADR-009/012/013); no approval route/transport | The mandatory execution chokepoint |
 | `tools/` (canonical enums in `base.py`; registry + mock adapters) | 1/2 | **VERIFIED (2)** — validated registry + deterministic mock adapters; no real connectors in v1 | Mock adapters only |
 | `data_security/` (`DataClass` in 1; DLP, egress in 6) | 1/6 | **VERIFIED (1/6, deterministic)** — canonical `DataClass` + strict output-DLP config/detectors/redaction/destination trust; no classifier/entropy/semantic detection | Output and egress inspection |
-| `audit/` (hash chain) | 7 (scaffold 0b, emission 2/5/6) | **PARTIAL (0b/2/5/6)** — formula + append protocol + vectors + gateway/approval emission + additive redacted `dlp` evidence verified; taxonomy/verifier Phase 7 | Serialized append, verifier |
-| `api/` `/v1/*` routes | 8 | NOT IMPLEMENTED (middleware path enforced; services on `app.state`) | Request/tool/approval endpoints |
+| `audit/` (hash chain, taxonomy, verifier) | 7 (scaffold 0b, emission 2/5/6) | **VERIFIED (7)** — full §16.1 taxonomy/conditional fields, mandatory gateway/approval/intent lifecycle with fail-closed gating, first-class redacted DLP events, derived correlation metadata, exact-stored-bytes verifier with typed failures (ADR-014); no external anchor/retention automation/query API | Serialized append, verifier |
+| `api/` `/v1/*` routes | 8 | NOT IMPLEMENTED (middleware path enforced; services on `app.state`; ingress principal assertion, input audit producer, routes, rate limits, and local model are Phase 8) | Request/tool/approval endpoints |
 | `soc/` (alert-only) | 10 | NOT IMPLEMENTED | Deterministic alerts; read-only analyzer |
 | `evaluation/` | 9 | NOT IMPLEMENTED | Dataset, metrics, reproducible reports |
 
@@ -209,6 +229,11 @@ in 0b), and a correctly signed request currently reaches 404 with no side effect
 - Intent manifests and approvals can only narrow or gate execution: neither can produce
   `ALLOW` or override `BLOCK`; approval is consulted only for an engine `ASK_USER`
   (§§11, 13, ADR-011/012).
+- Audit is evidence, never an authorization input: no route, policy, risk, intent, or
+  approval decision may consume audit rows or verifier output as permission. Audit
+  availability does gate execution/release through the Phase 7 fail-closed lifecycle.
+- Audit metadata columns are query convenience only; the stored canonical bytes and hash
+  remain authoritative, and the verifier is read-only (ADR-014).
 - Development order ≠ runtime order: typed schemas + policy + unbypassable mock gateway
   first; input detection before powerful tools (§21 work-order note).
 - Detectors never become the policy authority; model output is never authorization.

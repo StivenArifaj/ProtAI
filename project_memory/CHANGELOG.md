@@ -4,6 +4,38 @@ Concise, dated history of project activity. Newest first.
 
 ## 2026-10-26
 
+- **Phase 7 (audit persistence and verification) implemented and verified:** the audit
+  schema now covers every blueprint §16.1 event name (plus `APPROVAL_CONSUMED`) with
+  event-specific required fields instead of invented placeholders. The gateway emits a
+  mandatory ordered lifecycle (`REQUEST_RECEIVED` → `TOOL_CALL_PROPOSED` →
+  `EGRESS_INSPECTED` → `POLICY_EVALUATED` → optional `APPROVAL_CONSUMED` →
+  `TOOL_EXECUTION_STARTED` → `TOOL_EXECUTION_COMPLETED`/`_FAILED` → `OUTPUT_INSPECTED` →
+  `RESPONSE_RELEASED`/`_SUPPRESSED`); a pre-execution append failure returns
+  `BLOCK`/`audit_unavailable` with no adapter call, and a post-execution failure returns
+  `AUDIT_FAILED` with the result withheld. Approval and intent services emit their events;
+  DLP evidence moved to first-class redacted `EGRESS_INSPECTED`/`OUTPUT_INSPECTED`/
+  `RESPONSE_*` records; `APPROVAL_CONSUMED` binds the effective side-effect/data class.
+  New derived/indexed audit columns (`event_type`, `request_id`, `trace_id`, `call_id`,
+  `occurred_at`, `component`) are extracted by the single append path from the exact
+  payload, with additive migration `f7a8b9c0d1e2` and a guarded per-row backfill that
+  never rewrites stored bytes or hashes. New `audit/verifier.py` reads one consistent
+  snapshot, recomputes ADR-002 hashes from exact stored `canonical_event_bytes`, and
+  checks sequence contiguity, previous-hash linkage, canonical JSON, and metadata
+  agreement with typed content-free failures. New audit/log privacy tests prove canary,
+  email, credential, private-key, and API-key values never enter serialized payloads or
+  DEBUG logs. Contract in ADR-014; retention/data-handling guide in
+  [../docs/AUDIT_RETENTION_AND_DATA_HANDLING.md](../docs/AUDIT_RETENTION_AND_DATA_HANDLING.md).
+  Evidence V67–V71 in [TESTING_AND_VERIFICATION.md](TESTING_AND_VERIFICATION.md) —
+  **827 tests** (680 unit + 102 integration + 45 security), 8/8 gate, mypy 65 files,
+  Alembic single head. Commits `0b60ba0` (implementation/tests/migration), `d53b0ed`
+  (ADR-014/docs), plus memory/completion and V71 status records. Phase record:
+  [phases/PHASE_7_COMPLETE.md](phases/PHASE_7_COMPLETE.md).
+- **Phase 7 honest limits:** a local hash chain is tamper-evident, not tamper-proof;
+  truncation of the newest events and a consistent full-chain rewrite by a database owner
+  are not detectable without an external checkpoint (none is deployed). No automated
+  retention/purge, scheduled verification, audit query API/UI, or per-event signature.
+  `PRINCIPAL_RESOLVED`/`PRINCIPAL_REJECTED`, `INPUT_INSPECTED`, and
+  `SECURITY_ALERT_RAISED` remain producerless until Phase 8/10 and are never faked.
 - **Phase 6 (output DLP and egress policy) implemented and verified:** new
   `data_security/dlp.py` + strict `config/output_dlp.yaml` (`1.0.1`) provide five
   deterministic detectors (synthetic canary, private-key header, `sk-` API key,

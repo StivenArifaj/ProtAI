@@ -44,13 +44,14 @@ These are settled design decisions, not open questions for an implementer to re-
 - Transport contract: HMAC-authenticated host-to-gateway requests (§9.2, ADR-001).
 - Persistence contract: SQLAlchemy 2.x async + asyncpg + Alembic (ADR-005, ADR-006).
 - Audit chain: appended under a PostgreSQL transaction-scoped advisory lock with exact
-  canonical bytes and hash formula defined by ADR-002/§16.2.
+  canonical bytes and hash formula defined by ADR-002/§16.2; verified read-only from the
+  exact stored bytes by the Phase 7 verifier (ADR-014).
 - v1 response streaming disabled (ADR-003).
 - Approval consumption atomic and one-time (§13, Phase 5).
 - SOC analyzer read-only/alert-only; attacker-influenced fields treated as untrusted
   (§17, ADR-004).
 
-## Stack (current, verified through Phase 6)
+## Stack (current, verified through Phase 7)
 
 - Python `>=3.12,<3.13` (3.12.15 in use), managed with uv 0.13.1.
 - FastAPI + uvicorn; pydantic / pydantic-settings; asyncpg + SQLAlchemy 2.x async
@@ -64,7 +65,7 @@ These are settled design decisions, not open questions for an implementer to re-
 
 - Single operator (personal project), macOS (darwin), local development only.
 - Working copy: `/Users/stiven/ProtAI`.
-- The repository is **under git** (baseline `41e10da` + Phase 0b/1/2/3/4/5/6 commits on
+- The repository is **under git** (baseline `41e10da` + Phase 0b/1/2/3/4/5/6/7 commits on
   `main`; no remote configured).
 - Docker Desktop must be running for the Compose path. The stack is normally stopped
   (`docker compose down`) or reduced to `db` for tests; the `db_data` volume is preserved.

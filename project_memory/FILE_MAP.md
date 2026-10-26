@@ -38,9 +38,9 @@ root; entries in tables below use [../](../) where needed for links.
 | `identity/resolver.py` | `DevPrincipalResolver` (guarded), fail-closed `HostPrincipalResolver` (typed host assertion still pending), factory guard | VERIFIED | resolver tests | §9.3, ADR-001 |
 | `identity/adapters.py` | `TestPrincipalResolver`/`TestAdapterRefusedError` — test-only, unreachable via settings/factory (Phase 1) | VERIFIED | 8 tests | §9.3, ADR-008 |
 | `persistence/database.py` | Async engine/session factory; never-raising `healthy()` | VERIFIED | health + integration | ADR-005 |
-| `persistence/models.py` | `host_request_nonces` (unique key+nonce), `audit_events` (unique chain+seq), `session_security_state` (4 check constraints, binding + last-seen indexes, Phase 3), `approval_requests` (status/score constraints, expiry/requester indexes, Phase 5) | VERIFIED | repository/session/approval tests | §7.4, §9.2, §13, §16.2 |
+| `persistence/models.py` | `host_request_nonces` (unique key+nonce), `audit_events` (unique chain+seq; Phase 7 derived indexed metadata columns), `session_security_state` (4 check constraints, binding + last-seen indexes, Phase 3), `approval_requests` (status/score constraints, expiry/requester indexes, Phase 5) | VERIFIED | repository/session/approval/verifier tests | §7.4, §9.2, §13, §16.1–16.2 |
 | `persistence/nonce_repository.py` | Atomic single-statement nonce registration | VERIFIED | concurrency tests | §9.4 |
-| `persistence/audit_repository.py` | ADR-002 advisory-lock append with canonical bytes, plus `append_in_session` for same-transaction approval audit | VERIFIED | vector + 5-writer + approval tests | §16.2, ADR-002, ADR-012 |
+| `persistence/audit_repository.py` | ADR-002 advisory-lock append with canonical bytes, plus `append_in_session` for same-transaction approval audit; Phase 7 derives/validates indexed metadata from the exact payload while stored bytes remain authoritative | VERIFIED | vector + 5-writer + approval + verifier tests | §16.1–16.2, ADR-002, ADR-012/014 |
 | `persistence/session_repository.py` | Tenant/subject-bound session signals: create/read/record/rotate, `LEAST(...)` bounded counters, 24 h/7 d lazy expiry, mismatch = not found (Phase 3) | VERIFIED | 9 integration tests | §7.4, §20.2 #23, ADR-010 |
 | `persistence/approval_repository.py` | Row-locked approval decisions/consumption (`SELECT ... FOR UPDATE`), digest-only token check, lazy expiry, same-transaction audit; exactly-once consumption (Phase 5) | VERIFIED | 11 approval + 5 gateway-approval integration tests | §13, §20.2 #20/#24, ADR-012 |
 | `tools/base.py` | Canonical `SideEffectClass`, tool-id contract, strict `ToolArguments`/`ToolResult`, `ToolAdapter`, `ToolExecutionError`, sentinel-guarded `ExecutionAuthorization` + `compute_action_digest` + `verify_execution_authorization` (Phases 1-2) | VERIFIED | policy + digest/adapter/security tests | §6.1, §12.4, §13.2, ADR-008/009 |
@@ -72,10 +72,11 @@ root; entries in tables below use [../](../) where needed for links.
 | `policy/models.py` | Validated policy documents, `ToolPolicy` (incl. approval eligibility/rule/self-approval), `Thresholds`, `PolicyBundle` (version + content hashes) | VERIFIED | 40 tests | §10.4, §10.7, §13, ADR-008/012 |
 | `policy/loader.py` | Safe YAML loader: `yaml.safe_load` + `yaml.compose` duplicate-key detection; `PolicyConfigError` fails closed | VERIFIED | 20 tests | §10.4, ADR-008 |
 | `policy/self_checks.py` | Strict fixture loader/runner + `PolicyReadinessReport`/`evaluate_policy_readiness` evaluated against the real engine | VERIFIED | 33 + wiring tests | ADR-007, ADR-008 |
-| `audit/models.py` | Audit event subset (Phase 2 plus Phase 5 approval events) with an optional additive redacted `dlp` record (Phase 6), schema v1 constants, payload-safe `AuditEvent.to_payload()` | VERIFIED | gateway/approval/integration tests | §16.1-16.2, ADR-009/012/013 |
-| `audit/writer.py` | `AuditRecorder` protocol + `ChainAuditRecorder` over the ADR-002 repository; `AuditWriteError` | VERIFIED | gateway/integration tests | §16.2, §16.4, ADR-009 |
+| `audit/models.py` | Full §16.1 `AuditEventType` taxonomy (+`APPROVAL_CONSUMED`) with event-type-conditional required fields, strict `call_id`/payload validation, and redacted `DlpAuditRecord` placement on inspection/response events (Phase 7; schema v1) | VERIFIED | 29 audit schema + gateway/approval/intent/integration tests | §16.1–16.2, ADR-014 |
+| `audit/writer.py` | `AuditRecorder` protocol + `ChainAuditRecorder` over the ADR-002 repository; `AuditWriteError` | VERIFIED | gateway/integration tests | §16.2, §16.4, ADR-009/014 |
+| `audit/verifier.py` | Read-only exact-stored-bytes chain verifier: one consistent snapshot, sequence contiguity, genesis/linkage, ADR-002 hash recomputation, canonical JSON, metadata agreement; typed content-free failures; bounded `max_failures` (Phase 7) | VERIFIED | 17 real-PostgreSQL verifier/tamper tests | §16.2, ADR-002/014 |
 | `api/__init__.py` | Package marker | VERIFIED | — | — |
-| `api/app.py` | `create_app` factory + module-level `app`; startup refusals (incl. policy, input-defense, and output-DLP config); middleware + registrar + audit chain + registry/intent/approval/gateway + input-defense/session + output-defense wiring on `app.state`; gateway receives the intent tracker, approval service, and output defense | VERIFIED | health + wiring/intent/approval/DLP tests | §7.2, §13, §15, §18.2, ADR-007/008/009/010/011/012/013 |
+| `api/app.py` | `create_app` factory + module-level `app`; startup refusals (incl. policy, input-defense, and output-DLP config); middleware + registrar + audit chain + registry/intent/approval/gateway + input-defense/session + output-defense wiring on `app.state`; gateway receives the intent tracker, approval service, and output defense; intent service receives the audit recorder | VERIFIED | health + wiring/intent/approval/DLP/audit tests | §7.2, §13, §15, §16, §18.2, ADR-007/008/009/010/011/012/013/014 |
 | `api/dependencies.py` | `get_settings`; `database_ready`; `policy_readiness` returning `PolicyReadinessReport` (overridable) | VERIFIED | health tests | §18.1, §20.1 |
 | `api/routes_health.py` | `/health/live`, `/health/ready` (config/database/policy_self_checks + `policy_version`/`policy_hash`; booleans + metadata only) | VERIFIED | health tests | §18.1 |
 | `api/middleware.py` | `HostAuthMiddleware` on `/v1/*` (size → HMAC → nonce → replay) | VERIFIED | 13 middleware tests + live V26/V27 | §9.2, §18.2 |
@@ -102,8 +103,9 @@ root; entries in tables below use [../](../) where needed for links.
 | `unit/test_tool_registry.py` | Registration validation matrix + startup consistency + approver-rule validation | VERIFIED | 28 |
 | `unit/test_mock_adapters.py` | Mock adapter behavior + unauthorized-call/tamper refusal | VERIFIED | 15 |
 | `unit/test_risk_engine.py` | `risk-v2` parity, breadth boundaries, rationale/codes, invalid counts, cap/version | VERIFIED | 30 |
-| `unit/test_gateway.py` | Gateway flow, failure ordering, audit outages, timeouts, bounds, concurrency, resource-id dedup; Phase 6 egress/response DLP enforcement | VERIFIED | 29 |
+| `unit/test_gateway.py` | Gateway flow, failure ordering, audit outages, timeouts, bounds, concurrency, resource-id dedup; Phase 6 egress/response DLP enforcement; Phase 7 mandatory lifecycle + 8-position fail-closed audit matrix | VERIFIED | 37 |
 | `unit/test_output_dlp.py` | Strict DLP config/coverage, detectors, destination trust, floor, redaction, outcomes, oversize/error fail-closed, overlapping spans, finding-cap and multi-word credential fixes | VERIFIED | 19 |
+| `unit/test_audit_schema.py` | Full §16.1 taxonomy, event-specific required fields, `call_id`, DLP record placement, strict payloads, no fabricated producerless events | VERIFIED | 29 |
 | `unit/test_input_normalization.py` | Copy-only normalization + JSON structure signals | VERIFIED | 12 |
 | `unit/test_input_heuristics.py` | Attack matrix, quoted-context downgrade, external-only rules, benign hard negatives | VERIFIED | 20 |
 | `unit/test_input_defense_config.py` | Strict config: duplicates, missing/unknown codes, PASS mapping, content types | VERIFIED | 9 |
@@ -113,7 +115,7 @@ root; entries in tables below use [../](../) where needed for links.
 | `unit/test_approver_rules.py` | Strict role/principal grammar, verified-principal evaluation, tenant/self-approval/unsatisfiable rules | VERIFIED | 24 |
 | `unit/test_intent_extractors.py` | Mock scenarios + strict local-model parsing/retry/outage/timeout/unsafe target | VERIFIED | 13 |
 | `unit/test_intent_validation.py` | Exact constraint matching, tracker uses/expiry/capacity, DST/relative-date math | VERIFIED | 10 |
-| `unit/test_intent_service.py` | Issuance/bindings/TTL, clarification/rejection, unenforceable constraints, failures | VERIFIED | 13 |
+| `unit/test_intent_service.py` | Issuance/bindings/TTL, clarification/rejection, unenforceable constraints, failures; Phase 7 best-effort `INTENT_CREATED`/`INTENT_FAILED` audit | VERIFIED | 16 |
 | `integration/test_input_defense_wiring.py` | Startup wiring + invalid-config refusals | VERIFIED | 4 |
 | `integration/test_session_security_state.py` | Binding, guessed IDs, bounded counters, TTL/max-age, rotation, lazy delete (real PostgreSQL) | VERIFIED | 9 |
 | `integration/test_intent_wiring.py` | App state/tracker identity/TTL, end-to-end allow + use limit, clarification, wrong-request denial (real PostgreSQL) | VERIFIED | 4 |
@@ -125,19 +127,21 @@ root; entries in tables below use [../](../) where needed for links.
 | `integration/test_host_auth_middleware.py` | End-to-end denial matrix through the ASGI app | VERIFIED | 13 |
 | `integration/test_nonce_repository.py` | Atomic registration incl. expiry + failure paths | VERIFIED | 5 |
 | `integration/test_audit_append.py` | Chain continuity, vectors, 5-writer concurrency | VERIFIED | 5 |
+| `integration/test_audit_verifier.py` | Real-PostgreSQL exact-bytes verification, mutation/reordering/middle-deletion/metadata/non-canonical tamper detection, chain isolation, bounded typed failures, truncation limit | VERIFIED | 17 |
 | `integration/test_migrations.py` | Upgrade idempotency | VERIFIED | 1 |
 | `integration/test_policy_self_checks_wiring.py` | Startup refusals + readiness drift detection | VERIFIED | 8 |
 | `integration/test_gateway_end_to_end.py` | Real-Postgres chain order/linkage, result digest, non-leakage, denied egress, audit outage, Phase 6 redacted `dlp`/released-digest linkage | VERIFIED | 3 |
 | `integration/test_gateway_wiring.py` | `create_app` registry/gateway/approval/output-defense wiring + unregistered-tool and DLP trust-coverage/file startup refusals | VERIFIED | 5 |
 | `integration/test_approval_flow.py` | Real-PostgreSQL approval lifecycle, digest-only storage, replay/mutation/expiry/denial, five-way concurrency, same-transaction audit | VERIFIED | 11 |
 | `integration/test_gateway_approval.py` | Real-PostgreSQL ASK_USER gating, approved execution metadata, no-execution matrix, BLOCK precedence, Phase 6 stale-class/DLP-before-approval | VERIFIED | 7 |
-| `security/test_gateway_no_bypass.py` | Denied/unknown/audit-failed calls never execute; no decision → no execution; direct-adapter fail-closed; approval absent/granted/non-granted/storage-error paths; BLOCK ignores approval; DLP denials leave the sink unchanged | VERIFIED | 24 |
+| `security/test_gateway_no_bypass.py` | Denied/unknown/audit-failed calls never execute; no decision → no execution; direct-adapter fail-closed; approval absent/granted/non-granted/storage-error paths; BLOCK ignores approval; DLP denials leave the sink unchanged; Phase 7 lifecycle fail-closed cases | VERIFIED | 24 |
+| `security/test_audit_privacy.py` | Raw canary/email/credential/private-key/API-key values absent from serialized audit payloads and DEBUG logs across denial/failure/suppression/intent paths; approval tokens never in the chain | VERIFIED | 4 |
 
 ## Scripts
 
 | File | Purpose | Status | Blueprint |
 |---|---|---|---|
-| `../scripts/check.sh` | 8-step local gate: `uv lock --check`; ruff format; ruff lint; mypy; pytest (766); **Gitleaks 8.30.1** (`dir` + `git`, redacted, fails if missing/mismatched); prohibited-pattern greps (prohibit `os.system(`, `subprocess`, `shell=True`, `eval(`, `exec(`, `pickle`, `yaml.load(` in `src/`); `compare_digest` confinement grep | VERIFIED | §20.3 |
+| `../scripts/check.sh` | 8-step local gate: `uv lock --check`; ruff format; ruff lint; mypy; pytest (827); **Gitleaks 8.30.1** (`dir` + `git`, redacted, fails if missing/mismatched); prohibited-pattern greps (prohibit `os.system(`, `subprocess`, `shell=True`, `eval(`, `exec(`, `pickle`, `yaml.load(` in `src/`); `compare_digest` confinement grep | VERIFIED | §20.3 |
 
 ## Migrations
 
@@ -148,6 +152,7 @@ root; entries in tables below use [../](../) where needed for links.
 | `../migrations/versions/d15b46c49950_baseline_host_request_nonces_audit_.py` | Baseline: `host_request_nonces`, `audit_events` | VERIFIED | §9.2, §16.2 |
 | `../migrations/versions/c7f1a2b3d4e5_session_security_state.py` | `session_security_state`: binding/expiry constraints, bounded counters (Phase 3) | VERIFIED | §7.4, §20.2 #23 |
 | `../migrations/versions/e5a1c2b3d4f6_approval_requests.py` | `approval_requests`: status/score constraints, expiry/requester indexes, digest-only token (Phase 5) | VERIFIED | §13, ADR-012 |
+| `../migrations/versions/f7a8b9c0d1e2_audit_event_metadata.py` | Additive audit metadata columns/indexes + guarded per-row payload backfill; never rewrites canonical bytes/hashes (Phase 7) | VERIFIED | §16.1, ADR-014 |
 
 ## Config
 
@@ -165,11 +170,12 @@ root; entries in tables below use [../](../) where needed for links.
 |---|---|---|
 | [../docs/ARCHITECTURE.md](../docs/ARCHITECTURE.md) | Component map + per-request lifecycle; per-component status marks | VERIFIED (doc) |
 | [../docs/THREAT_MODEL.md](../docs/THREAT_MODEL.md) | 16 threats + trust classes/boundaries with implementation status | VERIFIED (doc) |
-| [../docs/SECURITY_INVARIANTS.md](../docs/SECURITY_INVARIANTS.md) | 25 mandatory invariants (blueprint §20.2) with Phase 6 statuses (#6/#7/#8/#9/#21 implemented; #14 DLP evidence; scope statement 0a-6) | VERIFIED (doc) |
+| [../docs/SECURITY_INVARIANTS.md](../docs/SECURITY_INVARIANTS.md) | 25 mandatory invariants (blueprint §20.2) with Phase 7 statuses (#6/#7/#8/#9/#21 implemented; #14 DLP plus audit verification; scope statement 0a-7) | VERIFIED (doc) |
 | [../docs/POLICY_DECISION_MATRIX.md](../docs/POLICY_DECISION_MATRIX.md) | Mandated v1 decision matrix (implemented by the Phase 1 engine and consumed by the Phase 2 gateway; reason-code mapping documented) | VERIFIED (doc) |
 | [../docs/DECISIONS.md](../docs/DECISIONS.md) | ADR index (summaries + links; no full ADRs) | VERIFIED (doc) |
-| [../docs/IMPLEMENTATION_STATE.md](../docs/IMPLEMENTATION_STATE.md) | Blueprint §22.4 phase-state document; 62-row verification record through Phase 6; 0a/0b/1/2/3/4/5/6 DoD checklists | VERIFIED |
-| [../docs/KNOWN_LIMITATIONS.md](../docs/KNOWN_LIMITATIONS.md) | Limitations items 1-40 with phase pointers | VERIFIED |
+| [../docs/IMPLEMENTATION_STATE.md](../docs/IMPLEMENTATION_STATE.md) | Blueprint §22.4 phase-state document; verification record through Phase 7 (V1–V71); 0a/0b/1/2/3/4/5/6/7 DoD checklists | VERIFIED |
+| [../docs/KNOWN_LIMITATIONS.md](../docs/KNOWN_LIMITATIONS.md) | Canonical limitations list with phase pointers (includes Phase 7 anchor/verifier/retention limits) | VERIFIED |
+| [../docs/AUDIT_RETENTION_AND_DATA_HANDLING.md](../docs/AUDIT_RETENTION_AND_DATA_HANDLING.md) | Audit stored/excluded fields, retention/ownership, export/backup/deletion, integrity guarantees and anchor limit (Phase 7) | VERIFIED (doc) |
 | [../docs/OUTPUT_DLP_FALSE_POSITIVES.md](../docs/OUTPUT_DLP_FALSE_POSITIVES.md) | Tested benign cases, known false positives, intentional false negatives, fail-closed cases, tuning guidance | VERIFIED (doc) |
 | [../docs/adr/ADR-001-host-hmac-authentication.md](../docs/adr/ADR-001-host-hmac-authentication.md) | HMAC host auth + dev-resolver guard (Phase 0b) | VERIFIED (ADR, Accepted) |
 | [../docs/adr/ADR-002-audit-hash-chain.md](../docs/adr/ADR-002-audit-hash-chain.md) | Audit hash-chain append + canonical bytes (Phase 7; scaffold 0b) | VERIFIED (ADR, Accepted) |
@@ -184,6 +190,7 @@ root; entries in tables below use [../](../) where needed for links.
 | [../docs/adr/ADR-011-server-issued-intent-manifests.md](../docs/adr/ADR-011-server-issued-intent-manifests.md) | Server-issued, sealed intent manifests and concrete action constraints (Phase 4) | VERIFIED (ADR, Accepted) |
 | [../docs/adr/ADR-012-risk-v2-and-human-approvals.md](../docs/adr/ADR-012-risk-v2-and-human-approvals.md) | `risk-v2` breadth factor and durable one-time human approvals (Phase 5) | VERIFIED (ADR, Accepted) |
 | [../docs/adr/ADR-013-output-dlp-and-egress.md](../docs/adr/ADR-013-output-dlp-and-egress.md) | Mandatory two-phase output DLP, exact destination trust, release/suppression semantics (Phase 6) | VERIFIED (ADR, Accepted) |
+| [../docs/adr/ADR-014-audit-taxonomy-and-verification.md](../docs/adr/ADR-014-audit-taxonomy-and-verification.md) | Complete audit taxonomy, mandatory lifecycle, derived metadata, exact-bytes verifier, schema evolution and truncation limit (Phase 7) | VERIFIED (ADR, Accepted) |
 
 ## Memory (`project_memory/`)
 
@@ -192,7 +199,7 @@ root; entries in tables below use [../](../) where needed for links.
 | [README.md](README.md) | Entry point, reading order, status labels, update rules |
 | [PROJECT_CONTEXT.md](PROJECT_CONTEXT.md) | Identity, goals, non-goals, stack, environment |
 | [IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md) | Source of truth for what exists now |
-| [NEXT_SESSION.md](NEXT_SESSION.md) | Handoff for Phase 7 |
+| [NEXT_SESSION.md](NEXT_SESSION.md) | Handoff for Phase 8 |
 | [ARCHITECTURE_MAP.md](ARCHITECTURE_MAP.md) | Implemented vs target architecture |
 | [SECURITY_REQUIREMENTS.md](SECURITY_REQUIREMENTS.md) | Security contract with per-control status |
 | [DECISION_LOG.md](DECISION_LOG.md) | ADR links + implementation decisions |
@@ -216,6 +223,7 @@ root; entries in tables below use [../](../) where needed for links.
 | [phases/PHASE_5_PLAN.md](phases/PHASE_5_PLAN.md) | Phase 5 plan (executed) |
 | [phases/PHASE_5_COMPLETE.md](phases/PHASE_5_COMPLETE.md) | Phase 5 record |
 | [phases/PHASE_6_COMPLETE.md](phases/PHASE_6_COMPLETE.md) | Phase 6 record |
+| [phases/PHASE_7_COMPLETE.md](phases/PHASE_7_COMPLETE.md) | Phase 7 record |
 | [phases/PHASE_TEMPLATE.md](phases/PHASE_TEMPLATE.md) | Phase-record template |
 
 ## Not yet present (planned locations)
@@ -227,5 +235,7 @@ root; entries in tables below use [../](../) where needed for links.
 holds the decision contract, policy engine, risk engine, approval service, and enforced
 gateway; `data_security/` holds canonical classification and deterministic output DLP;
 `input_defense/` is advisory with no consumers yet; `intent/` is in-process with a mock
-extractor; approvals are durable but have no route/transport; DLP has no live route or
-first-class audit taxonomy yet.)
+extractor and no local provider; approvals are durable but have no route/transport; the
+audit taxonomy, lifecycle, metadata, and verifier exist but have no external anchor,
+scheduled verification, retention automation, or query API; `/v1` business routes and the
+agent runtime do not exist yet.)

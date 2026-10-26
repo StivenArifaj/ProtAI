@@ -3,7 +3,7 @@
 Rules: never claim a result that was not produced by a command actually run. Fresh
 re-runs and historical records are kept in separate tables. Evidence IDs (V1–V29 for
 0a/0b; V30–V35 for Phase 1; V36–V42 for Phase 2; V43–V50 for Phase 3; V51–V56 for
-Phase 4; V57–V62 for Phase 5; V63+ for Phase 6) are referenced from
+Phase 4; V57–V62 for Phase 5; V63–V66 for Phase 6; V67+ for Phase 7) are referenced from
 [IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md) and the phase records.
 
 ## How to verify (documented commands)
@@ -11,9 +11,9 @@ Phase 4; V57–V62 for Phase 5; V63+ for Phase 6) are referenced from
 | Command | What it checks | Expected |
 |---|---|---|
 | `uv sync --frozen` | lockfile/install consistency | installs with no resolution drift |
-| `uv run pytest` | unit/integration/security tests | 766 passed (DB-backed integration skips cleanly if PostgreSQL is unreachable) |
+| `uv run pytest` | unit/integration/security tests | 827 passed (DB-backed integration skips cleanly if PostgreSQL is unreachable) |
 | `bash scripts/check.sh` | full local gate (8 steps) | exit 0; prints "All checks passed." |
-| `uv run alembic upgrade head` | migrations (needs §5.4 env; host `db`→`127.0.0.1`) | applies baseline to an empty DB; second run reports already at head |
+| `uv run alembic upgrade head` | migrations (needs §5.4 env; host `db`→`127.0.0.1`) | applies baseline through `f7a8b9c0d1e2`; second run reports already at head |
 | `docker compose config -q` | Compose file syntax | exit 0 |
 | `docker compose build api` | container build incl. `config/`, `migrations/`, `alembic.ini` | image builds |
 | `docker compose run --rm api alembic upgrade head` | in-container migration | baseline applied |
@@ -22,7 +22,7 @@ Phase 4; V57–V62 for Phase 5; V63+ for Phase 6) are referenced from
 | `curl http://127.0.0.1:8080/health/ready` | readiness | 200 ready incl. `policy_version`/`policy_hash` (503 not_ready without DB or with drifted self-checks) |
 | unsigned/signed requests to `/v1/*` | host auth | unsigned → 400 `missing_headers`; valid signature → 404 (no routes yet) with nonce registered; replay → 401 `replayed_nonce` |
 | `uv run python -c "…load_policy_bundle…"` | policy bundle smoke | `version`, per-file hashes, `combined_hash`; 21 fixtures, 0 failures |
-| `uv run pytest tests/security tests/unit/test_gateway.py -q` | no-bypass invariants | 70 passed (denied/unknown/audit-failed calls never reach the adapter; DLP denials included) |
+| `uv run pytest tests/security tests/unit/test_gateway.py -q` | no-bypass invariants | 82 passed (denied/unknown/audit-failed calls never reach the adapter; DLP denials and the Phase 7 fail-closed lifecycle included) |
 | `docker compose down` | teardown (volume preserved) | stack removed |
 
 Failure behavior: `check.sh` exits non-zero and prints `CHECK FAILED: <reason>`.
@@ -117,6 +117,29 @@ adapter returns synthetic addresses, so response redaction intentionally changes
 fields in those fixtures. The approval-class-binding test uses an email finding raised to
 `INTERNAL` under a permissive test trust map because the shipped policy blocks
 `CONFIDENTIAL`/`RESTRICTED` external egress before approval is consulted.
+
+## Fresh evidence (2026-10-26, Phase 7 session)
+
+| ID | Command / check | Result |
+|---|---|---|
+| V67 | Alembic `current` → `downgrade -1` → `upgrade head` → `check` (test DB, §5.4 env) | PASS — starts/ends at `f7a8b9c0d1e2 (head)`; downgrade reaches `e5a1c2b3d4f6`; re-upgrade returns to head; "No new upgrade operations detected". The guarded backfill was exercised with a pre-existing corrupt historical payload row: the migration completed and left that row unbackfilled for the verifier instead of aborting |
+| V68 | `uv run --frozen pytest -q`; then `uv run --frozen mypy`, `ruff check .`, `ruff format --check .` | PASS — **827 passed** (680 unit + 102 integration + 45 security), incl. real-PostgreSQL verifier/tamper and approval/audit privacy tests; mypy clean (65 source files); ruff format/lint clean (173 files formatted) |
+| V69 | `uv run --frozen pytest tests/unit/test_audit_schema.py tests/unit/test_gateway.py tests/unit/test_intent_service.py tests/integration/test_audit_verifier.py tests/integration/test_gateway_approval.py tests/integration/test_gateway_end_to_end.py tests/security/test_audit_privacy.py -q` | PASS — **113 passed** (29 audit schema/taxonomy, 37 gateway lifecycle incl. the 8-position fail-closed matrix, 16 intent audit, 17 verifier/tamper, 7 approval privacy/consumption, 4 audit/log privacy, plus lifecycle e2e cases) |
+| V70 | `bash scripts/check.sh` (pre-commit) | PASS — exit 0, all 8 steps; ruff format/lint clean (173 files formatted); mypy clean (65 source files); **827 passed** (680 unit + 102 integration + 45 security); Gitleaks 8.30.1 dir+git "no leaks found" (37 commits scanned); prohibited-pattern greps clean; `compare_digest` confined to `security/constant_time.py` |
+| V71 | Post-commit `bash scripts/check.sh` after `0b60ba0`, `d53b0ed`, the memory/completion commit, and the V71 status-record commit | **PENDING at the time this evidence section was written** — record the actual result in the final status record and update this row; do not claim it before it runs |
+
+Development-time findings and design points settled in Phase 7 (now regression-tested,
+recorded for honesty): the migration initially would have aborted on a corrupt historical
+payload; the final guarded per-row loop leaves such rows unbackfilled and the verifier
+reports them. Each verifier row is rehashed from that row's own stored `previous_hash`,
+with cross-row linkage checked separately, so tampering row N yields its own
+`EVENT_HASH_MISMATCH` plus `PREVIOUS_HASH_MISMATCH` at N+1. The verifier reads one
+consistent single-`SELECT` snapshot rather than paging, and failure output is bounded and
+content-free. Audit metadata is derived from the exact payload before hashing; malformed
+optional metadata refuses the append rather than storing a disagreeing column. DLP
+evidence was moved off `POLICY_EVALUATED`/execution events onto first-class inspection and
+response events. The newest-event truncation limit is tested and documented rather than
+hidden.
 
 ## Fresh evidence (2026-10-19, Phase 3 session)
 
@@ -215,7 +238,7 @@ iterations, at the ruff format and lint steps. Removing the file restored exit 0
 The Phase 0b gate additionally fails if Gitleaks is missing or version-mismatched
 (deliberate pin, 8.30.1).
 
-## Test inventory (766 tests)
+## Test inventory (827 tests)
 
 Unit (`tests/unit/`):
 
@@ -258,11 +281,17 @@ Unit (`tests/unit/`):
 - `test_risk_engine.py` (30) — every `risk-v1` weight preserved under `risk-v2`, cap at
   100, external-destination requirement, breadth boundaries (0/1/2/4/5/8/9+), stable
   factor codes/rationale, invalid counts (bool/str/float/negative/oversize), version.
-- `test_gateway.py` (29) — see the Phase 2 completion record for the base scenario list;
+- `test_gateway.py` (37) — see the Phase 2 completion record for the base scenario list;
   Phase 5 adds duplicate-derived-resource-id dedup before risk/digest/audit; Phase 6 adds
   canary-never-sinks, destination-trust denial, egress inspection failure before risk,
   response redaction/digest, canary/oversize/`REVIEW` suppression, and schema-breaking
-  redaction suppression.
+  redaction suppression; Phase 7 adds the mandatory ordered lifecycle and the 8-position
+  pre/post audit fail-closed matrix, first-class redacted egress/output/response events,
+  and the execution/completion/response split.
+- `test_audit_schema.py` (29) — full §16.1 taxonomy membership; event-specific required
+  fields (principal/tool/action/decision/reason/outcome); `call_id` validation; DLP record
+  placement/redaction; payload omission of `None`; unknown-field refusal; approval and
+  intent event payloads; producerless names never fabricated; schema/version constants.
 - `test_output_dlp.py` (19) — repository config and exact destination coverage; strict
   loader (duplicate/unknown/bad version/non-UTF-8/missing); pattern and canonical
   destination validation; canary detection without matched text; destination-aware class
@@ -289,8 +318,10 @@ Unit (`tests/unit/`):
   keys/unknown fields/oversize, retries, provider outage/timeout, unsafe destination.
 - `test_intent_validation.py` (10) — exact action/resource/destination/parameter matching,
   tracker uses/expiry/capacity/purge, DST TODAY, THIS_WEEK, timezone validation.
-- `test_intent_service.py` (13) — issuance/bindings/digest/TTL, relative dates, missing
-  timezone, ambiguity/rejection, unenforceable constraints, outage/malformed, limits.
+- `test_intent_service.py` (16) — issuance/bindings/digest/TTL, relative dates, missing
+  timezone, ambiguity/rejection, unenforceable constraints, outage/malformed, limits;
+  Phase 7 adds best-effort `INTENT_CREATED`/`INTENT_FAILED` audit behavior (failure never
+  becomes a grant).
 
 Security (`tests/security/`):
 
@@ -307,6 +338,10 @@ Security (`tests/security/`):
 - `test_intent_no_grant.py` (6) — forged/missing/expired/wrong-principal/wrong-request
   manifests, other action/resource/parameter, unlisted destination, use limit, and
   legacy no-tracker fail-closed all deny without execution.
+- `test_audit_privacy.py` (4) — canary, email, credential, private-key, and API-key shapes
+  are fed through egress denial, adapter failure, response suppression, and intent
+  extraction at DEBUG; raw values are absent from serialized audit payloads and captured
+  logs while stable codes/digests remain; approval tokens/content never enter the chain.
 
 Integration (`tests/integration/`):
 
@@ -330,6 +365,11 @@ Integration (`tests/integration/`):
   invalid-config refusal, no execution surface.
 - `test_session_security_state.py` (9) — tenant/subject binding, guessed-ID isolation,
   bounded counters, inactivity/absolute expiry, signal-free rotation (real PostgreSQL).
+- `test_audit_verifier.py` (17) — real-PostgreSQL verifier: valid chain acceptance from
+  exact stored bytes; payload/hash mutation; reordering; middle deletion; malformed and
+  non-canonical JSON; malformed hash; metadata tampering; chain isolation; typed failure
+  codes; bounded failures; newest-event truncation is confirmed undetectable without an
+  external anchor.
 - `test_audit_append.py` (5) — chain continuity, genesis, canonical bytes recompute,
   5-writer concurrency contiguity, unique-sequence guard.
 - `test_migrations.py` (1) — upgrade idempotency on the test database (single Alembic
@@ -362,3 +402,10 @@ Integration (`tests/integration/`):
   scripted ad hoc.
 - Docker verification used the local Compose project; multi-host/registry pulls are not
   applicable to v1's local-only scope.
+- Audit verification is in-process only: no scheduled job, route, or UI; the verifier
+  loads one chain into memory and assumes the v1 single-chain deployment.
+- No external checkpoint/anchor exists, so truncation of the newest events and a
+  consistent full-chain rewrite by a database owner are not detectable. This is tested
+  and documented, not claimed away.
+- Metadata backfill is best-effort; corrupt historical payloads stay unbackfilled and are
+  surfaced only when the verifier is run.
