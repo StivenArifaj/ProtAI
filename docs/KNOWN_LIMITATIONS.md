@@ -1,6 +1,6 @@
 # Known Limitations
 
-As of **Phase 4 (intent extraction and action validation, 2026-10-19)**. This list must
+As of **Phase 5 (risk v2 and human approvals, 2026-10-26)**. This list must
 be updated every phase; anything not explicitly implemented must remain listed here or in
 `docs/IMPLEMENTATION_STATE.md`.
 
@@ -22,20 +22,28 @@ be updated every phase; anything not explicitly implemented must remain listed h
    raise FLAG findings, and novel/paraphrased or non-text attacks can be missed. Content-
    level DLP/canary inspection and output sanitization remain Phase 6/8; content
    classification is a registration-declared fact, not inspection.
-3. **Approvals are not implemented.** `ASK_USER` is returned as a typed no-execution
-   result; no approval request is stored or consumable until Phase 5. The starter policy
-   enables no approval-eligible tool.
+3. **Approvals are storage-and-gateway only.** Phase 5 adds a durable
+   `approval_requests` table, `ApprovalService`, verified-principal rule evaluation, and
+   one-time gateway consumption, but there is **no `/v1/approvals` route, approval UI,
+   token-delivery transport, approver directory, notification channel, revocation
+   operation, or background expiry sweeper**. Pending/approved requests expire lazily on
+   the next decide/consume. The gateway does not create requests automatically; Phase 8's
+   host workflow must call `ApprovalService.request` with host-verified facts. The
+   starter policy still enables no approval-eligible tool, so approvals are exercised in
+   dedicated test bundles. Self-approval requires an explicit policy flag; role rules
+   trust the resolver's role membership.
 4. **Intent binding is in-process only and uses a mock extractor.** The app-built
    gateway requires a sealed, request/principal/policy-bound manifest and enforces its
    concrete action/resource/destination/parameter/use constraints (Phase 4), but no
    `/v1` route issues or transports a manifest, and the app uses the two-scenario mock
    extractor rather than general natural-language understanding. Trust labels and
    detector findings still have no consumer.
-5. **Audit coverage is a Phase 2 subset.** The gateway emits `POLICY_EVALUATED` and
-   `TOOL_EXECUTION_COMPLETED`/`_FAILED` into the ADR-002 chain; the full taxonomy,
-   verifier, retention, and query/API surfaces are Phase 7. A denial whose audit append
-   fails is kept as a denial (no side effect exists) and the append is logged; decision
-   audit failure on a would-be `ALLOW` blocks execution.
+5. **Audit coverage is a subset.** The gateway emits `POLICY_EVALUATED` and
+   `TOOL_EXECUTION_COMPLETED`/`_FAILED` into the ADR-002 chain; Phase 5 adds
+   `APPROVAL_REQUESTED`/`APPROVAL_DECIDED`/`APPROVAL_CONSUMED`/`APPROVAL_EXPIRED`.
+   The full taxonomy, verifier, retention, and query/API surfaces are Phase 7. A denial
+   whose audit append fails is kept as a denial (no side effect exists) and the append
+   is logged; decision audit failure on a would-be `ALLOW` blocks execution.
 6. **No AI SOC.** No analytics component exists.
 7. **No rate limiting or request deadlines.** `/v1/*` routes do not exist; the gateway
    enforces per-call deadlines and per-tool concurrency, but Phase 8 adds request-level
@@ -48,11 +56,14 @@ be updated every phase; anything not explicitly implemented must remain listed h
 9. **`/v1/*` has no routes yet.** Authenticated requests answer `404` after passing
    authentication (verified in the Phase 0b Docker proof); the gateway is used
    in-process/in tests only until Phase 8.
-10. **Risk scoring is a minimal, uncalibrated factor set.** `risk-v1` scores declared
-    side-effect class, external destination, and registration data class with initial
-    weights (no anomaly, identity, session, or historical factors); calibration is
-    Phase 9. Thresholds (40/80) remain experimental. No threshold can override a hard
-    denial.
+10. **Risk scoring is a small, uncalibrated factor set.** `risk-v2` preserves the
+    `risk-v1` side-effect/destination/registration-data-class weights and adds only a
+    bounded 2-4/5-8/9+ resource-breadth factor (5/10/15). There are still no anomaly,
+    identity, session, or historical factors, and weights remain experimental; Phase 9
+    calibrates them. Thresholds (40/80) are unchanged. No score or approval can override
+    a hard denial. An adapter/registration change that does not change the policy or
+    threshold files does not change the combined policy hash; rotate policy
+    version/hash when registration facts change.
 11. **Concurrency bounds are per process/per event loop.** `asyncio.Semaphore` limits are
     not shared across workers (no Redis/DB limiter); the in-memory sink is not shared
     between processes either. Multi-worker deployment is a later operational concern.
@@ -82,11 +93,12 @@ be updated every phase; anything not explicitly implemented must remain listed h
     the one documented disposable Compose dev key.
 18. **No SBOM.** CycloneDX artifact generation is Phase 10.
 19. **Minimal schema.** The tables are `host_request_nonces`, `audit_events` (baseline
-    `d15b46c49950`), and `session_security_state` (Phase 3, `c7f1a2b3d4e5`). Expired
-    session rows are deleted lazily on access, so abandoned bindings can persist
-    indefinitely until touched by an operation; there is no scheduled retention job. The
-    nonce and audit tables likewise grow until operational cleanup lands. Event payloads
-    live inside `audit_events.canonical_event_bytes`, not a queryable typed table.
+    `d15b46c49950`), `session_security_state` (Phase 3, `c7f1a2b3d4e5`), and
+    `approval_requests` (Phase 5, `e5a1c2b3d4f6`). Expired session rows and pending/
+    approved approval rows are transitioned lazily on access; there is no scheduled
+    retention/expiry sweeper. The nonce and audit tables likewise grow until operational
+    cleanup lands. Event payloads live inside `audit_events.canonical_event_bytes`, not a
+    queryable typed table.
 20. **No CI configuration.** `scripts/check.sh` (8 steps) is the gate.
 
 ## Verification gaps in this environment

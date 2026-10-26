@@ -1,11 +1,12 @@
 # Architecture
 
-Status: **implemented through Phase 4.** This document describes the intended v1
+Status: **implemented through Phase 5.** This document describes the intended v1
 architecture from blueprint v1.2 (sections 3-4) and marks what actually exists today.
 Host authentication, the deterministic policy engine, the mock-tool gateway, advisory
-input threat detection with trust labels and session signals, and server-issued intent
-manifests with concrete action constraints exist and are tested; approvals, DLP, real
-connectors, a real model provider, and the audit verifier do not. The detector is
+input threat detection with trust labels and session signals, server-issued intent
+manifests with concrete action constraints, `risk-v2`, and durable one-time human
+approvals exist and are tested; DLP, real connectors, a real model provider, approval
+transport, and the audit verifier do not. The detector is
 advisory and the intent layer can only narrow execution; neither is consumed by a live
 `/v1` route yet. Only components marked Implemented below may be cited as controls.
 
@@ -64,7 +65,8 @@ enforcement is not an agent security system (blueprint section 3.2).
 13. Data classification, destination, side-effect level, risk signals.
 14. Decision recorded before execution: `ALLOW`/`BLOCK`/`ASK_USER`.
 15. `ASK_USER`: approval bound to principal, tool, canonical argument digest, resource,
-    policy version, expiry, one-time nonce.
+    policy version, expiry, and one-time token; the gateway atomically consumes a
+    matching approved record before execution and never for a `BLOCK` (Phase 5).
 16. Execution only through the gateway with timeouts, output bounds, quotas,
     destination restrictions, connector ACLs.
 17. Tool output re-labeled untrusted when returned to the model.
@@ -77,22 +79,22 @@ enforcement is not an agent security system (blueprint section 3.2).
 | Package / component | Blueprint role | Status (Phase 2) |
 |---|---|---|
 | `src/ai_security/api/` | HTTP adapter, health endpoints | **Implemented:** `create_app` factory, `/health/live`, `/health/ready`, host-auth middleware, registry + gateway wiring on `app.state`; `/v1/*` business routes do not exist yet |
-| `src/ai_security/settings.py` | Validated configuration | **Implemented:** fail-closed validation incl. host keys, replay window, request bound, policy/threshold/self-check paths, input-defense path, session windows, and intent-manifest TTL |
+| `src/ai_security/settings.py` | Validated configuration | **Implemented:** fail-closed validation incl. host keys, replay window, request bound, policy/threshold/self-check paths, input-defense path, session windows, intent-manifest TTL, and the bounded approval TTL (60-86,400 s; default 900) |
 | `identity/` (HMAC host auth, resolver) | Authenticate host, verify principal | **Implemented (0b/1):** exact signing message, full rejection surface, atomic nonce store, dev guard, test-only principal adapter; typed host-assertion contract pending |
 | `security/` (canonical JSON, constant-time, URLs) | Canonical bytes, comparisons, destinations | **Implemented (0b/1):** ADR-002 canonical JSON, constant-time helpers, destination canonicalization |
 | `input_defense/` | Heuristics, detector, provenance | **Implemented (3, advisory):** strict versioned config, bounded intake, copy-only normalization, 10 versioned heuristic rules, typed findings with non-PASS failure semantics, trust-labelled context assembly, session-signal math; not yet wired into routes or model context |
 | `intent/` | Intent manifest, constraints | **Implemented (4, in-process):** server-only issuer, mock extractor + strict local-model adapter interface, sealed request/principal/policy-bound manifests, exact constraint matching, trusted-timezone relative dates, bounded per-process uses; no API transport or real provider until Phase 8 |
-| `agent/` (+ providers) | Runtime, mock/local models | Not implemented (Phase 4/8) |
-| `firewall/` | Gateway, policy engine, risk engine, approvals | **Implemented (1-2, intent 4):** decision/engine/risk (`risk-v1`) + the single `invoke_tool` gateway with audit-first ordering, bindings, deadlines, bounds, and manifest/constraint enforcement in the app wiring; approvals Phase 5 |
+| `agent/` (+ providers) | Runtime, mock/local models | Not implemented (Phase 8) |
+| `firewall/` | Gateway, policy engine, risk engine, approvals | **Implemented (1-5):** decision/engine/risk (`risk-v2` with one bounded breadth factor), the single `invoke_tool` gateway with audit-first ordering, bindings, deadlines, bounds, manifest/constraint enforcement, and one-time approval consumption for engine `ASK_USER`; approval request/decision service is in-process only |
 | `tools/` (registry + mock adapters) | Tool capability layer | **Implemented (2):** validated registry + startup consistency, digest-bound execution authorization, deterministic in-memory email/files/sink/text adapters |
 | `data_security/` | Classification, DLP, egress | **Partial:** canonical `DataClass` enum; classification is registration-declared; content DLP Phase 6 |
 | `audit/` | Hash-chained audit events | **Partial (0b/2):** ADR-002 append protocol, hash chain, Phase-2 decision/outcome emitter; full taxonomy/verifier/retention Phase 7 |
-| `persistence/` | SQLAlchemy async repositories | **Implemented (0b/3):** engine/session, nonce + audit repositories, `session_security_state` repository (binding, bounded counters, lazy expiry, rotation) |
+| `persistence/` | SQLAlchemy async repositories | **Implemented (0b/3/5):** engine/session, nonce + audit repositories, `session_security_state` repository, and `approval_requests` repository (row-locked decisions/consumption, digest-only tokens, same-transaction audit) |
 | `soc/` | Alert-only analytics | Not implemented (Phase 10) |
 | `config/*.yaml` | Policies, thresholds, self-checks | **Implemented (1-3):** `policies.yaml`, `risk_thresholds.yaml`, 21-fixture `policy_self_checks.yaml`, exhaustive-disposition `input_defense.yaml` |
-| `migrations/`, `alembic.ini` | Alembic schema management | **Implemented (0b/3):** baseline + `session_security_state` migrations; upgrade/downgrade verified; `alembic check` clean |
+| `migrations/`, `alembic.ini` | Alembic schema management | **Implemented (0b/3/5):** baseline + `session_security_state` + `approval_requests` migrations; upgrade/downgrade verified; `alembic check` clean |
 | `evaluation/` | Dataset, metrics, reports | Not implemented (Phase 9) |
-| `docs/adr/` | Decision records | **Implemented:** ADR-001..011 recorded |
+| `docs/adr/` | Decision records | **Implemented:** ADR-001..012 recorded |
 
 ## Import boundaries (enforced from Phase 1 onward; check.sh enforces prohibited patterns)
 

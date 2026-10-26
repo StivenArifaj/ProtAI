@@ -6,7 +6,8 @@ through ADR-007 are required to be recorded before Phase 1 and were all recorded
 2026-10-19; ADR-008 records the Phase 1 policy-engine contract; ADR-009 records the
 Phase 2 registry/gateway contract; ADR-010 records the Phase 3 advisory input-defense,
 trust-label, and session-signal contract; ADR-011 records the Phase 4 server-issued
-intent-manifest and constraint contract.
+intent-manifest and constraint contract; ADR-012 records the Phase 5 `risk-v2` and
+durable one-time approval contract.
 
 | ADR | Title | Status | Implementation phase |
 |---|---|---|---|
@@ -21,6 +22,7 @@ intent-manifest and constraint contract.
 | [ADR-009](adr/ADR-009-tool-registry-and-enforced-gateway.md) | Tool registry, execution authorization, and the enforced gateway | Accepted | Phase 2 |
 | [ADR-010](adr/ADR-010-advisory-input-defense-and-session-signals.md) | Advisory input threat defense, trust labels, and session signals | Accepted | Phase 3 |
 | [ADR-011](adr/ADR-011-server-issued-intent-manifests.md) | Server-issued, sealed intent manifests and concrete action constraints | Accepted | Phase 4 |
+| [ADR-012](adr/ADR-012-risk-v2-and-human-approvals.md) | Versioned risk v2 and durable, one-time human approvals | Accepted | Phase 5 |
 
 ## Adding a new ADR
 

@@ -1,53 +1,56 @@
 # Implementation State
 
-Last updated: 2026-10-19 (Phase 4, blueprint v1.2).
+Last updated: 2026-10-26 (Phase 5, blueprint v1.2).
 
 Phases 0a (repository foundation), 0b (security foundation), 1 (typed contracts and
 deterministic policy engine), 2 (tool registry and enforced gateway), 3 (advisory input
-defense and context provenance), and 4 (intent extraction and action validation) are
-**complete and verified**; the Docker Compose path was verified in 0b. Phase 4 adds a
-server-only intent-manifest issuer, a mock extractor, a strict local-model adapter
-interface, sealed request/principal/policy-bound manifests with short expiry, exact
-action/resource/destination/parameter constraints and bounded uses, trusted-timezone
-relative-date resolution, and gateway enforcement for the app-built execution path.
-Malformed model output, ambiguity, provider outage, forged/expired/rebound manifests, and
-constraint violations never grant execution. Intent can only narrow the deterministic
-policy engine, which remains the sole `ALLOW` producer. The codebase still does **not**
-implement `/v1` business routes, approvals, content DLP, real connectors, process
-isolation, rate limiting, a real model provider, or the full audit taxonomy/verifier.
-See `docs/SECURITY_INVARIANTS.md` and `docs/KNOWN_LIMITATIONS.md`.
+defense and context provenance), 4 (intent extraction and action validation), and 5
+(risk engine and approval workflow) are **complete and verified**; the Docker Compose
+path was verified in 0b. Phase 5 extends risk scoring to `risk-v2` with one bounded
+resource-breadth factor and adds a durable, tenant/action-bound approval workflow:
+strict startup-validated approver rules, a digest-only stored token, PostgreSQL
+`approval_requests`, row-locked decisions and exactly-once consumption with
+same-transaction audit events, and gateway gating where a valid one-time approval can
+make an engine `ASK_USER` executable without ever overriding `BLOCK` or a hard deny.
+The codebase still does **not** implement `/v1` business routes, approval routes/UI/
+token transport, content DLP, real connectors, process isolation, rate limiting, a real
+model provider, or the full audit verifier. See `docs/SECURITY_INVARIANTS.md` and
+`docs/KNOWN_LIMITATIONS.md`.
 
 ## What exists
 
 | Area | Files | Notes |
 |---|---|---|
 | Project metadata | `pyproject.toml`, `uv.lock`, `.python-version` (3.12), `.gitignore`, `.env.example`, `README.md`, `Makefile`, `.gitleaks.toml` | Python `>=3.12,<3.13`; runtime deps: fastapi, uvicorn, pydantic, pydantic-settings, asyncpg, SQLAlchemy 2.x async, Alembic, PyYAML; dev deps: pytest, httpx2, ruff, mypy, types-PyYAML |
-| Application | `src/ai_security/__init__.py`, `settings.py`, `api/{app,dependencies,routes_health,middleware}.py` | App factory + module-level `app`; validated settings (incl. policy/threshold paths and `INTENT_MANIFEST_TTL_SECONDS`); `/health/live`, `/health/ready` (config, database, policy_self_checks + `policy_version`/`policy_hash`); host-auth ASGI middleware on `/v1/*`; Phase 4 intent service/tracker exposed and wired into the gateway on `app.state` |
+| Application | `src/ai_security/__init__.py`, `settings.py`, `api/{app,dependencies,routes_health,middleware}.py` | App factory + module-level `app`; validated settings (incl. policy/threshold paths, `INTENT_MANIFEST_TTL_SECONDS`, and `APPROVAL_TTL_SECONDS`); `/health/live`, `/health/ready` (config, database, policy_self_checks + `policy_version`/`policy_hash`); host-auth ASGI middleware on `/v1/*`; Phase 4 intent service/tracker and Phase 5 approval service/repository exposed on `app.state` and wired into the gateway |
 | Security primitives | `security/{constant_time,canonical_json,urls}.py`, `audit/hash_chain.py` | `hmac.compare_digest` wrappers (confined by the gate); canonical JSON bytes; ADR-002 hash formula + fixed vectors; destination canonicalization (IDNA, percent-encoding, https-only) |
-| Identity | `identity/{models,signing,host_auth,resolver,adapters}.py` | `Principal` (strict, frozen); HMAC signing/verification (exact `v1` message, full rejection surface); `DevPrincipalResolver` guard + fail-closed `HostPrincipalResolver`; test-only `TestPrincipalResolver` (not selectable via settings/factory) |
-| Persistence | `persistence/{database,models,nonce_repository,audit_repository,session_repository}.py` | Async engine/session; atomic nonce upsert (`ON CONFLICT ... WHERE ... RETURNING`); ADR-002 advisory-lock audit append; tenant/subject-bound session signals with bounded counters, lazy expiry, and signal-free rotation |
-| Migrations | `alembic.ini`, `migrations/env.py`, `migrations/versions/{d15b46c49950,c7f1a2b3d4e5}_*.py` | Baseline: `host_request_nonces`, `audit_events`; Phase 3: `session_security_state` (constraints + binding/last-seen indexes); `make migrate`; upgrade/downgrade/upgrade verified; `alembic check` clean |
-| Typed contracts | `tools/base.py` (`SideEffectClass`, `ToolArguments`/`ToolResult`, `ExecutionAuthorization`, `compute_action_digest`, adapters protocol), `data_security/classification.py` (`DataClass`), `firewall/decision.py` (`FirewallDecision`/`DecisionReason`/`DecisionRecord`) | Canonical enums defined exactly once (blueprint §4/§6.1); stable reason-code vocabulary (extended with `binding_mismatch`, `deadline_exceeded`, `policy_evaluation_error`, `audit_unavailable`, and the Phase 4 `intent_*` codes); sentinel-guarded authorization; strict schemas (`extra="forbid"`, `strict=True`) |
+| Identity | `identity/{models,signing,host_auth,resolver,adapters,approver_rules}.py` | `Principal` (strict, frozen); HMAC signing/verification (exact `v1` message, full rejection surface); `DevPrincipalResolver` guard + fail-closed `HostPrincipalResolver`; test-only `TestPrincipalResolver` (not selectable via settings/factory); Phase 5 strict `role:`/`principal:` approver-rule parser/evaluator |
+| Persistence | `persistence/{database,models,nonce_repository,audit_repository,session_repository,approval_repository}.py` | Async engine/session; atomic nonce upsert (`ON CONFLICT ... WHERE ... RETURNING`); ADR-002 advisory-lock audit append plus `append_in_session`; tenant/subject-bound session signals with bounded counters, lazy expiry, and signal-free rotation; Phase 5 `approval_requests` repository with row-locked decide/consume and same-transaction audit |
+| Migrations | `alembic.ini`, `migrations/env.py`, `migrations/versions/{d15b46c49950,c7f1a2b3d4e5,e5a1c2b3d4f6}_*.py` | Baseline: `host_request_nonces`, `audit_events`; Phase 3: `session_security_state`; Phase 5: `approval_requests` (status/score constraints + expiry/requester indexes); single Alembic head; upgrade/downgrade/upgrade verified; `alembic check` clean |
+| Typed contracts | `tools/base.py` (`SideEffectClass`, `ToolArguments`/`ToolResult`, `ExecutionAuthorization`, `compute_action_digest`, adapters protocol), `data_security/classification.py` (`DataClass`), `firewall/decision.py` (`FirewallDecision`/`DecisionReason`/`DecisionRecord`) | Canonical enums defined exactly once (blueprint §4/§6.1); stable reason-code vocabulary (extended with `binding_mismatch`, `deadline_exceeded`, `policy_evaluation_error`, `audit_unavailable`, the Phase 4 `intent_*` codes, and the Phase 5 `approval_*` codes); sentinel-guarded authorization; strict schemas (`extra="forbid"`, `strict=True`) |
 | Tool registry + mock adapters | `tools/registry.py`, `tools/mock_{email,files,external_sink,text}.py` | Immutable validated registrations; exact `(tool_id, action_id)` resolution; startup consistency vs policy (one-directional: policy→capability required; extra registrations stay policy-disabled); deterministic in-memory adapters with ownership checks and digest verification |
 | Input defense + provenance | `input_defense/{models,config,normalize,heuristics,service,context_labels,sessions}.py`, `security/safe_yaml.py`, `config/input_defense.yaml` | Advisory only: strict config (every finding code mapped, no PASS mapping), byte/type/UTF-8 intake, copy-only normalization, versioned heuristics with quoted-context downgrade, typed `IntakeReport` with digests/offsets, six trust labels + deterministic JSON context, optional diagnostic classifier, typed `DETECTOR_UNAVAILABLE` failures |
 | Intent extraction + manifests | `intent/{models,extractors,service,validator,time_window}.py` | Server-only issuer; mock demo extractor + strict local-model adapter interface (bounded JSON, duplicate-key rejection, retries, outage mapping); sealed request/principal/tenant/policy-bound manifest with short expiry and goal digest; exact action/resource/destination/parameter constraints and per-process bounded uses; trusted-timezone TODAY/THIS_WEEK resolution (DST-tested) |
-| Gateway + risk engine | `firewall/{gateway,models,risk_engine}.py` | Single `invoke_tool` chokepoint; binding/validation/resource/destination/deadline/engine checks; Phase 4 manifest verification + concrete constraint/use-limit checks; decision audited before execution; timeouts + per-process concurrency + result bounds; typed outcomes; `risk-v1` scoring |
-| Audit emission | `audit/{models,writer}.py` | Phase-2 event subset (`POLICY_EVALUATED`, `TOOL_EXECUTION_COMPLETED`, `TOOL_EXECUTION_FAILED`); schema v1; `AuditRecorder` protocol + `ChainAuditRecorder` over the ADR-002 repository; payload-safe references only |
+| Gateway + risk engine | `firewall/{gateway,models,risk_engine,approval}.py` | Single `invoke_tool` chokepoint; binding/validation/resource/destination/deadline/engine checks; Phase 4 manifest verification + concrete constraint/use-limit checks; decision audited before execution; timeouts + per-process concurrency + result bounds; typed outcomes; `risk-v2` scoring (all `risk-v1` weights + bounded breadth); Phase 5 one-time approval consumption for engine `ASK_USER`, with exact action/policy binding and no override of `BLOCK` |
+| Approval service | `firewall/approval.py`, `identity/approver_rules.py`, `persistence/approval_repository.py` | Strict request/decision/consumption API; token returned once and stored only as SHA-256; verified-principal rule evaluation with tenant and self-approval checks; 60-86,400 s TTL (default 900); lazy expiry; row-locked state machine and same-transaction audit events; no routes/token transport in Phase 5 |
+| Audit emission | `audit/{models,writer}.py` | Phase-2 event subset (`POLICY_EVALUATED`, `TOOL_EXECUTION_COMPLETED`, `TOOL_EXECUTION_FAILED`) plus Phase 5 `APPROVAL_REQUESTED`/`APPROVAL_DECIDED`/`APPROVAL_CONSUMED`/`APPROVAL_EXPIRED`; schema v1; `AuditRecorder` protocol + `ChainAuditRecorder` over the ADR-002 repository; payload-safe references only |
 | Policy engine | `firewall/policy_engine.py`, `policy/{models,loader,self_checks}.py`, `config/{policies,risk_thresholds,policy_self_checks}.yaml` | Deterministic §10.2 evaluation order over validated facts; safe YAML (duplicate-key rejection); versioned bundle with content hashes; 21 fixtures (incl. 7 mandated names and the Phase 2 binding/deadline/inconsistent facts) evaluated at startup + readiness; replaces `policy/interim_matrix.py` (deleted) |
-| Tests | `tests/conftest.py`, `tests/unit/*` (25 test files + helper), `tests/integration/*` (11 test files + helpers), `tests/security/*` (3 test files) | **661 tests** (568 unit, 64 integration, 29 security): prior suites plus intent models/extractors/service/validation, manifest no-grant security tests, settings TTL, and app-wiring/real-PostgreSQL intent tests |
+| Tests | `tests/conftest.py`, `tests/unit/*` (27 test files + helper), `tests/integration/*` (13 test files + helpers), `tests/security/*` (3 test files) | **734 tests** (613 unit, 80 integration, 41 security): prior suites plus risk-v2 breadth/rationale/validation, approver rules, policy/registry flag validation, approval state machine against real PostgreSQL (decision/expiry/mutation/replay/exactly-one-winner/audit), gateway approval gating/no-execution, settings TTL, app wiring, and resource dedup |
 | Quality gate | `scripts/check.sh` | 8 steps: lockfile, ruff format, ruff lint, mypy, pytest, pinned Gitleaks (dir+git), prohibited-pattern greps, constant-time confinement |
 | Containers | `Dockerfile`, `docker-compose.yml` | Digest-pinned bases; non-root uid 10001; COPY `config/ migrations/ alembic.ini`; Compose `api` carries the disposable dev `HOST_AUTH_KEYS_JSON` |
-| Docs | `docs/*` (9 files), `docs/adr/ADR-001..011` | Status columns honest; ADR-008 records the Phase 1 engine contract, ADR-009 the Phase 2 registry/gateway contract, ADR-010 the Phase 3 advisory-detection/session contract, ADR-011 the Phase 4 manifest/constraint contract; matrix doc reflects gateway-enforced facts |
-| Git | baseline `41e10da`; 0b commits `0aa11d9`…`d180b89`; docs `c95f2a6`; Phase 1 commits `cffdd62`, `eaae462`, `b91729b`; Phase 2 commits `5725256`…`c7a0f8d`; Phase 3 commits `faafe13`…`30c0f41`; Phase 4 commits `2943593` (implementation/tests), `74c502f` (ADR-011/docs), `786cb08` (memory/completion) | Repository under git since 2026-10-19; linear history on `main`; final V56 status record commit follows |
+| Docs | `docs/*` (9 files), `docs/adr/ADR-001..012` | Status columns honest; ADR-008 records the Phase 1 engine contract, ADR-009 the Phase 2 registry/gateway contract, ADR-010 the Phase 3 advisory-detection/session contract, ADR-011 the Phase 4 manifest/constraint contract, ADR-012 the Phase 5 `risk-v2`/approval contract; matrix doc reflects gateway-enforced facts |
+| Git | baseline `41e10da`; 0b commits `0aa11d9`…`d180b89`; docs `c95f2a6`; Phase 1 commits `cffdd62`, `eaae462`, `b91729b`; Phase 2 commits `5725256`…`c7a0f8d`; Phase 3 commits `faafe13`…`30c0f41`; Phase 4 commits `2943593`, `74c502f`, `786cb08`, `c018955`; Phase 5 commits (implementation/tests, ADR-012/docs, memory/completion) | Repository under git since 2026-10-19; linear history on `main`; no remote configured |
 | Spec | `AI_Agent_Security_Platform_Master_Blueprint_v1.2.md`, `archive/..._v1.0_superseded.md` | v1.2 authoritative; v1.0 archived |
 
-Deliberately deferred beyond Phase 4: approvals and risk-factor expansion (Phase 5),
-content DLP/canary (Phase 6), full audit taxonomy + verifier (Phase 7), `/v1/*` business
-routes + agent runtime + real local-model provider + rate limiting (Phase 8), evaluation
-(Phase 9), isolation/SOC/SBOM (Phase 10). Intent extraction is available in-process only
-and uses the mock extractor in the app; no route or real provider consumes it yet.
-Detection and trust labels still have no route/model consumer; `evaluation/` and
-`data_security/` beyond `classification.py` do not exist yet.
+Deliberately deferred beyond Phase 5: output DLP/canary (Phase 6), full audit
+taxonomy + verifier (Phase 7), `/v1/*` business and approval routes + token transport +
+agent runtime + real local-model provider + rate limiting (Phase 8), evaluation (Phase 9),
+isolation/SOC/SBOM (Phase 10). Intent extraction is available in-process only and uses
+the mock extractor in the app; no route or real provider consumes it yet. Approvals are
+storage-and-gateway only: no route, UI, notification channel, approver directory,
+revocation operation, or background expiry sweeper. Detection and trust labels still have
+no route/model consumer; `evaluation/` and `data_security/` beyond `classification.py`
+do not exist yet.
 
 ## Decisions taken during Phase 0b implementation (within blueprint constraints)
 
@@ -243,6 +246,50 @@ Detection and trust labels still have no route/model consumer; `evaluation/` and
   and verification in-process or add a server-signed serialization; accepted as a
   documented Phase 4 limitation.
 
+## Decisions taken during Phase 5 implementation (within blueprint constraints; ADR-012)
+
+- **Versioned, conservative risk extension**: `risk-v2` keeps every `risk-v1` weight and
+  adds one breadth factor over *distinct* canonical resources (2-4 → +5, 5-8 → +10,
+  9+ → +15, cap 100). Factor codes are stable and every factor carries a rationale. The
+  gateway validates and deduplicates derived resource ids before scoring, digesting, and
+  auditing, so duplicate argument values neither inflate risk nor break the approval
+  contract. `resource_count` is a strict integer in `[0, 32]`; invalid values map to
+  `policy_evaluation_error` with no execution.
+- **Approver rules are parsed, not scripted**: the only v1 forms are `role:<role>` and
+  `principal:<subject>` with `|` alternatives, at most 256 characters, no duplicates,
+  and no control characters. Registry startup validates every rule. Evaluation uses only
+  the verified `Principal` and requires tenant equality; model output/request text cannot
+  supply a role or approver. Self-approval is default-deny and requires an explicit
+  policy flag that is itself valid only with `approval_eligible`. A requester-only rule
+  with self-approval disabled is refused before storage (`ApprovalNotApprovable`).
+- **Approval storage is digest-only**: `approval_requests` stores the SHA-256 digest of a
+  256-bit token returned once, plus canonical action digest, resources, destination,
+  requester/tenant, tool/action, risk/side-effect/data provenance, policy version/hash,
+  approver rule, status, expiry, and decision metadata. Raw arguments, content, result
+  data, and plaintext tokens are never stored. IDs are 32 lowercase hex; TTL defaults to
+  900 s and is bounded to 60-86,400 s.
+- **Transactional, one-time state machine**: `ApprovalRepository` uses
+  `SELECT ... FOR UPDATE` for decisions and consumption and commits each transition with
+  its audit event through `AuditChainRepository.append_in_session`. Exactly one of
+  several concurrent consumers wins; the rest observe `replay`. Pending or approved rows
+  past expiry transition to `expired` on the next decide/consume and emit
+  `APPROVAL_EXPIRED`. A pending request can never be consumed.
+- **Approval is an execution gate, not policy authority**: the gateway consults it only
+  for an engine `ASK_USER` with a presented `approval_id`, re-verifies validated
+  arguments/resources/canonical destination, recomputes the canonical action digest
+  (including the combined policy hash), and consumes the matching record before any
+  adapter call. `ALLOW` needs no approval and `BLOCK`/hard denials ignore one. The
+  engine decision remains `ASK_USER`; failures map to `approval_invalid`,
+  `approval_denied`, or `approval_expired` with no execution, and storage errors fail
+  closed.
+- **Audit and wiring**: approval request/decision/consumption/expiry events use
+  `firewall.approval`; gateway decision/outcome events carry `approval_id` and
+  `approver_subject_id` but no secrets. The app builds `ApprovalRepository` over the
+  same audit chain and exposes `ApprovalService`; `APPROVAL_TTL_SECONDS` is validated at
+  startup. Phase 5 adds no routes/UI/token transport, automatic request creation,
+  approver directory, notifications, revocation operation, or background expiry sweeper
+  (Phase 8), and no weight calibration (Phase 9).
+
 ## Phase 0a verification record (actual runs, 2026-10-19; historical)
 
 Environment: macOS (darwin), uv 0.13.1, CPython 3.12.15, Docker 29.3.1 / Compose
@@ -408,13 +455,39 @@ Rows 48+ continue the numbered record. Full evidence:
 | Policy remains the sole `ALLOW` producer | PASS — intent constraints are applied after the engine and never enter `PolicyEvaluationRequest`; intent can only downgrade |
 | Quality gate green; docs/memory/ADR updated | PASS — rows 48-51; ADR-011; this file; `SECURITY_INVARIANTS`, `KNOWN_LIMITATIONS`, `THREAT_MODEL`, `ARCHITECTURE`, README, memory refresh |
 
+## Phase 5 verification record (actual runs, 2026-10-26)
+
+Rows 53+ continue the numbered record. Full evidence:
+`project_memory/TESTING_AND_VERIFICATION.md` (V57+).
+
+| # | Command | Result |
+|---|---|---|
+| 53 | `uv run --frozen pytest -q` | PASS — **734 passed** (613 unit + 80 integration + 41 security; real-PostgreSQL approval/audit tests against the Compose database) |
+| 54 | `bash scripts/check.sh` | PASS — exit 0, all 8 steps; ruff format/lint clean; mypy 63 source files; Gitleaks 8.30.1 dir+git: 27 commits, no leaks found; prohibited-pattern and constant-time-confinement checks clean |
+| 55 | Targeted Phase 5 suites (`test_approval_flow`, `test_gateway_approval`, `test_gateway_wiring`, `test_migrations`, `test_risk_engine`, `test_approver_rules`, `test_settings`, `test_gateway_no_bypass`) | PASS — **157 passed** (11 real-PostgreSQL approval lifecycle/concurrency, 5 gateway approval gating, 2 wiring, 1 migration, 30 risk, 24 approver rules, 60 settings, 24 no-bypass) |
+| 56 | `alembic upgrade head` → `downgrade -1` → `upgrade head` → `check` | PASS — `e5a1c2b3d4f6` applies, downgrades to `c7f1a2b3d4e5`, re-applies cleanly; "No new upgrade operations detected" |
+| 57 | Dedup regression (`test_duplicate_derived_resource_ids_are_collapsed_before_risk_and_audit`) | PASS — duplicate resource-id argument values collapse to one distinct target before risk, approval digest, authorization, and audit |
+
+## Definition of Done checklist (blueprint section 21, Phase 5)
+
+| DoD item | Status |
+|---|---|
+| Risk calculations are unit tested | **PASS** — `tests/unit/test_risk_engine.py` covers every `risk-v1` weight, the v2 breadth boundaries (0/1/2/4/5/8/9+), cap/version, rationale/codes, invalid counts (bool/str/float/negative/oversize), and preserves single-resource scores |
+| Hard denies cannot be overridden | PASS — a presented valid approval on an engine `BLOCK`/hard-deny action is ignored and not consumed; `tests/security/test_gateway_no_bypass.py` and `tests/integration/test_gateway_approval.py` assert zero adapter calls and unchanged sink |
+| Approval mutation/replay/expiry tests prove no unauthorized execution | PASS — canonical digest recomputation plus stored resource/destination/policy version/hash verification; real-PostgreSQL mutation, replay, denial, pending, expiry, and exactly-one-winner concurrency tests; all failures map to typed no-execution outcomes |
+| Approval is one-time and atomic under concurrency | PASS — `SELECT ... FOR UPDATE` decision/consumption with same-transaction audit; five concurrent consumers yield one `consumed` and four `replay`; a consumed row cannot be replayed |
+| Verified principal/rule/tenant gates approval; no self-approval by default | PASS — strict rule parser/evaluator; tenant equality; self-approval only with explicit `self_approval_allowed`; requester-only unsatisfiable rules refused before creation |
+| No secrets/raw content stored or logged | PASS — token returned once, only SHA-256 stored; approval rows carry canonical facts and provenance, not arguments/content; tests assert token digests and redacted audit payloads |
+| Execution still occurs only via `invoke_tool`; policy remains sole `ALLOW` producer | PASS — approval only makes an engine `ASK_USER` executable; the engine decision stays `ASK_USER`, `ALLOW` needs none, and `BLOCK` dominates; single gateway chokepoint unchanged |
+| Quality gate green; docs/memory/ADR updated | PASS — rows 53-57; ADR-012; this file; `SECURITY_INVARIANTS`, `KNOWN_LIMITATIONS`, `THREAT_MODEL`, `ARCHITECTURE`, `POLICY_DECISION_MATRIX`, README, memory refresh |
+
 ## How to continue (next session)
 
-Phase 5 — Risk engine and approval workflow (blueprint section 21, sections 11-13): extend
-the deterministic risk-factor set/thresholds as required, add durable approval request
-storage, and implement atomic one-time approval consumption bound to the canonical action
-digest plus request/principal/tenant/expiry. Hard denies must remain non-overridable;
-`ASK_USER` must never execute without a valid unconsumed approval. Read blueprint
-sections 11-13; keep the ADR-008 engine contract, ADR-009 gateway contract, ADR-010
-advisory-detection boundary, and ADR-011 intent boundary intact and every existing test
-green.
+Phase 6 — Output DLP and egress policy (blueprint section 21, sections 6 and 12-13):
+add test canaries, configurable sensitive-pattern detection, a data-classification model,
+destination-aware egress checks, and release outcomes through the existing gateway.
+Required invariants: canary data never reaches an unauthorized mock sink, DLP logs stay
+redacted, and false-positive handling is documented and tested. Preserve the ADR-008
+engine contract, ADR-009 gateway contract, ADR-010 advisory-detection boundary, ADR-011
+intent boundary, and ADR-012 approval boundary; keep all existing suites and the 8-step
+gate green.
