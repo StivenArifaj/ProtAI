@@ -47,9 +47,7 @@ from ai_security.input_defense.models import (
 from ai_security.tools.base import STABLE_ID_PATTERN, SideEffectClass
 
 AUDIT_SCHEMA_VERSION: Literal[1] = 1
-type COMPONENT = Literal[
-    "firewall.gateway", "firewall.approval", "intent.service", "api.ingress"
-]
+type COMPONENT = Literal["firewall.gateway", "firewall.approval", "intent.service", "api.ingress"]
 
 _HEX64 = re.compile(r"[0-9a-f]{64}")
 _STABLE_ID = re.compile(STABLE_ID_PATTERN)
@@ -411,9 +409,7 @@ class AuditEvent(BaseModel):
             if self.input is None:
                 raise ValueError("INPUT_INSPECTED requires an input audit record")
         elif self.input is not None:
-            raise ValueError(
-                f"{self.event_type.value} must not carry an input audit record"
-            )
+            raise ValueError(f"{self.event_type.value} must not carry an input audit record")
         if self.event_type is AuditEventType.egress_inspected:
             if self.dlp is None or self.dlp.phase is not DlpPhase.egress:
                 raise ValueError("EGRESS_INSPECTED requires an EGRESS DLP record")

@@ -1543,8 +1543,10 @@ class ToolGateway:
     ) -> ToolInvocationResult:
         # ``result`` is always a ``ToolResult`` or None by construction; the cast keeps
         # the frozen dataclass free of pydantic revalidation.
-        resolved_egress = dlp_egress if dlp_egress is not None else (
-            None if evaluation is None else evaluation.dlp_egress
+        resolved_egress = (
+            dlp_egress
+            if dlp_egress is not None
+            else (None if evaluation is None else evaluation.dlp_egress)
         )
         # Approval facts describe a *requestable* approval. A result that is not an
         # ASK_USER decision (including an ASK_USER downgraded to BLOCK by an audit
@@ -1563,12 +1565,12 @@ class ToolGateway:
             policy_hash=decision.policy_hash,
             decision_audit_sequence=decision_sequence,
             outcome_audit_sequence=outcome_sequence,
-            approval_id=approval_id if approval_id is not None else (
-                None if evaluation is None else evaluation.approval_id
-            ),
-            approver_subject_id=approver_subject_id if approver_subject_id is not None else (
-                None if evaluation is None else evaluation.approver_subject_id
-            ),
+            approval_id=approval_id
+            if approval_id is not None
+            else (None if evaluation is None else evaluation.approval_id),
+            approver_subject_id=approver_subject_id
+            if approver_subject_id is not None
+            else (None if evaluation is None else evaluation.approver_subject_id),
             dlp_egress=resolved_egress,
             dlp_output=dlp_output,
             action_digest=None if evaluation is None else evaluation.action_digest,
@@ -1580,9 +1582,7 @@ class ToolGateway:
                 asks_user and evaluation is not None and evaluation.approval_required
             ),
             required_approver_rule=(
-                evaluation.required_approver_rule
-                if asks_user and evaluation is not None
-                else None
+                evaluation.required_approver_rule if asks_user and evaluation is not None else None
             ),
         )
 

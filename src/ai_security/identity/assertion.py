@@ -118,9 +118,7 @@ def verify_principal_assertion(
     the request, so only a future value beyond the configured skew is rejected.
     """
     if not isinstance(verified_host, VerifiedHostContext):
-        raise PrincipalAssertionError(
-            PrincipalAssertionErrorCode.missing_verified_host
-        )
+        raise PrincipalAssertionError(PrincipalAssertionErrorCode.missing_verified_host)
     if not isinstance(assertion, PrincipalAssertion):
         raise PrincipalAssertionError(PrincipalAssertionErrorCode.missing_assertion)
 
@@ -143,9 +141,7 @@ def verify_principal_assertion(
     if max_future_skew_seconds < 0:
         raise ValueError("max_future_skew_seconds must be non-negative")
     if assertion.authenticated_at > moment + timedelta(seconds=max_future_skew_seconds):
-        raise PrincipalAssertionError(
-            PrincipalAssertionErrorCode.authentication_time_in_future
-        )
+        raise PrincipalAssertionError(PrincipalAssertionErrorCode.authentication_time_in_future)
 
     try:
         return Principal(
@@ -162,9 +158,7 @@ def verify_principal_assertion(
             ),
         )
     except ValueError as exc:
-        raise PrincipalAssertionError(
-            PrincipalAssertionErrorCode.invalid_principal
-        ) from exc
+        raise PrincipalAssertionError(PrincipalAssertionErrorCode.invalid_principal) from exc
 
 
 __all__ = [

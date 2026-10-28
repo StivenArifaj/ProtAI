@@ -108,9 +108,7 @@ class HostPrincipalResolver:
         assertion: PrincipalAssertion | None = None,
     ) -> Principal:
         if verified_host is None:
-            raise PrincipalAssertionError(
-                PrincipalAssertionErrorCode.missing_verified_host
-            )
+            raise PrincipalAssertionError(PrincipalAssertionErrorCode.missing_verified_host)
         if assertion is None:
             raise PrincipalAssertionError(PrincipalAssertionErrorCode.missing_assertion)
         now = self._clock()

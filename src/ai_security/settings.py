@@ -279,9 +279,7 @@ class Settings(BaseSettings):
     local_model_base_url: str = Field(
         default="http://host.docker.internal:11434", min_length=1, max_length=2048
     )
-    local_model_name: str = Field(
-        default=LOCAL_MODEL_PLACEHOLDER, min_length=1, max_length=256
-    )
+    local_model_name: str = Field(default=LOCAL_MODEL_PLACEHOLDER, min_length=1, max_length=256)
     local_model_timeout_seconds: int = Field(default=10, ge=1, le=120)
     allow_external_model_calls: bool = False
 
