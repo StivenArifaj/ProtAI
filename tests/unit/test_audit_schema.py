@@ -14,11 +14,23 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
-from ai_security.audit.models import AuditEvent, AuditEventType, DlpAuditRecord
+from ai_security.audit.models import (
+    AuditEvent,
+    AuditEventType,
+    DlpAuditRecord,
+    InputAuditRecord,
+)
 from ai_security.data_security.classification import DataClass
 from ai_security.data_security.dlp import DlpOutcome, DlpPhase
 from ai_security.firewall.decision import DecisionReason, FirewallDecision
 from ai_security.firewall.models import InvocationOutcome
+from ai_security.input_defense.models import (
+    DetectorFinding,
+    Disposition,
+    FindingCode,
+    IntakeReport,
+    TrustLabel,
+)
 
 NOW = datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)
 POLICY_HASH = "a" * 64
@@ -33,6 +45,19 @@ def dlp(phase: DlpPhase) -> DlpAuditRecord:
         max_data_class=DataClass.internal,
         version="1.0.1",
         config_hash=CONFIG_HASH,
+        content_digest=CONTENT_DIGEST,
+        content_bytes=12,
+    )
+
+
+def input_record() -> InputAuditRecord:
+    return InputAuditRecord(
+        detector_version="input-detector-v1",
+        heuristics_version="input-heuristics-v1",
+        config_version="1.0.1",
+        config_sha256=CONFIG_HASH,
+        trust_label=TrustLabel.authenticated_user,
+        disposition=Disposition.pass_,
         content_digest=CONTENT_DIGEST,
         content_bytes=12,
     )
@@ -119,13 +144,65 @@ def test_non_tool_events_do_not_require_tool_ids() -> None:
     for event_type in (
         AuditEventType.request_received,
         AuditEventType.principal_resolved,
-        AuditEventType.input_inspected,
         AuditEventType.intent_created,
         AuditEventType.intent_failed,
     ):
         event = build(event_type)
         assert event.tool_id is None
         assert event.action_id is None
+
+    inspected = build(AuditEventType.input_inspected, input=input_record())
+    assert inspected.tool_id is None
+    assert inspected.action_id is None
+
+
+def test_input_inspected_requires_input_evidence() -> None:
+    with pytest.raises(ValidationError, match="requires an input audit record"):
+        build(AuditEventType.input_inspected)
+
+
+def test_input_evidence_is_only_attached_to_input_inspected() -> None:
+    with pytest.raises(ValidationError, match="must not carry an input audit record"):
+        build(AuditEventType.request_received, input=input_record())
+
+
+def test_input_audit_record_projects_findings_without_raw_text() -> None:
+    report = IntakeReport(
+        config_version="1.0.1",
+        config_sha256=CONFIG_HASH,
+        segment_id="user_message",
+        source_id="api:request",
+        trust_label=TrustLabel.authenticated_user,
+        content_sha256=CONTENT_DIGEST,
+        content_length_bytes=12,
+        disposition=Disposition.flag,
+        findings=(
+            DetectorFinding(
+                code=FindingCode.direct_override_pattern,
+                segment_id="user_message",
+                source_id="api:request",
+                trust_label=TrustLabel.authenticated_user,
+                rule_id="override-v1",
+                char_offset=3,
+                detail="matched override phrase",
+            ),
+        ),
+    )
+    record = InputAuditRecord.from_report(report)
+    payload = record.model_dump(mode="json", exclude_none=True)
+    assert payload["disposition"] == "FLAG"
+    assert payload["content_digest"] == CONTENT_DIGEST
+    assert payload["findings"] == [
+        {
+            "code": "DIRECT_OVERRIDE_PATTERN",
+            "segment_id": "user_message",
+            "source_id": "api:request",
+            "trust_label": "AUTHENTICATED_USER",
+            "rule_id": "override-v1",
+            "char_offset": 3,
+        }
+    ]
+    assert "matched override phrase" not in str(payload)
 
 
 @pytest.mark.parametrize(

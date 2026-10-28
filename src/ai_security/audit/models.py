@@ -37,10 +37,19 @@ from ai_security.data_security.dlp import (
 )
 from ai_security.firewall.decision import DecisionReason, FirewallDecision
 from ai_security.firewall.models import InvocationOutcome
+from ai_security.input_defense.models import (
+    DetectorFinding,
+    Disposition,
+    FindingCode,
+    IntakeReport,
+    TrustLabel,
+)
 from ai_security.tools.base import STABLE_ID_PATTERN, SideEffectClass
 
 AUDIT_SCHEMA_VERSION: Literal[1] = 1
-COMPONENT: Literal["firewall.gateway", "firewall.approval", "intent.service"] = "firewall.gateway"
+type COMPONENT = Literal[
+    "firewall.gateway", "firewall.approval", "intent.service", "api.ingress"
+]
 
 _HEX64 = re.compile(r"[0-9a-f]{64}")
 _STABLE_ID = re.compile(STABLE_ID_PATTERN)
@@ -210,6 +219,77 @@ class DlpAuditRecord(BaseModel):
         )
 
 
+class InputAuditFinding(BaseModel):
+    """One redacted input-defense finding (no matched text, no free-form detail)."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    code: FindingCode
+    segment_id: str = Field(min_length=1, max_length=128)
+    source_id: str = Field(min_length=1, max_length=256)
+    trust_label: TrustLabel
+    rule_id: str | None = Field(default=None, min_length=1, max_length=128)
+    char_offset: int | None = Field(default=None, ge=0)
+
+    @classmethod
+    def from_finding(cls, finding: DetectorFinding) -> InputAuditFinding:
+        return cls(
+            code=finding.code,
+            segment_id=finding.segment_id,
+            source_id=finding.source_id,
+            trust_label=finding.trust_label,
+            rule_id=finding.rule_id,
+            char_offset=finding.char_offset,
+        )
+
+
+class InputAuditRecord(BaseModel):
+    """Redacted input-inspection evidence (ADR-010, ADR-015).
+
+    Carries the disposition, trust label, detector/config versions and hashes, content
+    digest/size, and typed finding coordinates. It never contains the inspected text,
+    matched values, or finding detail strings.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    detector_version: str = Field(min_length=1, max_length=128)
+    heuristics_version: str = Field(min_length=1, max_length=128)
+    config_version: str = Field(min_length=1, max_length=128)
+    config_sha256: str = Field(pattern=_HEX64.pattern)
+    trust_label: TrustLabel
+    disposition: Disposition
+    content_digest: str = Field(pattern=_HEX64.pattern)
+    content_bytes: int = Field(ge=0, le=10_000_000)
+    normalized_changed: bool = False
+    findings: tuple[InputAuditFinding, ...] = ()
+
+    @field_validator("findings")
+    @classmethod
+    def _findings_are_bounded(
+        cls, value: tuple[InputAuditFinding, ...]
+    ) -> tuple[InputAuditFinding, ...]:
+        if len(value) > 64:
+            raise ValueError("at most 64 input findings may be audited")
+        return value
+
+    @classmethod
+    def from_report(cls, report: IntakeReport) -> InputAuditRecord:
+        """Project an intake report onto the auditable subset."""
+        return cls(
+            detector_version=report.detector_version,
+            heuristics_version=report.heuristics_version,
+            config_version=report.config_version,
+            config_sha256=report.config_sha256,
+            trust_label=report.trust_label,
+            disposition=report.disposition,
+            content_digest=report.content_sha256,
+            content_bytes=report.content_length_bytes,
+            normalized_changed=report.normalized_changed,
+            findings=tuple(InputAuditFinding.from_finding(item) for item in report.findings),
+        )
+
+
 class AuditEvent(BaseModel):
     """One canonical audit payload (storage fields are added by the repository)."""
 
@@ -219,7 +299,7 @@ class AuditEvent(BaseModel):
     event_id: str = Field(pattern=r"^[0-9a-f]{32}$")
     event_type: AuditEventType
     occurred_at: datetime
-    component: Literal["firewall.gateway", "firewall.approval", "intent.service"] = COMPONENT
+    component: COMPONENT = "firewall.gateway"
     component_version: str = Field(min_length=1, max_length=64)
 
     request_id: str = Field(min_length=1, max_length=128)
@@ -253,6 +333,7 @@ class AuditEvent(BaseModel):
     result_bytes: int | None = Field(default=None, ge=0, le=10_000_000)
     error_type: str | None = Field(default=None, min_length=1, max_length=64)
     dlp: DlpAuditRecord | None = None
+    input: InputAuditRecord | None = None
 
     @field_validator("occurred_at")
     @classmethod
@@ -326,6 +407,13 @@ class AuditEvent(BaseModel):
             InvocationOutcome.result_rejected,
         ):
             raise ValueError("TOOL_EXECUTION_FAILED requires a failed execution outcome")
+        if self.event_type is AuditEventType.input_inspected:
+            if self.input is None:
+                raise ValueError("INPUT_INSPECTED requires an input audit record")
+        elif self.input is not None:
+            raise ValueError(
+                f"{self.event_type.value} must not carry an input audit record"
+            )
         if self.event_type is AuditEventType.egress_inspected:
             if self.dlp is None or self.dlp.phase is not DlpPhase.egress:
                 raise ValueError("EGRESS_INSPECTED requires an EGRESS DLP record")
@@ -360,4 +448,6 @@ __all__ = [
     "AuditEventType",
     "DlpAuditFinding",
     "DlpAuditRecord",
+    "InputAuditFinding",
+    "InputAuditRecord",
 ]
