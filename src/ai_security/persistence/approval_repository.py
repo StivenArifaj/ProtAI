@@ -195,6 +195,28 @@ class ApprovalRepository:
                 )
                 await self._audit_chain.append_in_session(session, audit_payload)
 
+    async def request_id_for(self, approval_id: str, *, tenant_id: str | None) -> str | None:
+        """Return the approval's request correlation id, scoped to one tenant.
+
+        Read-only and deliberately minimal: the HTTP decision route needs the original
+        request id so approval events and ingress events share a correlation key, but it
+        must never read the token digest or any other row field. A cross-tenant lookup
+        returns ``None`` (treated as not found) so approval existence does not leak.
+        """
+        tenant_condition = (
+            ApprovalRequest.tenant_id.is_(None)
+            if tenant_id is None
+            else ApprovalRequest.tenant_id == tenant_id
+        )
+        async with self._session_factory() as session:
+            result = await session.execute(
+                select(ApprovalRequest.request_id).where(
+                    ApprovalRequest.approval_id == approval_id,
+                    tenant_condition,
+                )
+            )
+            return result.scalar_one_or_none()
+
     async def decide(
         self,
         approval_id: str,

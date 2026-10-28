@@ -69,16 +69,20 @@ def test_app_exposes_the_manifest_service_tracker_and_ttl(
     assert isinstance(app.state.intent_manifest_service, IntentManifestService)
     assert app.state.tool_gateway._intent_tracker is app.state.intent_usage_tracker  # noqa: SLF001
 
-    resolution = asyncio.run(
-        app.state.intent_manifest_service.extract_and_issue(
+    async def scenario() -> None:
+        resolution = await app.state.intent_manifest_service.extract_and_issue(
             request_id="req-app-intent",
             principal=principal(),
             text="read email-1 and summarize it",
         )
-    )
-    assert resolution.status is IntentResolutionStatus.active
-    assert resolution.manifest is not None
-    assert (resolution.manifest.expires_at - resolution.manifest.created_at).total_seconds() == 60
+        assert resolution.status is IntentResolutionStatus.active
+        assert resolution.manifest is not None
+        assert (
+            resolution.manifest.expires_at - resolution.manifest.created_at
+        ).total_seconds() == 60
+        await app.state.database.dispose()
+
+    asyncio.run(scenario())
 
 
 def test_wired_gateway_requires_a_manifest_and_executes_on_allow(
@@ -133,32 +137,34 @@ def test_ambiguous_request_yields_clarification_not_a_manifest(
     settings_factory: SettingsFactory, migrated_database: str
 ) -> None:
     app = create_app(settings_factory())
-    resolution = asyncio.run(
-        app.state.intent_manifest_service.extract_and_issue(
+
+    async def scenario() -> None:
+        resolution = await app.state.intent_manifest_service.extract_and_issue(
             request_id="req-app-intent",
             principal=principal(),
             text="do something useful",
         )
-    )
-    assert resolution.status is IntentResolutionStatus.requires_clarification
-    assert resolution.manifest is None
-    assert resolution.clarification_question is not None
+        assert resolution.status is IntentResolutionStatus.requires_clarification
+        assert resolution.manifest is None
+        assert resolution.clarification_question is not None
+        await app.state.database.dispose()
+
+    asyncio.run(scenario())
 
 
 def test_app_rejects_a_manifest_bound_to_another_request(
     settings_factory: SettingsFactory, migrated_database: str
 ) -> None:
     app = create_app(settings_factory())
-    resolution = asyncio.run(
-        app.state.intent_manifest_service.extract_and_issue(
+
+    async def scenario() -> None:
+        resolution = await app.state.intent_manifest_service.extract_and_issue(
             request_id="req-other",
             principal=principal(),
             text="read email-1 and summarize it",
         )
-    )
-    assert resolution.manifest is not None
+        assert resolution.manifest is not None
 
-    async def scenario() -> None:
         result = await invoke(
             app,
             request_id="req-app-intent",

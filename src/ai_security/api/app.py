@@ -25,7 +25,9 @@ bound intent manifests and the wired gateway requires a valid manifest plus its
 concrete constraints (and per-constraint use limits) before policy/execution. Since
 Phase 6 the factory also loads the strict output-DLP/egress configuration, proves its
 destination trust map covers every registered external destination, and injects the
-mandatory output-defense service into the gateway. No ``/v1`` routes exist yet.
+mandatory output-defense service into the gateway. Phase 8 wires the host-resolved
+principal, the ingress receipt/input-inspection producers, the bounded demo runtime, and
+the three documented ``/v1`` business routes.
 """
 
 from __future__ import annotations
@@ -36,13 +38,19 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
+from ai_security.api.errors import ApiError, api_error_handler
+from ai_security.api.ingress import ApiIngress
 from ai_security.api.middleware import HostAuthMiddleware
+from ai_security.api.rate_limit import FixedWindowRateLimiter
 from ai_security.api.routes_health import router as health_router
+from ai_security.api.routes_requests import router as requests_router
+from ai_security.api.runtime import DemoRuntime, ReceiptedToolExecutor
 from ai_security.audit.writer import ChainAuditRecorder
 from ai_security.data_security.dlp import OutputDefenseService, load_output_dlp_config
 from ai_security.firewall.approval import ApprovalService
 from ai_security.firewall.gateway import ToolGateway
 from ai_security.firewall.policy_engine import PolicyEngine
+from ai_security.identity.resolver import build_principal_resolver
 from ai_security.input_defense.config import load_input_defense_config
 from ai_security.input_defense.service import InputDefenseService
 from ai_security.intent.extractors import MockIntentExtractor
@@ -59,7 +67,7 @@ from ai_security.policy.self_checks import (
     load_policy_self_checks,
     run_policy_self_checks,
 )
-from ai_security.settings import Settings
+from ai_security.settings import ModelProviderKind, Settings
 from ai_security.tools.mock_email import MockEmailAdapter
 from ai_security.tools.mock_external_sink import MockExternalSinkAdapter, SinkStore
 from ai_security.tools.mock_files import MockFilesAdapter
@@ -113,6 +121,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # app.state.nonce_registrar to simulate store behavior.
     app.state.nonce_registrar = SqlAlchemyNonceRepository(database.session_factory)
     app.state.audit_chain = AuditChainRepository(database.session_factory, chain_id=V1_CHAIN_ID)
+    recorder = ChainAuditRecorder(app.state.audit_chain)
+    # Phase 8: the local model provider is not wired in this build. Refuse startup
+    # instead of silently substituting the deterministic mock extractor (ADR-015).
+    if resolved.model_provider is not ModelProviderKind.mock:
+        raise RuntimeError(
+            "MODEL_PROVIDER=local is not available in this build; refusing startup "
+            "rather than silently using the mock intent extractor (ADR-015)"
+        )
     # Phase 2: capability/policy consistency is proven at startup (fail closed) and the
     # single execution path is wired to the audit chain. The in-memory mock sink is
     # process-local by design (no network, no real side effect).
@@ -135,8 +151,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # Phase 5: durable approval storage is bound to the same audit chain. The gateway
     # accepts an approval only for an engine ASK_USER decision and only after an atomic,
     # digest-bound consumption; BLOCK/hard-denied actions never consult it.
+    app.state.approval_repository = ApprovalRepository(
+        database.session_factory, app.state.audit_chain
+    )
     app.state.approval_service = ApprovalService(
-        ApprovalRepository(database.session_factory, app.state.audit_chain),
+        app.state.approval_repository,
         ttl_seconds=resolved.approval_ttl_seconds,
     )
     # Phase 4: manifests are issued only by this service (mock extractor in Phase 4;
@@ -149,11 +168,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         registry=registry,
         bundle=policy_bundle,
         manifest_ttl_seconds=resolved.intent_manifest_ttl_seconds,
+        recorder=recorder,
     )
     app.state.tool_gateway = ToolGateway(
         registry=registry,
         engine=PolicyEngine(policy_bundle),
-        recorder=ChainAuditRecorder(app.state.audit_chain),
+        recorder=recorder,
         output_defense=app.state.output_defense,
         intent_tracker=app.state.intent_usage_tracker,
         approval_service=app.state.approval_service,
@@ -169,8 +189,24 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         ttl_seconds=resolved.session_signal_ttl_seconds,
         max_age_seconds=resolved.session_max_age_seconds,
     )
+    # Phase 8: principal resolution, accepted-request receipts, input inspection, the
+    # bounded demo runtime, and the three documented /v1 business routes. Every route
+    # authenticates the host in middleware and verifies the signed principal assertion;
+    # no route accepts a client-supplied decision, risk, approval, or identifier.
+    app.state.principal_resolver = build_principal_resolver(resolved)
+    app.state.api_ingress = ApiIngress(
+        resolver=app.state.principal_resolver,
+        recorder=recorder,
+        input_defense=app.state.input_defense_service,
+        intent_service=app.state.intent_manifest_service,
+        bundle=policy_bundle,
+    )
+    app.state.demo_runtime = DemoRuntime(ReceiptedToolExecutor(app.state.tool_gateway))
+    app.state.request_limiter = FixedWindowRateLimiter()
+    app.add_exception_handler(ApiError, api_error_handler)
     app.add_middleware(HostAuthMiddleware, settings=resolved)
     app.include_router(health_router)
+    app.include_router(requests_router)
     return app
 
 

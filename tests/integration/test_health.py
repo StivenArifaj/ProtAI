@@ -131,7 +131,13 @@ def test_docs_present_only_in_dev_test(settings_factory: SettingsFactory, env: s
         openapi = client.get("/openapi.json")
         assert openapi.status_code == 200
         paths = set(openapi.json()["paths"])
-    assert paths == {"/health/live", "/health/ready"}
+    assert paths == {
+        "/health/live",
+        "/health/ready",
+        "/v1/requests",
+        "/v1/tool-calls/evaluate",
+        "/v1/approvals/{approval_id}/decision",
+    }
 
 
 @pytest.mark.parametrize("env", ["staging", "production"])
