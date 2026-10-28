@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import ipaddress
 import json
 import re
 from enum import StrEnum
@@ -98,6 +99,61 @@ class PrincipalResolverKind(StrEnum):
 
     dev = "dev"
     host = "host"
+
+
+class ModelProviderKind(StrEnum):
+    """Optional intent-extraction provider (ADR-015).
+
+    ``mock`` is deterministic and offline. ``local`` selects the Ollama-compatible
+    client; no cloud provider exists in v1.
+    """
+
+    mock = "mock"
+    local = "local"
+
+
+LOCAL_MODEL_PLACEHOLDER = "SET_TO_EXACT_INSTALLED_MODEL"
+LOCAL_MODEL_NAME_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}")
+LOCAL_MODEL_GENERATE_PATH = "/api/generate"
+
+
+def validate_local_model_origin(raw: str, *, development_like: bool) -> str:
+    """Validate ``LOCAL_MODEL_BASE_URL`` as a bare HTTP(S) origin (ADR-015).
+
+    Credentials, a query, a fragment, and a non-root path are all rejected: the client
+    appends exactly ``/api/generate``. Outside development/test a non-loopback origin
+    must use HTTPS so model prompts are not sent in clear text.
+    """
+    if CONTROL_CHARACTERS.search(raw):
+        raise ValueError("LOCAL_MODEL_BASE_URL must not contain control characters")
+    try:
+        split = urlsplit(raw)
+        port = split.port
+    except ValueError as exc:
+        raise ValueError("LOCAL_MODEL_BASE_URL is not a valid URL") from exc
+    if split.scheme not in ("http", "https"):
+        raise ValueError("LOCAL_MODEL_BASE_URL must use http:// or https://")
+    if split.username is not None or split.password is not None:
+        raise ValueError("LOCAL_MODEL_BASE_URL must not contain credentials")
+    if split.query or split.fragment:
+        raise ValueError("LOCAL_MODEL_BASE_URL must not contain a query or fragment")
+    if split.path not in ("", "/"):
+        raise ValueError("LOCAL_MODEL_BASE_URL must be an origin with no path")
+    if not split.hostname:
+        raise ValueError("LOCAL_MODEL_BASE_URL must include a host")
+    if port == 0:
+        raise ValueError("LOCAL_MODEL_BASE_URL must not use port 0")
+    loopback = False
+    try:
+        loopback = ipaddress.ip_address(split.hostname).is_loopback
+    except ValueError:
+        loopback = split.hostname.lower() == "localhost"
+    if not development_like and not loopback and split.scheme != "https":
+        raise ValueError(
+            "LOCAL_MODEL_BASE_URL must use HTTPS outside development/test unless it "
+            "targets a loopback address (ADR-015)"
+        )
+    return raw.rstrip("/")
 
 
 class HostAuthKey(BaseModel):
@@ -189,6 +245,8 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
         extra="ignore",
         case_sensitive=False,
+        # ``model_provider`` is an environment-facing name, not a pydantic namespace.
+        protected_namespaces=(),
     )
 
     app_env: AppEnv
@@ -209,6 +267,23 @@ class Settings(BaseSettings):
     session_max_age_seconds: int = Field(default=604800, gt=0)
     intent_manifest_ttl_seconds: int = Field(default=300, ge=1, le=3600)
     approval_ttl_seconds: int = Field(default=900, ge=60, le=86400)
+
+    # Phase 8: bounded request timing, per-process rate limits, and the optional
+    # local intent-extraction provider (ADR-015).
+    request_timeout_seconds: int = Field(default=30, ge=1, le=120)
+    rate_limit_requests_per_minute: int = Field(default=60, ge=1, le=600)
+    rate_limit_tool_calls_per_minute: int = Field(default=120, ge=1, le=600)
+    rate_limit_invalid_requests_per_minute: int = Field(default=30, ge=1, le=600)
+    rate_limit_approval_decisions_per_minute: int = Field(default=30, ge=1, le=600)
+    model_provider: ModelProviderKind = ModelProviderKind.mock
+    local_model_base_url: str = Field(
+        default="http://host.docker.internal:11434", min_length=1, max_length=2048
+    )
+    local_model_name: str = Field(
+        default=LOCAL_MODEL_PLACEHOLDER, min_length=1, max_length=256
+    )
+    local_model_timeout_seconds: int = Field(default=10, ge=1, le=120)
+    allow_external_model_calls: bool = False
 
     _host_auth_keys: dict[str, HostAuthKey] = PrivateAttr(default_factory=dict)
 
@@ -279,10 +354,39 @@ class Settings(BaseSettings):
             )
         return self
 
+    @model_validator(mode="after")
+    def _validate_model_provider_configuration(self) -> Settings:
+        if self.allow_external_model_calls:
+            raise ValueError(
+                "ALLOW_EXTERNAL_MODEL_CALLS=true is refused: v1 has no cloud model "
+                "adapter, and enabling it would imply a capability that does not exist "
+                "(ADR-015)"
+            )
+        if self.model_provider is ModelProviderKind.local:
+            validate_local_model_origin(
+                self.local_model_base_url, development_like=self.app_env.development_like
+            )
+            if self.local_model_name == LOCAL_MODEL_PLACEHOLDER:
+                raise ValueError(
+                    "LOCAL_MODEL_NAME must name an exact installed model when "
+                    "MODEL_PROVIDER=local (ADR-015)"
+                )
+            if LOCAL_MODEL_NAME_PATTERN.fullmatch(self.local_model_name) is None:
+                raise ValueError(
+                    "LOCAL_MODEL_NAME must be 1-256 characters of letters, digits, "
+                    "'.', '_', ':', '/', or '-'"
+                )
+        return self
+
     @property
     def host_auth_keys(self) -> dict[str, HostAuthKey]:
         """Validated host-auth key records, keyed by key id."""
         return self._host_auth_keys
+
+    @property
+    def local_model_origin(self) -> str:
+        """The validated origin without a trailing slash (``/api/generate`` is fixed)."""
+        return self.local_model_base_url.rstrip("/")
 
     @property
     def database_dsn(self) -> str:

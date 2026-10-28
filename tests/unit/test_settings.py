@@ -401,3 +401,108 @@ def test_approval_ttl_is_bounded_and_defaults_to_fifteen_minutes() -> None:
         make_settings(approval_ttl_seconds=86_401)
     assert make_settings(approval_ttl_seconds=60).approval_ttl_seconds == 60
     assert make_settings(approval_ttl_seconds=86_400).approval_ttl_seconds == 86_400
+
+
+def test_phase8_defaults_are_offline_and_bounded() -> None:
+    settings = make_settings()
+    assert settings.request_timeout_seconds == 30
+    assert settings.rate_limit_requests_per_minute == 60
+    assert settings.rate_limit_tool_calls_per_minute == 120
+    assert settings.rate_limit_invalid_requests_per_minute == 30
+    assert settings.rate_limit_approval_decisions_per_minute == 30
+    assert settings.model_provider.value == "mock"
+    assert settings.local_model_base_url == "http://host.docker.internal:11434"
+    assert settings.local_model_name == "SET_TO_EXACT_INSTALLED_MODEL"
+    assert settings.local_model_timeout_seconds == 10
+    assert settings.allow_external_model_calls is False
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("request_timeout_seconds", 0),
+        ("request_timeout_seconds", 121),
+        ("rate_limit_requests_per_minute", 0),
+        ("rate_limit_requests_per_minute", 601),
+        ("rate_limit_tool_calls_per_minute", 0),
+        ("rate_limit_tool_calls_per_minute", 601),
+        ("rate_limit_invalid_requests_per_minute", 0),
+        ("rate_limit_invalid_requests_per_minute", 601),
+        ("rate_limit_approval_decisions_per_minute", 0),
+        ("rate_limit_approval_decisions_per_minute", 601),
+        ("local_model_timeout_seconds", 0),
+        ("local_model_timeout_seconds", 121),
+    ],
+)
+def test_phase8_numeric_bounds_are_enforced(field: str, value: int) -> None:
+    with pytest.raises(ValidationError):
+        make_settings(**{field: value})
+
+
+def test_local_provider_requires_an_exact_installed_model_name() -> None:
+    with pytest.raises(ValidationError, match="exact installed model"):
+        make_settings(model_provider="local")
+    with pytest.raises(ValidationError, match="LOCAL_MODEL_NAME"):
+        make_settings(model_provider="local", local_model_name="bad model name")
+    settings = make_settings(model_provider="local", local_model_name="llama3.2:3b")
+    assert settings.model_provider.value == "local"
+    assert settings.local_model_name == "llama3.2:3b"
+
+
+def test_external_model_calls_cannot_be_enabled() -> None:
+    with pytest.raises(ValidationError, match="ALLOW_EXTERNAL_MODEL_CALLS"):
+        make_settings(allow_external_model_calls=True)
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://host.docker.internal:11434/api",
+        "http://host.docker.internal:11434?x=1",
+        "http://host.docker.internal:11434#frag",
+        "http://user:pass@host.docker.internal:11434",
+        "ftp://host.docker.internal:11434",
+        "http://:11434",
+        "http://host.docker.internal:0",
+    ],
+)
+def test_local_model_base_url_must_be_a_bare_origin(url: str) -> None:
+    with pytest.raises(ValidationError, match="LOCAL_MODEL_BASE_URL"):
+        make_settings(
+            model_provider="local",
+            local_model_name="llama3.2:3b",
+            local_model_base_url=url,
+        )
+
+
+def test_local_model_base_url_https_rules() -> None:
+    with pytest.raises(ValidationError, match="HTTPS outside development/test"):
+        make_settings(
+            app_env="production",
+            model_provider="local",
+            local_model_name="llama3.2:3b",
+            local_model_base_url="http://models.internal:11434",
+        )
+    settings = make_settings(
+        app_env="production",
+        model_provider="local",
+        local_model_name="llama3.2:3b",
+        local_model_base_url="https://models.internal:11434",
+    )
+    assert settings.local_model_base_url == "https://models.internal:11434"
+    loopback = make_settings(
+        app_env="production",
+        model_provider="local",
+        local_model_name="llama3.2:3b",
+        local_model_base_url="http://127.0.0.1:11434",
+    )
+    assert loopback.local_model_origin == "http://127.0.0.1:11434"
+
+
+def test_local_model_origin_strips_a_trailing_slash() -> None:
+    settings = make_settings(
+        model_provider="local",
+        local_model_name="llama3.2:3b",
+        local_model_base_url="http://localhost:11434/",
+    )
+    assert settings.local_model_origin == "http://localhost:11434"
