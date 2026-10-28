@@ -3,7 +3,8 @@
 Rules: never claim a result that was not produced by a command actually run. Fresh
 re-runs and historical records are kept in separate tables. Evidence IDs (V1–V29 for
 0a/0b; V30–V35 for Phase 1; V36–V42 for Phase 2; V43–V50 for Phase 3; V51–V56 for
-Phase 4; V57–V62 for Phase 5; V63–V66 for Phase 6; V67+ for Phase 7) are referenced from
+Phase 4; V57–V62 for Phase 5; V63–V66 for Phase 6; V67–V71 for Phase 7; V72+ for
+Phase 8) are referenced from
 [IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md) and the phase records.
 
 ## How to verify (documented commands)
@@ -11,7 +12,7 @@ Phase 4; V57–V62 for Phase 5; V63–V66 for Phase 6; V67+ for Phase 7) are ref
 | Command | What it checks | Expected |
 |---|---|---|
 | `uv sync --frozen` | lockfile/install consistency | installs with no resolution drift |
-| `uv run pytest` | unit/integration/security tests | 827 passed (DB-backed integration skips cleanly if PostgreSQL is unreachable) |
+| `uv run pytest` | unit/integration/security tests | 949 passed (DB-backed integration skips cleanly if PostgreSQL is unreachable) |
 | `bash scripts/check.sh` | full local gate (8 steps) | exit 0; prints "All checks passed." |
 | `uv run alembic upgrade head` | migrations (needs §5.4 env; host `db`→`127.0.0.1`) | applies baseline through `f7a8b9c0d1e2`; second run reports already at head |
 | `docker compose config -q` | Compose file syntax | exit 0 |
@@ -20,9 +21,9 @@ Phase 4; V57–V62 for Phase 5; V63–V66 for Phase 6; V67+ for Phase 7) are ref
 | `docker compose up -d db api` | stack | `protai-db-1` + `protai-api-1` healthy |
 | `curl http://127.0.0.1:8080/health/live` | liveness | 200 `{"status":"alive"}` |
 | `curl http://127.0.0.1:8080/health/ready` | readiness | 200 ready incl. `policy_version`/`policy_hash` (503 not_ready without DB or with drifted self-checks) |
-| unsigned/signed requests to `/v1/*` | host auth | unsigned → 400 `missing_headers`; valid signature → 404 (no routes yet) with nonce registered; replay → 401 `replayed_nonce` |
+| unsigned/signed requests to `/v1/*` | host auth + ingress | unsigned → 400 `missing_headers`; valid signature without a `principal_assertion` → 403 `principal_rejected` (one audited `PRINCIPAL_REJECTED`); replay → 401 `replayed_nonce` |
 | `uv run python -c "…load_policy_bundle…"` | policy bundle smoke | `version`, per-file hashes, `combined_hash`; 21 fixtures, 0 failures |
-| `uv run pytest tests/security tests/unit/test_gateway.py -q` | no-bypass invariants | 82 passed (denied/unknown/audit-failed calls never reach the adapter; DLP denials and the Phase 7 fail-closed lifecycle included) |
+| `uv run pytest tests/security tests/unit/test_gateway.py -q` | no-bypass invariants | 87 passed (denied/unknown/audit-failed calls never reach the adapter; DLP denials, the Phase 7 fail-closed lifecycle, and the Phase 8 preview path included) |
 | `docker compose down` | teardown (volume preserved) | stack removed |
 
 Failure behavior: `check.sh` exits non-zero and prints `CHECK FAILED: <reason>`.
@@ -141,6 +142,32 @@ evidence was moved off `POLICY_EVALUATED`/execution events onto first-class insp
 response events. The newest-event truncation limit is tested and documented rather than
 hidden.
 
+## Fresh evidence (2026-10-28, Phase 8 session)
+
+| ID | Command / check | Result |
+|---|---|---|
+| V72 | `uv run --frozen pytest -q` | PASS — **949 passed** (782 unit + 122 integration + 45 security), including 28 signed `/v1` route tests, 9 API-support tests, 36 provider tests, and local-provider failure/success integration against real PostgreSQL |
+| V73 | `uv run --frozen mypy`; `uv run --frozen ruff check .`; `uv run --frozen ruff format --check .`; `uv lock --check` | PASS — mypy clean (73 source files); ruff lint clean; 188 files already formatted; lockfile consistent (44 packages resolved) after moving `httpx2` to runtime dependencies |
+| V74 | `bash scripts/check.sh` (pre-commit) | PASS — exit 0, all 8 steps; **949 passed**; ruff/mypy clean; Gitleaks 8.30.1 dir+git "no leaks found" (**48 commits scanned**); prohibited-pattern greps clean; `compare_digest` confined to `security/constant_time.py` |
+| V75 | `uv run --frozen pytest tests/integration/test_api_requests.py tests/unit/test_api_support.py tests/unit/test_intent_providers.py tests/unit/test_principal_assertion.py tests/unit/test_principal_resolver.py tests/unit/test_settings.py -q` | PASS — **188 passed** (28 route contracts incl. local-provider failure/success, 9 API support, 36 provider strictness, 16 assertion binding, 14 resolver, 85 settings bounds/refusals) |
+
+Phase 8 adds **no migration**; Alembic head remains `f7a8b9c0d1e2` (no schema object was
+needed for routes, rate limits, or the local provider). Rate-limit and intent-use state
+are in-memory and per process.
+
+Development-time findings and design points settled in Phase 8 (now regression-tested,
+recorded for honesty): a pytest/httpx import mismatch was resolved by replacing `httpx`
+with the project's `httpx2` runtime dependency and refreshing the lockfile; the provider
+initially ran under a dev-only dependency, so it was moved to runtime dependencies
+(`uv lock --check` now guards it). `LOCAL_MODEL_TIMEOUT_SECONDS` was narrowed to 1–60 s
+(whole seconds) because the extractor constructor rejects larger values. The request
+deadline deliberately bounds only tool proposals (`received_at + REQUEST_TIMEOUT_SECONDS`),
+not local-model extraction, which has its own per-attempt timeout; two attempts can
+therefore precede the deadline. Raw request text, email content, and approval tokens were
+asserted absent from audit payloads and DEBUG logs. Approved actions are not resumable
+through `/v1/requests` in Phase 8 (documented limitation), and the decision route never
+executes.
+
 ## Fresh evidence (2026-10-19, Phase 3 session)
 
 | ID | Command / check | Result |
@@ -238,24 +265,31 @@ iterations, at the ruff format and lint steps. Removing the file restored exit 0
 The Phase 0b gate additionally fails if Gitleaks is missing or version-mismatched
 (deliberate pin, 8.30.1).
 
-## Test inventory (827 tests)
+## Test inventory (949 tests)
 
 Unit (`tests/unit/`):
 
-- `test_settings.py` (60) — 0a validation + masking + docs flag; 0b host-auth key
+- `test_settings.py` (85) — 0a validation + masking + docs flag; 0b host-auth key
   schemas, duplicate rejection, sample-secret refusal, resolver guard, TTL/tolerance
   relation, `policy_self_checks_path`; 1 `policy_path`/`risk_thresholds_path` defaults,
   overrides, empty-path rejection; 3 input-defense path/session TTL defaults, TTL ≤
   max-age, positive windows; Phase 4 intent-manifest TTL default/bounds; Phase 5
-  approval TTL default/bounds.
+  approval TTL default/bounds; Phase 8 request timeout/rate-limit/model-provider bounds,
+  placeholder-name refusal, external-model refusal, and local-timeout mismatch refusal.
 - `test_constant_time.py` (16) — equality helpers incl. unequal-length and hex paths.
 - `test_canonical_json.py` (17) — canonical text/bytes stability and edge cases.
 - `test_hash_chain.py` (17) — ADR-002 formula, genesis, fixed vectors, hex conversion.
 - `test_host_auth_verifier.py` (46) — exact signing message vector, header handling,
   full rejection matrix, timestamp-window boundaries, constant-time paths.
 - `test_principal_resolver.py` (14) — frozen `Principal` model, timezone validation,
-  dev-resolver guard (incl. `model_construct` bypass attempt), fail-closed host resolver.
+  dev-resolver guard (incl. `model_construct` bypass attempt), host resolver over a
+  verified signed assertion.
+- `test_principal_assertion.py` (16) — strict assertion fields (`extra="forbid"`), key
+  `host_id`/`audience` binding, tenant scope required/member/absent rules, future-time
+  tolerance, typed rejection reasons.
 - `test_principal_test_adapter.py` (8) — test-only constructor guard, factory exclusion.
+- `test_api_support.py` (9) — Phase 8 error envelope/state enum, limiter fixed windows
+  and atomic multi-slot reservation, strict request schema bodies.
 - `test_urls.py` (36) — scheme/host/port/path/query canonicalization, IDNA hosts,
   percent-encoding, rejection cases (whitespace, controls, userinfo, fragment, zone id,
   trailing dot), exact-match equality.
@@ -281,17 +315,19 @@ Unit (`tests/unit/`):
 - `test_risk_engine.py` (30) — every `risk-v1` weight preserved under `risk-v2`, cap at
   100, external-destination requirement, breadth boundaries (0/1/2/4/5/8/9+), stable
   factor codes/rationale, invalid counts (bool/str/float/negative/oversize), version.
-- `test_gateway.py` (37) — see the Phase 2 completion record for the base scenario list;
+- `test_gateway.py` (42) — see the Phase 2 completion record for the base scenario list;
   Phase 5 adds duplicate-derived-resource-id dedup before risk/digest/audit; Phase 6 adds
   canary-never-sinks, destination-trust denial, egress inspection failure before risk,
   response redaction/digest, canary/oversize/`REVIEW` suppression, and schema-breaking
   redaction suppression; Phase 7 adds the mandatory ordered lifecycle and the 8-position
   pre/post audit fail-closed matrix, first-class redacted egress/output/response events,
-  and the execution/completion/response split.
-- `test_audit_schema.py` (29) — full §16.1 taxonomy membership; event-specific required
+  and the execution/completion/response split; Phase 8 adds preview evaluation with no
+  execution and no approval/manifest consumption.
+- `test_audit_schema.py` (32) — full §16.1 taxonomy membership; event-specific required
   fields (principal/tool/action/decision/reason/outcome); `call_id` validation; DLP record
   placement/redaction; payload omission of `None`; unknown-field refusal; approval and
-  intent event payloads; producerless names never fabricated; schema/version constants.
+  intent event payloads; Phase 8 ingress event shapes; producerless names never
+  fabricated; schema/version constants.
 - `test_output_dlp.py` (19) — repository config and exact destination coverage; strict
   loader (duplicate/unknown/bad version/non-UTF-8/missing); pattern and canonical
   destination validation; canary detection without matched text; destination-aware class
@@ -316,6 +352,11 @@ Unit (`tests/unit/`):
   resolved-time invariants.
 - `test_intent_extractors.py` (13) — mock scenarios, strict local-model JSON, duplicate
   keys/unknown fields/oversize, retries, provider outage/timeout, unsafe destination.
+- `test_intent_providers.py` (36) — Ollama-compatible client: origin-only URL validation
+  (HTTPS/loopback policy), exact model name, fixed `/api/generate` request with
+  `format=json`/`temperature=0`, redirect refusal, proxy trust disabled, 1 MiB envelope
+  and 64 KiB output caps, content-type/UTF-8/duplicate-key rejection, timeout/connection
+  failures mapped to typed `LocalModelProviderError`.
 - `test_intent_validation.py` (10) — exact action/resource/destination/parameter matching,
   tracker uses/expiry/capacity/purge, DST TODAY, THIS_WEEK, timezone validation.
 - `test_intent_service.py` (16) — issuance/bindings/digest/TTL, relative dates, missing
@@ -345,6 +386,11 @@ Security (`tests/security/`):
 
 Integration (`tests/integration/`):
 
+- `test_api_requests.py` (28) — signed `/v1` contracts against real PostgreSQL:
+  assertion rejection + single audited `PRINCIPAL_REJECTED`, input gating, no-side-effect
+  denials, rate-limit charging/exhaustion, request states, in-process approval creation
+  and one-time decisions, preview non-execution/non-consumption, local-provider
+  failure/success, and audit correlation without duplicate receipts.
 - `test_approval_flow.py` (11) — real-PostgreSQL approval creation/decision/consumption,
   digest-only token storage, one-time/replay, action mutation, pending/approved expiry,
   denial, tenant/eligibility/self-approval, exactly-one-winner concurrency, and

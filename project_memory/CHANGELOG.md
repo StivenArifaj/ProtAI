@@ -2,6 +2,37 @@
 
 Concise, dated history of project activity. Newest first.
 
+## 2026-10-28
+
+- **Phase 8 (HTTP ingress, bounded runtime, local model) implemented and verified:** new
+  host-signed `PrincipalAssertion` (strict `iss`/`aud`/tenant binding, future-time
+  tolerance, no unsigned fallback), the three documented routes (`POST /v1/requests` as
+  the sole execution surface, non-executing `POST /v1/tool-calls/evaluate`,
+  token-in-signed-body `POST /v1/approvals/{approval_id}/decision`), ingress audit
+  producers (`REQUEST_RECEIVED`, `PRINCIPAL_RESOLVED`/`PRINCIPAL_REJECTED`,
+  `INPUT_INSPECTED`), a bounded `DemoRuntime` (exactly `mock_email.read` +
+  `text.summarize`, atomic tool-call slot reservation, `NO_ACTION` otherwise), four
+  per-principal fixed-window rate-limit buckets, `REQUEST_TIMEOUT_SECONDS`, stable error
+  envelopes, and an optional strict Ollama-compatible local model provider behind
+  `LocalModelIntentExtractor`. Provider failures yield no manifest and `503
+  model_unavailable`; the mock path remains the default and runs offline. Contract in
+  ADR-015; integration contract in
+  [../docs/API_INTEGRATION.md](../docs/API_INTEGRATION.md). Evidence V72–V75 in
+  [TESTING_AND_VERIFICATION.md](TESTING_AND_VERIFICATION.md) — **949 tests** (782 unit +
+  122 integration + 45 security), 8/8 gate, mypy 73 files, no new migration
+  (`f7a8b9c0d1e2`). Commits `5e20075` (ADR-015), `edda8ea` (assertion/resolver),
+  `2bdf30f` (input evidence), `b561dd6` (preview support), `2fa66fe` (settings),
+  `f0f9b6b` (format), `940600e` (routes), plus local-provider/docs commits. Phase record:
+  [phases/PHASE_8_COMPLETE.md](phases/PHASE_8_COMPLETE.md).
+- **Phase 8 honest limits:** the runtime is a fixed two-call demo, not a planner; an
+  approval can be decided but the approved action is not resumable through HTTP; rate
+  limits are per process/in memory; there is no approval UI/delivery/revocation/expiry
+  sweeper, cloud model adapter, streaming, distributed limiter, model-prompt DLP,
+  process sandbox, or external audit anchor. The local model is optional and never an
+  authorization input.
+- **Tooling:** `httpx2` moved from the dev group to runtime dependencies (the provider is
+  imported by application code); lockfile refreshed and `uv lock --check` clean.
+
 ## 2026-10-26
 
 - **Phase 7 (audit persistence and verification) implemented and verified:** the audit

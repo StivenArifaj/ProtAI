@@ -4,11 +4,13 @@ Repository foundation for the AI Agent Security & Safety Platform. The authorita
 specification is `AI_Agent_Security_Platform_Master_Blueprint_v1.2.md` in the repository
 root; the archived v1.0 is under `archive/` and is superseded.
 
-**Current state: Phases 0a-7 complete and verified** (repository foundation; security
+**Current state: Phases 0a-8 complete and verified** (repository foundation; security
 foundation; typed contracts + deterministic policy engine; tool registry + enforced
 gateway; advisory input defense + context provenance; intent extraction + manifest
 validation; risk v2 + durable one-time human approvals; output DLP + destination-aware
-egress policy; full audit taxonomy + correlation + exact-bytes verification). Implemented today: enforced
+egress policy; full audit taxonomy + correlation + exact-bytes verification; signed
+HTTP ingress, bounded request runtime, and optional local-model intent extraction).
+Implemented today: enforced
 configuration validation; host HMAC authentication + replay rejection on the `/v1/*`
 path prefix; deterministic policy engine with 21 startup/readiness self-check fixtures;
 typed tool registry + mock-only adapters; the `invoke_tool` gateway as the only execution
@@ -21,19 +23,22 @@ tenant/subject-bound session signal store; server-issued sealed intent manifests
 exact action/resource/destination/parameter/use constraints and trusted-timezone relative
 dates; durable, action-bound approval requests with strict approver rules, digest-only
 tokens, and row-locked one-time consumption, enforced by the gateway for engine
-`ASK_USER`; and mandatory output DLP that inspects validated tool-bound arguments before
+`ASK_USER`; mandatory output DLP that inspects validated tool-bound arguments before
 execution and the complete buffered result before release, with deterministic pattern
 detection, exact-canonical destination trust, span-preserving redaction, and full-response
-suppression. Phase 7 adds the complete structured audit lifecycle (request, proposal,
+suppression; and the complete structured audit lifecycle (request, proposal,
 inspection, decision, approval consumption, execution, output inspection, response) with
-first-class redacted DLP events, indexed correlation metadata, a read-only verifier over
-the exact stored hash-chain bytes with typed tamper findings, and audit/log privacy tests.
-Detection is advisory and intent/approval/DLP can only narrow, gate, or raise
-sensitivity: none can produce an `ALLOW` or bypass policy. **No `/v1` business or approval
-routes, manifest/approval transport, real model provider, classifier/entropy-based DLP,
-real connectors, sandbox, external audit anchor, automated retention, or audit query
-API/UI exist yet** — do not present the system as
-providing them. See `docs/IMPLEMENTATION_STATE.md`, `docs/SECURITY_INVARIANTS.md`,
+first-class redacted DLP events, indexed correlation metadata, and a read-only verifier
+over the exact stored hash-chain bytes with typed tamper findings. Phase 8 adds
+host-signed principal assertions, the three documented `/v1` routes (execute, preview,
+approval decision), a bounded read-then-summarize demo runtime, per-process rate limits,
+and an optional strict Ollama-compatible local model provider. Detection is advisory and
+intent/approval/DLP can only narrow, gate, or raise sensitivity: none can produce an
+`ALLOW` or bypass policy. **No general agent planner, real connectors, cloud model
+adapter, classifier/entropy-based DLP, approval UI/delivery, process sandbox, external
+audit anchor, automated retention, or audit query API/UI exists yet** — do not present
+the system as providing them. See `docs/API_INTEGRATION.md`,
+`docs/IMPLEMENTATION_STATE.md`, `docs/SECURITY_INVARIANTS.md`,
 `docs/OUTPUT_DLP_FALSE_POSITIVES.md`, `docs/AUDIT_RETENTION_AND_DATA_HANDLING.md`, and
 `docs/KNOWN_LIMITATIONS.md`.
 
@@ -47,7 +52,7 @@ providing them. See `docs/IMPLEMENTATION_STATE.md`, `docs/SECURITY_INVARIANTS.md
 
 ```bash
 uv sync --frozen          # install from the committed lockfile
-uv run pytest             # full suite (827 unit/integration/security tests)
+uv run pytest             # full suite (949 unit/integration/security tests)
 bash scripts/check.sh     # full local gate: lockfile, ruff, mypy, pytest, invariant greps
 ```
 
@@ -98,6 +103,12 @@ rules enforced at startup:
   required at startup, and its exact-canonical destination trust map must cover every
   registered external-mutation destination. Invalid, missing, or non-covering
   configuration refuses startup.
+- `MODEL_PROVIDER` defaults to `mock` (offline). `local` requires an exact
+  `LOCAL_MODEL_NAME`, an origin-only `LOCAL_MODEL_BASE_URL` (HTTPS outside development
+  unless loopback), and a bounded `LOCAL_MODEL_TIMEOUT_SECONDS` (1-60);
+  `ALLOW_EXTERNAL_MODEL_CALLS=true` is refused because no cloud adapter exists.
+- `REQUEST_TIMEOUT_SECONDS` (1-120, default 30) bounds each request's tool deadline;
+  `RATE_LIMIT_*_PER_MINUTE` bounds the four per-process, per-principal buckets.
 
 Configuration errors fail startup with a clear message; the process never starts in a
 partially configured state.
@@ -105,6 +116,7 @@ partially configured state.
 ## Documentation map
 
 - `docs/ARCHITECTURE.md` — component map and request lifecycle
+- `docs/API_INTEGRATION.md` — signed `/v1` routes, host auth, status/error mapping, local model setup
 - `docs/THREAT_MODEL.md` — threat table and trust boundaries with implementation status
 - `docs/SECURITY_INVARIANTS.md` — the 25 mandatory invariants and their status
 - `docs/POLICY_DECISION_MATRIX.md` — the mandated v1 decision matrix and its enforcement status

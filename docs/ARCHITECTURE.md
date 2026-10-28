@@ -1,16 +1,17 @@
 # Architecture
 
-Status: **implemented through Phase 7.** This document describes the intended v1
+Status: **implemented through Phase 8.** This document describes the intended v1
 architecture from blueprint v1.2 (sections 3-4) and marks what actually exists today.
-Host authentication, the deterministic policy engine, the mock-tool gateway, advisory
-input threat detection with trust labels and session signals, server-issued intent
-manifests with concrete action constraints, `risk-v2`, durable one-time human approvals,
-mandatory output DLP with destination-aware egress and complete-response
-release/suppression, and the full structured audit lifecycle with an exact-stored-bytes
-verifier exist and are tested; real connectors, a real model provider, approval transport,
-and an external audit anchor do not. The detector is advisory and the intent layer can
-only narrow execution; neither is consumed by a live `/v1` route yet. Only components
-marked Implemented below may be cited as controls.
+Host authentication, host-signed principal assertions, the deterministic policy engine, the
+mock-tool gateway, advisory input threat detection with trust labels and session signals,
+server-issued intent manifests with concrete action constraints, `risk-v2`, durable
+one-time human approvals, mandatory output DLP with destination-aware egress and
+complete-response release/suppression, the full structured audit lifecycle with an
+exact-stored-bytes verifier, and signed `/v1` request/preview/approval-decision routes
+exist and are tested; a general agent planner, real connectors, cloud models, approval
+delivery/UI, and an external audit anchor do not. The detector is advisory, the intent
+layer can only narrow execution, and the local model is optional and never an
+authorization input. Only components marked Implemented below may be cited as controls.
 
 ## Logical flow (target v1)
 
@@ -84,25 +85,25 @@ enforcement is not an agent security system (blueprint section 3.2).
 
 ## Component map and current status
 
-| Package / component | Blueprint role | Status (Phase 7) |
+| Package / component | Blueprint role | Status (Phase 8) |
 |---|---|---|
-| `src/ai_security/api/` | HTTP adapter, health endpoints | **Implemented:** `create_app` factory, `/health/live`, `/health/ready`, host-auth middleware, registry + gateway wiring on `app.state` (plus `output_dlp_config`/`output_defense`); `/v1/*` business routes do not exist yet |
-| `src/ai_security/settings.py` | Validated configuration | **Implemented:** fail-closed validation incl. host keys, replay window, request bound, policy/threshold/self-check paths, input-defense path, session windows, intent-manifest TTL, the bounded approval TTL (60-86,400 s; default 900), and `OUTPUT_DLP_PATH` |
-| `identity/` (HMAC host auth, resolver) | Authenticate host, verify principal | **Implemented (0b/1):** exact signing message, full rejection surface, atomic nonce store, dev guard, test-only principal adapter; typed host-assertion contract pending |
+| `src/ai_security/api/` | HTTP adapter, health endpoints | **Implemented:** `create_app` factory, `/health/live`, `/health/ready`, host-auth middleware, registry + gateway wiring on `app.state`, and the Phase 8 signed routes `POST /v1/requests`, `POST /v1/tool-calls/evaluate`, `POST /v1/approvals/{approval_id}/decision` |
+| `src/ai_security/settings.py` | Validated configuration | **Implemented:** fail-closed validation incl. host keys, replay window, request bound, policy/threshold/self-check paths, input-defense path, session windows, intent-manifest TTL, the bounded approval TTL (60-86,400 s; default 900), `OUTPUT_DLP_PATH`, Phase 8 request timeout/rate limits, and the optional local-model provider contract (`MODEL_PROVIDER`, origin/name/timeout; external cloud calls refused) |
+| `identity/` (HMAC host auth, assertion, resolver) | Authenticate host, verify principal | **Implemented (0b/1/8):** exact signing message, full rejection surface, atomic nonce store, dev guard, test-only principal adapter, and the strict host-signed principal assertion (`iss`/`aud`/`tenant` binding, future-time rejection, no unsigned fallback) |
 | `security/` (canonical JSON, constant-time, URLs) | Canonical bytes, comparisons, destinations | **Implemented (0b/1):** ADR-002 canonical JSON, constant-time helpers, destination canonicalization |
-| `input_defense/` | Heuristics, detector, provenance | **Implemented (3, advisory):** strict versioned config, bounded intake, copy-only normalization, 10 versioned heuristic rules, typed findings with non-PASS failure semantics, trust-labelled context assembly, session-signal math; not yet wired into routes or model context |
-| `intent/` | Intent manifest, constraints | **Implemented (4, in-process):** server-only issuer, mock extractor + strict local-model adapter interface, sealed request/principal/policy-bound manifests, exact constraint matching, trusted-timezone relative dates, bounded per-process uses; no API transport or real provider until Phase 8 |
-| `agent/` (+ providers) | Runtime, mock/local models | Not implemented (Phase 8) |
-| `firewall/` | Gateway, policy engine, risk engine, approvals | **Implemented (1-6):** decision/engine/risk (`risk-v2` with one bounded breadth factor), the single `invoke_tool` gateway with audit-first ordering, bindings, deadlines, bounds, manifest/constraint enforcement, one-time approval consumption for engine `ASK_USER`, egress DLP before risk/policy, and complete-response release/redaction/suppression; approval request/decision service is in-process only |
+| `input_defense/` | Heuristics, detector, provenance | **Implemented (3/8, advisory):** strict versioned config, bounded intake, copy-only normalization, 10 versioned heuristic rules, typed findings with non-PASS failure semantics, trust-labelled context assembly, session-signal math, and a Phase 8 ingress gate: `REJECT`/`QUARANTINE` stop the request before intent; `FLAG`/`PASS` continue. Detection never authorizes |
+| `intent/` | Intent manifest, constraints | **Implemented (4/8):** server-only issuer, mock demo extractor, strict local-model adapter plus the Ollama-compatible provider, sealed request/principal/policy-bound manifests, exact constraint matching, trusted-timezone relative dates, bounded per-process uses; provider failure yields no manifest |
+| `agent/` (+ providers) | Runtime, mock/local models | **Implemented (8, narrow):** bounded `DemoRuntime` executes only the two-call `mock_email.read` + `text.summarize` plan through the gateway; general planning is not implemented |
+| `firewall/` | Gateway, policy engine, risk engine, approvals | **Implemented (1-6/8):** decision/engine/risk (`risk-v2` with one bounded breadth factor), the single `invoke_tool` gateway with audit-first ordering, bindings, deadlines, bounds, manifest/constraint enforcement, one-time approval consumption for engine `ASK_USER`, egress DLP before risk/policy, and complete-response release/redaction/suppression; the Phase 8 approval-decision route uses the same service, and preview evaluation never executes |
 | `tools/` (registry + mock adapters) | Tool capability layer | **Implemented (2):** validated registry + startup consistency (incl. external-destination inventory for the DLP trust map), digest-bound execution authorization, deterministic in-memory email/files/sink/text adapters |
 | `data_security/` | Classification, DLP, egress | **Implemented (1/6, deterministic):** canonical `DataClass`; strict versioned output-DLP config; five deterministic detectors; span-preserving redaction; exact-canonical destination trust map with startup coverage; `PASS`/`REDACT`/`BLOCK`/`REVIEW` outcomes. No classifier/entropy/semantic detection |
-| `audit/` | Hash-chained audit events | **Implemented (0b/2/5/7):** ADR-002 append protocol and hash chain, full §16.1 taxonomy with event-specific required fields, mandatory gateway/approval/intent lifecycle emission, first-class redacted DLP events, and a read-only verifier over exact stored bytes with typed content-free failures. Names for future ingress/alerting events are defined but producerless; no external anchor/query API (ADR-014) |
+| `audit/` | Hash-chained audit events | **Implemented (0b/2/5/7/8):** ADR-002 append protocol and hash chain, full §16.1 taxonomy with event-specific required fields, mandatory gateway/approval/intent lifecycle emission, first-class redacted DLP events, ingress receipt/principal/input producers, and a read-only verifier over exact stored bytes with typed content-free failures. No external anchor/query API (ADR-014) |
 | `persistence/` | SQLAlchemy async repositories | **Implemented (0b/3/5/7):** engine/session, nonce + audit repositories (derived indexed metadata columns for correlation), `session_security_state` repository, and `approval_requests` repository (row-locked decisions/consumption, digest-only tokens, same-transaction audit) |
 | `soc/` | Alert-only analytics | Not implemented (Phase 10) |
 | `config/*.yaml` | Policies, thresholds, self-checks | **Implemented (1-3/6):** `policies.yaml`, `risk_thresholds.yaml`, 21-fixture `policy_self_checks.yaml`, exhaustive-disposition `input_defense.yaml`, and strict `output_dlp.yaml` (`1.0.1`: five patterns, limits, exact destination trust map) |
 | `migrations/`, `alembic.ini` | Alembic schema management | **Implemented (0b/3/5/7):** baseline + `session_security_state` + `approval_requests` + audit-metadata migrations; upgrade/downgrade verified; `alembic check` clean |
 | `evaluation/` | Dataset, metrics, reports | Not implemented (Phase 9) |
-| `docs/adr/` | Decision records | **Implemented:** ADR-001..014 recorded |
+| `docs/adr/` | Decision records | **Implemented:** ADR-001..015 recorded |
 
 ## Import boundaries (enforced from Phase 1 onward; check.sh enforces prohibited patterns)
 
@@ -117,7 +118,7 @@ enforcement is not an agent security system (blueprint section 3.2).
 - Evaluation code is never imported into runtime request processing.
 - No circular imports; shared contracts live in their owning domain package.
 
-## API boundary (Phase 2 implementation)
+## API boundary (Phase 8 implementation)
 
 - `GET /health/live` -> `200 {"status":"alive"}`; no dependency checks, no internal
   details.
@@ -125,9 +126,18 @@ enforcement is not an agent security system (blueprint section 3.2).
   `checks.policy_self_checks` are all true (plus `policy_version`/`policy_hash`), else
   `503 {"status":"not_ready",...}`; the database probe performs a real `SELECT 1` with a
   2 s timeout and never reveals credentials.
-- `/v1/*` accepts no request without valid host HMAC headers (400/401/413/503 per the
-  denial surface); authenticated requests currently 404 because no business routes
-  exist yet.
+- `POST /v1/requests` is the sole execution surface. It verifies the signed principal
+  assertion, records one receipt, gates on input defense, extracts an intent manifest,
+  and executes only the bounded read-then-summarize demo plan through the gateway. It
+  returns `COMPLETED`/`NO_ACTION`/`REQUIRES_CLARIFICATION`/`APPROVAL_REQUIRED` or a typed
+  error. Approval tokens are returned once, in the 202 response.
+- `POST /v1/tool-calls/evaluate` is a non-executing preview: same validation/egress/risk/
+  policy facts, no manifest use, no approval consumption, no authorization, no execution.
+- `POST /v1/approvals/{approval_id}/decision` records a token-bound, tenant/role-checked,
+  row-locked one-time decision; it never executes the approved action.
+- Every `/v1/*` request requires valid host HMAC headers and a one-time nonce
+  (400/401/413/503 per the denial surface); application routes use the documented error
+  envelope, while middleware denials keep `{"detail":"<stable_code>"}`.
 - `/docs`, `/redoc`, `/openapi.json` are registered only when `APP_ENV` is exactly
   `development` or `test` (blueprint section 18.2).
 - Configuration errors raise at startup with a clear message; the process does not boot

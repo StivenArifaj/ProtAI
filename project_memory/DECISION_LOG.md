@@ -29,6 +29,7 @@ the index; never silently rewrite the historical rationale.
 | ADR-012 | `risk-v2` bounded breadth factor + durable one-time human approvals bound to the canonical action digest | Phase 5 | [../docs/adr/ADR-012-risk-v2-and-human-approvals.md](../docs/adr/ADR-012-risk-v2-and-human-approvals.md) |
 | ADR-013 | Mandatory two-phase output DLP, exact destination trust, and complete-response release/suppression | Phase 6 | [../docs/adr/ADR-013-output-dlp-and-egress.md](../docs/adr/ADR-013-output-dlp-and-egress.md) |
 | ADR-014 | Complete audit taxonomy, mandatory gateway lifecycle, derived correlation metadata, and exact-stored-bytes chain verification | Phase 7 | [../docs/adr/ADR-014-audit-taxonomy-and-verification.md](../docs/adr/ADR-014-audit-taxonomy-and-verification.md) |
+| ADR-015 | FastAPI ingress with host-signed principal assertions, one execution surface, bounded runtime, and an optional strict local model provider | Phase 8 | [../docs/adr/ADR-015-fastapi-ingress-principal-and-local-model.md](../docs/adr/ADR-015-fastapi-ingress-principal-and-local-model.md) |
 
 ## Implementation decisions (Phase 0a, within blueprint constraints)
 
@@ -101,7 +102,7 @@ the index; never silently rewrite the historical rationale.
 |---|---|---|
 | Policy self-check fixture content shape | **DECIDED (0b; extended 1; extended 2):** strict YAML `{fixtures: [...]}`; each `case` is a full `PolicyEvaluationRequest`; optional fixture-level `tool_policy` override; 21 fixtures incl. 7 mandated rows and the Phase 2 binding/deadline/inconsistent-facts rows | done |
 | Gitleaks install method on macOS | **DECIDED:** operator installs (brew); gate pins 8.30.1 and fails clearly when missing/mismatched | done |
-| Git initialization + baseline commit scope | **DONE:** baseline `41e10da` + 0b commits + Phase 1 commit series; no remote | done |
+| Git initialization + baseline commit scope | **DONE:** baseline `41e10da` + all phase commits; remote `origin` = `github.com/StivenArifaj/ProtAI`, branch `main` pushed every stage | done |
 | ADR format enrichment ("alternatives considered" / "tests/verification" sections) | Still open; ADR-008 was created with the established Status/Context/Decision/Consequences/References shape | next ADR |
 | `risk_score` fact source | **DECIDED (2/5, ADR-009/012):** computed by the versioned `risk-v2` engine in the gateway (all `risk-v1` factors + one bounded distinct-resource breadth factor); never caller-supplied. Calibration remains Phase 9 | done (calibration later) |
 | Policy hot-reload (atomic reload per §10.6) | Open; readiness detects drift today, process keeps startup bundle | Not scheduled (documented limitation) |
@@ -184,3 +185,20 @@ the index; never silently rewrite the historical rationale.
 | Truncation of the newest events and a consistent full-chain rewrite are documented as undetectable without an external anchor; no anchor is deployed | A plain local chain is tamper-evident, not tamper-proof; do not overclaim | ADR-014; retention doc; verifier tests |
 | Intent audit (`INTENT_CREATED`/`INTENT_FAILED`) is best-effort; failure is logged and never promoted to a grant; the gateway independently fails closed on its own audit path | Intent extraction is advisory/narrowing, not execution authority; the execution chokepoint must not depend on it for audit availability | ADR-014; `intent/service.py`; tests |
 | Ingress/alerts event names remain producerless until the work exists (Phase 8/10) | Emitting a placeholder `PRINCIPAL_RESOLVED`/`INPUT_INSPECTED`/`SECURITY_ALERT_RAISED` would be fabricated evidence | ADR-014; schema tests |
+
+## Implementation decisions (Phase 8, within blueprint constraints; contract in ADR-015)
+
+| Decision | Rationale | Recorded in |
+|---|---|---|
+| The principal assertion is inside the exact signed body and must match the signing key's `host_id`/`audience`/tenant scope; `extra="forbid"`; no unsigned fallback | The HMAC authenticates the host, but authority must also name the verified user; a header-carried or unsigned subject could be confused or spoofed | ADR-015; `identity/assertion.py`; assertion/resolver tests |
+| `tenant_id` is required iff the key has `allowed_tenants` and must be a member; a future `authenticated_at` beyond tolerance is rejected | Fail closed on ambiguous tenant scope and clock-based replay; no permissive default | ADR-015; assertion tests; route tests |
+| Every principal rejection is `403 principal_rejected` with one audited `PRINCIPAL_REJECTED` and a stable `error_type`; no other step runs | Denials must be observable without leaking assertion contents; a rejected principal must not reach intent/policy/execution | ADR-015; ingress tests |
+| `POST /v1/requests` is the sole execution surface; `/v1/tool-calls/evaluate` is preview-only; `/v1/approvals/{id}/decision` never resumes execution | Preserve the single gateway chokepoint and avoid a client-supplied decision/approval path | ADR-015; route tests |
+| `/v1/requests` creates an approval in-process for an approval-eligible `ASK_USER`; the token is returned once in the 202 response | The blueprint assigns approval creation to the Phase 8 host workflow; a separate creation route would add surface without adding control | ADR-015; route tests |
+| Approved actions are not resumable through `/v1/requests` in Phase 8 | No route accepts an approval id into execution; inventing one would need a new binding/preview contract. Documented limitation, not a silent gap | ADR-015; `docs/API_INTEGRATION.md`; known limitations |
+| The runtime receives only a `ToolExecutor`, executes a fixed two-call plan, and returns `NO_ACTION` for time windows/unsupported shapes; all limiter slots are reserved before execution | A narrow, auditable demo runtime cannot become an accidental general planner; a partial bucket cannot execute an unbounded prefix | ADR-015; `api/runtime.py`; route tests |
+| Four per-process per-principal fixed-window buckets; authenticated invalid bodies are charged, unverifiable principals are not; exhaustion → `429 rate_limited` | Bound abuse without letting unauthenticated traffic exhaust a verified user's bucket or turning rate limiting into an auth oracle | ADR-015; `api/rate_limit.py`; route tests |
+| New-route errors use `{"error": {code, message, request_id}}`; middleware denials keep `{"detail": "<code>"}` | One stable application envelope without rewriting the Phase 0b transport contract | ADR-015; `api/errors.py`; tests |
+| `MODEL_PROVIDER=mock` default; `local` is an origin-only, exact-name, non-streaming `/api/generate` client with no redirects/proxy trust and 1 MiB/64 KiB/1-60 s bounds; failures yield no manifest and `503 model_unavailable`; `ALLOW_EXTERNAL_MODEL_CALLS=true` refuses startup | The model is optional and must never become an allow signal; a bounded, non-redirecting, no-proxy client limits data exfiltration and SSRF surface | ADR-015; `intent/providers.py`; provider/integration tests |
+| `LOCAL_MODEL_TIMEOUT_SECONDS` is narrowed to 1-60 s (whole seconds) to match the extractor's constructor bound; it is per attempt and not part of the request deadline | Prevent an operator configuring a value the extractor rejects at startup; keep model latency and tool-deadline semantics distinct | ADR-015; `settings.py`; settings tests |
+| `httpx2` is a runtime dependency, not a dev dependency | Application code imports the provider client; keeping it in the dev group would break production installs | `pyproject.toml`, `uv.lock`; `uv lock --check` |

@@ -1,6 +1,6 @@
 # Known Limitations
 
-As of **Phase 7 (audit persistence and verification, 2026-10-26)**. This list must
+As of **Phase 8 (signed HTTP ingress and local model, 2026-10-28)**. This list must
 be updated every phase; anything not explicitly implemented must remain listed here or in
 `docs/IMPLEMENTATION_STATE.md`.
 
@@ -13,53 +13,59 @@ be updated every phase; anything not explicitly implemented must remain listed h
    sandbox. The digest-bound authorization is an in-process guardrail against accidental
    bypass; malicious in-process code could still forge calls through private internals.
    Process isolation is Phase 10.
-2. **Input defense is advisory, heuristic, and not consumed.** Phase 3 adds deterministic
-   injection detection, trust labels, and session signals, but nothing in a request path
-   uses them yet: there are no `/v1` routes or model calls, so detection cannot block,
-   quarantine, or re-rank anything. Detection accuracy is modest (regex heuristics over
-   normalized text): homoglyphs are detected as indicators but not converted before
-   matching, coverage is English-pattern based, quoted/educational content can still
-   raise FLAG findings, and novel/paraphrased or non-text attacks can be missed. Phase 6
-   output DLP is a separate deterministic control at the gateway; it is not an input
-   classifier, and input content still has no classification consumer.
-3. **Approvals are storage-and-gateway only.** Phase 5 adds a durable
-   `approval_requests` table, `ApprovalService`, verified-principal rule evaluation, and
-   one-time gateway consumption, but there is **no `/v1/approvals` route, approval UI,
-   token-delivery transport, approver directory, notification channel, revocation
-   operation, or background expiry sweeper**. Pending/approved requests expire lazily on
-   the next decide/consume. The gateway does not create requests automatically; Phase 8's
-   host workflow must call `ApprovalService.request` with host-verified facts. The
-   starter policy still enables no approval-eligible tool, so approvals are exercised in
-   dedicated test bundles. Self-approval requires an explicit policy flag; role rules
-   trust the resolver's role membership.
-4. **Intent binding is in-process only and uses a mock extractor.** The app-built
-   gateway requires a sealed, request/principal/policy-bound manifest and enforces its
-   concrete action/resource/destination/parameter/use constraints (Phase 4), but no
-   `/v1` route issues or transports a manifest, and the app uses the two-scenario mock
-   extractor rather than general natural-language understanding. Trust labels and
-   detector findings still have no consumer.
+2. **Input defense is advisory, heuristic, and only gates the request path.** Phase 3 adds
+   deterministic injection detection, trust labels, and session signals; Phase 8 consumes
+   the dispositions in `POST /v1/requests` (`REJECT`/`QUARANTINE` stop before intent,
+   `FLAG`/`PASS` continue). It still cannot authorize, and it does not inspect model
+   output or tool results. Detection accuracy is modest (regex heuristics over normalized
+   text): homoglyphs are detected as indicators but not converted before matching,
+   coverage is English-pattern based, quoted/educational content can still raise FLAG
+   findings, and novel/paraphrased or non-text attacks can be missed. Phase 6 output DLP
+   is a separate deterministic control at the gateway; it is not an input classifier.
+3. **Approvals have a decision route, but no delivery/UI/resumption.** Phase 8 exposes
+   `POST /v1/approvals/{approval_id}/decision` with a token carried only in the signed
+   body, and `POST /v1/requests` creates an approval in-process for gateway-eligible
+   `ASK_USER` actions. There is still **no approval UI, token-delivery transport,
+   approver directory, notification channel, revocation operation, or background expiry
+   sweeper**, and an approved action cannot be resumed through `/v1/requests` in Phase 8
+   (no client approval field). Pending/approved requests expire lazily on the next
+   decide/consume. The starter policy still enables no approval-eligible tool, so
+   approvals are exercised in dedicated test bundles. Self-approval requires an explicit
+   policy flag; role rules trust the resolver's role membership.
+4. **Intent binding is server-issued but narrow.** The `/v1/requests` route issues and
+   consumes a sealed, request/principal/policy-bound manifest in-process and enforces its
+   concrete action/resource/destination/parameter/use constraints. The default extractor
+   is the two-scenario mock; `MODEL_PROVIDER=local` selects a strict Ollama-compatible
+   provider whose semantic accuracy is unmeasured. There is no general planning, no
+   client-carried manifest, and no model context beyond the extraction prompt.
 5. **Audit lifecycle coverage is limited to the paths that exist.** The gateway emits
    the full request→proposal→inspection→decision→execution→inspection→response sequence;
    the approval service emits `APPROVAL_REQUESTED`/`_DECIDED`/`_CONSUMED`/`_EXPIRED`; the
-   intent service can emit `INTENT_CREATED`/`_FAILED`. `PRINCIPAL_RESOLVED`/`_REJECTED`,
-   `INPUT_INSPECTED`, and `SECURITY_ALERT_RAISED` have **no producer** until the Phase 8
-   ingress and Phase 10 alerting work; their names exist but no code fakes them. Audit
+   intent service emits `INTENT_CREATED`/`_FAILED`; Phase 8 ingress emits
+   `REQUEST_RECEIVED`, `PRINCIPAL_RESOLVED`/`_REJECTED`, and `INPUT_INSPECTED`.
+   `SECURITY_ALERT_RAISED` still has **no producer** until Phase 10 alerting work. Audit
    rows are queryable by derived columns, but there is no query API/UI. A denial whose
    append fails remains a denial (no side effect exists) and the append is logged;
    pre-execution audit failure on a would-be action denies, and post-execution failure
    withholds the result.
 6. **No AI SOC.** No analytics component exists.
-7. **No rate limiting or request deadlines.** `/v1/*` routes do not exist; the gateway
-   enforces per-call deadlines and per-tool concurrency, but Phase 8 adds request-level
-   limits. A request-size bound (64 KiB default) exists since Phase 0b.
-8. **Principal resolution is dev-only, test-only, or fail-closed.** `DevPrincipalResolver`
-   returns one fixed synthetic principal under `development`/`test`;
-   `TestPrincipalResolver` is constructible only under `APP_ENV=test` and is not reachable
-   via settings/factory; `HostPrincipalResolver` raises (fails closed) until a later phase
-   provides key→principal metadata.
-9. **`/v1/*` has no routes yet.** Authenticated requests answer `404` after passing
-   authentication (verified in the Phase 0b Docker proof); the gateway is used
-   in-process/in tests only until Phase 8.
+7. **Rate limiting is per process and fixed-window.** Phase 8 adds four per-verified-
+   principal buckets (requests, tool calls, authenticated invalid requests, approval
+   decisions). They are in-memory and not shared across workers, so an N-worker deployment
+   effectively multiplies each limit by N. A shared store is future work. Request
+   deadlines exist for tool proposals (`REQUEST_TIMEOUT_SECONDS`), but the local-model
+   extraction call has its own per-attempt timeout and is not included in that deadline.
+8. **Principal resolution requires the trusted host.** `DevPrincipalResolver` returns one
+   fixed synthetic principal under `development`/`test` and still runs behind the host
+   HMAC middleware; `TestPrincipalResolver` is constructible only under `APP_ENV=test` and
+   is not selectable via settings/factory. `HostPrincipalResolver` verifies the
+   host-signed assertion against the configured key's `host_id`/`audience`/tenant scope
+   and fails closed on every mismatch. There is no end-user login, token refresh, or
+   permission system; the host owns user authentication.
+9. **The HTTP surface is a trusted-host integration, not a public API.** All three `/v1`
+   routes require the HMAC headers and one signed body; there is no browser/CORS model,
+   per-user OAuth, API-key tier, or public rate-limit/abuse program. `POST /v1/requests`
+   is the only execution surface.
 10. **Risk scoring is a small, uncalibrated factor set.** `risk-v2` preserves the
     `risk-v1` side-effect/destination/registration-data-class weights and adds only a
     bounded 2-4/5-8/9+ resource-breadth factor (5/10/15). Since Phase 6 the data class
@@ -138,21 +144,21 @@ be updated every phase; anything not explicitly implemented must remain listed h
 27. Session signals are counters only and are not yet an authorization or scoring input;
     multi-turn escalation logic (used by risk/session factors) is later-phase work. The
     store is available on `app.state` but no route authenticates a session identifier yet.
-28. **Intent manifests cannot cross a process boundary or the future API.** The manifest
-    is a sentinel-sealed in-process object, not a signed token. A `/v1` route must keep
-    issuance and verification in-process or add a server-signed serialization before
-    accepting a client-carried manifest; no route accepts one today.
-29. **The app's extractor is the mock implementation.** It recognizes only the two
+28. **Intent manifests cannot cross a process boundary or be carried by a client.** The
+    manifest is a sentinel-sealed in-process object, not a signed token. `/v1/requests`
+    keeps issuance and verification in the same process; no route accepts a
+    client-carried manifest.
+29. **The default extractor is the mock implementation.** It recognizes only the two
     documented demo requests and rejects forward/send/delete/upload/share phrasing;
-    everything else is clarified. `LocalModelIntentExtractor` exists with a strict,
-    bounded parser and an injected client interface, but no real provider is wired and
-    the model's semantic accuracy is unmeasured (Phase 8/9).
+    everything else is clarified. `MODEL_PROVIDER=local` selects
+    `LocalModelIntentExtractor` with a strict, bounded provider; semantic accuracy is
+    unmeasured, the model is never an authorization input, and no cloud adapter exists.
 30. **Intent use limits are per process and in memory.** `IntentUsageTracker` fails
     closed at 10,000 live manifests and purges on expiry, but a multi-worker deployment
     would enforce `max_uses` independently per worker; a shared store is later work.
 31. **Manifest request binding relies on a server-assigned `request_id`.** The gateway
-    verifies the id but has no request-body digest; the Phase 8 route must generate
-    unique request ids and must never accept a client-chosen id as a manifest binding.
+    verifies the id but has no request-body digest; the Phase 8 route generates unique
+    request ids and never accepts a client-chosen id as a manifest binding.
 32. **Constraint syntax is intentionally narrow.** Exact tool/action, resource ids,
     canonical destinations, and scalar parameter values only (no wildcards, prefixes,
     ranges, or float values). This can require clarification for legitimate requests
@@ -190,10 +196,21 @@ be updated every phase; anything not explicitly implemented must remain listed h
     an attacker who can rewrite the database consistently can produce a different valid
     chain. Detecting truncation/rewrite requires an externally stored head
     hash + sequence checkpoint (transparency log, signed daily digest, or separate
-    store), which Phase 7 does not deploy. The verifier is read-only, loads one chain into
+    store), which Phase 8 does not deploy. The verifier is read-only, loads one chain into
     memory, and is intended for the v1 single-chain deployment; no scheduled verification
     job, audit query API/UI, per-event signature, or automated retention exists. Guidance:
     `docs/AUDIT_RETENTION_AND_DATA_HANDLING.md`.
-40. **No live `/v1` DLP surface.** As with every phase so far, Phase 6 enforcement is
-    in-process and exercised by tests; no route accepts a request or returns a model
-    response. The gateway remains the only execution path.
+40. **The runtime is a fixed demo plan, not a planner.** `/v1/requests` executes only one
+    `mock_email.read` for a single `email-N` followed by `text.summarize`; any manifest
+    with a relative time window or another constraint shape returns `NO_ACTION`. It does
+    not chain arbitrary tools, retry with a model, or resume after approval. Real
+    connectors and planning are later work; the gateway remains the only execution path.
+41. **The local model is optional and never authoritative.** It receives the user request
+    text (after input inspection) and returns advisory constraints; its output is bounded,
+    strictly validated, and unable to set authority, approvals, policy, or risk. A
+    provider timeout/failure yields `503 model_unavailable` with no manifest. Prompt
+    privacy, model pinning, and output-quality evaluation are operator/evaluation-phase
+    concerns. No cloud model adapter exists.
+42. **Streaming and real-time progress are absent.** Responses are buffered, inspected,
+    and released or suppressed whole (ADR-003). No SSE/WebSocket endpoint exists, and the
+    approval decision route does not execute the approved action.

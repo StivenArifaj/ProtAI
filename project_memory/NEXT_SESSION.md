@@ -1,192 +1,162 @@
 # Next Session Handoff
 
-**Last updated: 2026-10-26.** Read [IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md) first if you have not.
+**Last updated: 2026-10-28.** Read [IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md) first if you have not.
 
 ## Where we are
 
 Phases 0a (repository foundation), 0b (security foundation), 1 (typed contracts and
 deterministic policy engine), 2 (tool registry and enforced gateway), 3 (advisory input
 defense and context provenance), 4 (intent extraction and action validation), 5 (risk
-engine and approval workflow), 6 (output DLP and egress policy), and 7 (audit persistence
-and verification) are **COMPLETE — VERIFIED**. See
-[phases/PHASE_7_COMPLETE.md](phases/PHASE_7_COMPLETE.md) and evidence V67–V71 in
-[TESTING_AND_VERIFICATION.md](TESTING_AND_VERIFICATION.md). Exact commit hashes for every
-Phase 7 deliverable are in the phase record. The repository is under git with a linear
-history; the Compose `db` container and volume are preserved for tests (`api` stopped).
-No remote is configured.
+engine and approval workflow), 6 (output DLP and egress policy), 7 (audit persistence and
+verification), and 8 (HTTP ingress, bounded runtime, local model) are
+**COMPLETE — VERIFIED**. See [phases/PHASE_8_COMPLETE.md](phases/PHASE_8_COMPLETE.md)
+and evidence V72–V75 in [TESTING_AND_VERIFICATION.md](TESTING_AND_VERIFICATION.md).
+Exact commit hashes are in the phase record and
+[IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md). The repository is under git with
+a linear history; `origin` = `https://github.com/StivenArifaj/ProtAI.git`, branch `main`,
+pushed every stage. The Compose `db` container and volume are preserved for tests (`api`
+stopped).
 
-What exists now: host HMAC authentication + replay rejection on the `/v1/*` path prefix
-(business routes do not exist yet), async persistence + migrations, dev-resolver guard +
-test-only principal adapter, strict typed contracts, canonical destination handling, the
-safe versioned policy loader, the deterministic §10.2 policy engine with 21 self-check
-fixtures wired into startup/readiness, the typed tool registry + four mock adapters, the
-digest-bound execution authorization, `risk-v2`, the single `invoke_tool` gateway with
-audit-first ordering/bounds, strict advisory input detection with trust labels/session
-signals, server-issued sealed intent manifests with exact constraints, durable one-time
-human approvals bound to the canonical action digest, mandatory two-phase output DLP/egress
-with destination trust and whole-response suppression, and a complete structured audit
-lifecycle (request → proposal → inspection → decision → approval consumption → execution →
-output inspection → response) with an exact-stored-bytes verifier and privacy tests.
-**827 tests pass; the pre-commit gate is green (8/8, V70).** The post-commit gate is V71
-and is recorded after the memory/status commits; do not claim it before it runs. Intent,
-approvals, DLP, input
-detection, and audit can only narrow, gate, raise sensitivity, or record; none is an
-`ALLOW` producer. No route or real model provider consumes them yet.
+What exists now: host HMAC authentication + replay rejection on `/v1/*`, a host-signed
+principal assertion, signed `POST /v1/requests` (sole execution surface),
+`POST /v1/tool-calls/evaluate` (preview only), and
+`POST /v1/approvals/{approval_id}/decision` (one-time decision, no resumption); a bounded
+two-call `DemoRuntime`; per-process per-principal rate limits and request deadlines; the
+deterministic policy engine + 21 self-check fixtures; the tool registry + mock adapters;
+the single `invoke_tool` gateway with manifest/approval/DLP enforcement and the complete
+audit lifecycle; advisory input detection gating the request path; sealed in-process
+intent manifests (mock or optional strict local provider); and deterministic output DLP
+at the gateway. **949 tests pass; the pre-commit gate is green (8/8, V74).** Policy is
+the sole `ALLOW` producer; the gateway is the only execution path; input defense, intent,
+and DLP narrow/gate/raise sensitivity only; approval is a gate; audit is never an
+authorization input.
 
-## The next task: Phase 8 — FastAPI integration and local model (blueprint §§7, 8, 18, §21)
+## The next task: Phase 9 — Evaluation harness and benchmark adapters (blueprint §§19, 21)
 
-No blocking preconditions; Phase 7 passed its DoD, so proceed per the autonomy mandate.
-Read first: blueprint §§7.1–7.6, 8.1–8.4, 9.2–9.4, 18.1–18.2, §21 Phase 8, ADR-001,
-ADR-008 through ADR-014, `docs/SECURITY_INVARIANTS.md` (#2/#7/#10/#14/#22/#24),
-`docs/KNOWN_LIMITATIONS.md`, `src/ai_security/api/{app,middleware,dependencies}.py`,
-`src/ai_security/identity/{models,resolver,host_auth}.py`,
-`src/ai_security/firewall/{gateway,models,approval}.py`, and the Phase 7 audit producers.
+No blocking preconditions; Phase 8 passed its DoD, so proceed per the autonomy mandate.
+Read first: blueprint §§19.1–19.6, §20.1, §21 Phase 9; ADR-008 through ADR-015;
+`docs/SECURITY_INVARIANTS.md` (#10/#11/#14/#21); `docs/OUTPUT_DLP_FALSE_POSITIVES.md`;
+`docs/KNOWN_LIMITATIONS.md`; `src/ai_security/input_defense/*`,
+`src/ai_security/data_security/dlp.py`, `src/ai_security/firewall/risk_engine.py`,
+`src/ai_security/policy/*`, and the Phase 8 route tests.
 
-Expected deliverables (condensed from blueprint §§18/21):
+Phase 9 is **measurement only**. Do not add real connectors, cloud model calls, streaming,
+approved-action resumption, a distributed limiter, or any new authority path. Do not
+weaken or retune controls merely to improve a metric; report what the current code does.
 
-1. **Authenticated business routes** (all under the existing `/v1/*` HMAC middleware):
-   - `POST /v1/requests`: accepts a bounded request from the authenticated host, creates
-     server-side `request_id`/`trace_id`, resolves the verified principal, runs bounded
-     intake + advisory input inspection, issues an intent manifest, runs the bounded
-     in-process agent/runtime path, and routes every proposed action through
-     `ToolGateway`. Return a safe result, a clarification state, a rejection, or an
-     approval-required state — never an arbitrary tool execution.
-   - `POST /v1/tool-calls/evaluate`: validates a typed tool proposal and returns a
-     `DecisionRecord` **without executing**. It is a preview, not an execution grant;
-     do not expose client-supplied decisions or create approval authority here.
-   - `POST /v1/approvals/{approval_id}/decision`: verifies the approver principal, the
-     one-time `approval_token` in the signed body, and the configured approver rule;
-     records the decision through the existing row-locked service. Never accept an
-     approval outcome from an unsigned/client-only field.
-   - `POST /v1/tool-calls/execute`: implement **only if** an evaluation/execution split
-     is actually required. If added, it must re-evaluate through the gateway or use a
-     short-lived server-issued binding to exact arguments/principal/policy version; it
-     must never trust a client-provided `ALLOW`. It is acceptable to leave this route
-     absent and document why `/v1/requests` is the single execution path.
-2. **Real principal resolution at ingress.** Implement the host-signed principal
-   assertion path required by §§9.2–9.4: the configured key constrains host/audience/
-   tenant; reject missing, malformed, expired, unverified, or cross-tenant assertions;
-   never accept a principal, role, or permission from an unsigned field. Audit
-   `PRINCIPAL_RESOLVED` or `PRINCIPAL_REJECTED` with identifiers/status only. The dev
-   resolver remains HMAC-gated and is not an HTTP bypass.
-3. **Input and intent producers.** Wire `InputDefenseService.inspect` into
-   `/v1/requests` and emit `INPUT_INSPECTED` with redacted findings/versions/content
-   digest (no raw text). Map `REJECT`/`QUARANTINE` to safe refusal/review states and
-   keep detection advisory: it can gate intake, never grant action authority. Issue the
-   existing sealed manifest in-process; do not invent a client-carried manifest token.
-4. **Audit ingestion without duplicate receipts.** The gateway already emits
-   `REQUEST_RECEIVED`; ingress needs `PRINCIPAL_RESOLVED`/`_REJECTED`,
-   `INPUT_INSPECTED`, and `INTENT_CREATED`/`_FAILED`. Choose and record one owner for
-   `REQUEST_RECEIVED` (either ingress emits it and the gateway is told the receipt is
-   already audited, or the gateway keeps ownership and ingress emits the later events).
-   **One request must not produce two `REQUEST_RECEIVED` events.** Preserve the Phase 7
-   fail-closed rules and correlation by `request_id`/`call_id`.
-5. **Agent runtime + optional local model.** Add a bounded in-process runtime that can
-   only propose gateway actions from the manifest (start with the documented mock demo
-   scenarios). Wire an opt-in local-model provider adapter (Ollama-compatible HTTP is the
-   natural local default) behind the existing `LocalModelIntentExtractor` interface:
-   explicit `MODEL_PROVIDER` selection, exact model name required, bounded timeout/output,
-   no cloud calls by default, no network in tests (inject a fake transport), and provider
-   failure/timeout/malformed output must never bypass policy or become a grant. Keep the
-   mock path fully offline.
-6. **Deadlines, rate limits, and safe errors.** Enforce request deadlines
-   (`REQUEST_TIMEOUT_SECONDS`) and basic in-process per-principal/session rate limits for
-   request creation, tool proposals, invalid-call bursts, and approval attempts. Return
-   explicit safe statuses/envelopes (400/401/403/404/409/413/422/429/503/504) with stable
-   codes and a server request reference; never leak stack traces, raw payloads, tokens,
-   approval material, or secrets. Document that the limiter is not multi-worker-safe.
-7. **Startup config checks + integration docs.** Fail closed on an unusable provider
-   selection (missing/placeholder model name, bad base URL, unsupported provider), invalid
-   timeout/rate-limit configuration, or a route wiring mistake. Add
-   `docs/API_INTEGRATION.md` with signing/headers, route contracts, status/error mapping,
-   approval token handling, offline mock instructions, and honest limits. Record the
-   ingress/route/provider/rate-limit contract in a new ADR (likely ADR-015). Update
-   `IMPLEMENTATION_STATE`, `SECURITY_INVARIANTS`, `KNOWN_LIMITATIONS`, `ARCHITECTURE`,
-   `THREAT_MODEL`, README, and this memory.
+### Deliverables (condensed from blueprint §19/§21)
 
-## Design decisions to make and record (do not silently invent)
+1. **`evaluation/` package** with:
+   - a strict dataset manifest and schema: every case has `case_id`, provenance/license
+     note, task, attack category, expected outcome, label/positive class, and split
+     (`dev`/`validation`/`holdout`); synthetic canaries only, never real secrets or
+     private documents;
+   - split tooling that keeps dev/validation/holdout distinct, deduplicates paraphrases/
+     templates across splits, and refuses leakage or duplicate `case_id`s;
+   - original synthetic fixtures from the repository only. Public benchmark adapters
+     (e.g. InjecAgent/AgentDojo) are optional, must be disabled by default, and require
+     a checked license/version/reproducibility note — do not vendor public datasets.
+2. **Typed metric functions with hand-calculated unit tests:** TP/TN/FP/FN, precision,
+   recall, F1, accuracy, false-positive rate, false-negative rate, and
+   unauthorized-side-effect count/rate. Report undefined denominators as `N/A` (never
+   `0`), class counts, confusion matrices, and per-category metrics; `FN rate == 1 -
+   recall` only under the same positive class/sample set/threshold convention.
+3. **Evaluation CLI** (one command) that runs the fixed fixture set through the real
+   implementations:
+   - input detection: `InputDefenseService.inspect` (report `PASS`/`FLAG` vs
+     `REJECT`/`QUARANTINE` under a documented positive-class convention);
+   - DLP/egress: argument/result inspection and release/redact/block outcomes, including
+     benign near-misses and canary fixtures;
+   - risk: record `risk-v2` scores/factors and report rank/ordering statistics; do not
+     claim probability calibration without a labeled calibration set;
+   - intent extraction: record extraction errors separately from authorization errors;
+   - authorization/end-to-end: count unauthorized side effects actually observed (sink
+     unchanged/executed adapter), not merely detector misses.
+4. **JSON + Markdown reports** written by the CLI, containing counts/dataset version,
+   per-task/per-category confusion matrices, metric definitions and values, latency
+   p50/p95/p99 with sample counts, detector/provider failures and retries, unauthorized
+   side effects, configuration metadata (git commit, lock hash, dataset version, policy/
+   detector/risk/model versions, thresholds, Python version, hardware, timestamp, seed),
+   known limitations, and skipped tests. Report only actual run output — never embed
+   desired results in the README.
+5. **Quick regression subset** (small, fast, deterministic) runnable in the normal suite
+   or gate, plus the larger evaluation command for manual/scheduled runs. Add tests that
+   prove the quick subset is representative of the runner contract (not a second
+   implementation).
+6. **Documentation:** a short `docs/EVALUATION.md` (how to run, dataset/split rules,
+   metric definitions, current measured results with version metadata, limitations) and
+   updates to `IMPLEMENTATION_STATE`, `SECURITY_INVARIANTS` only where measurement
+   changes a status, `KNOWN_LIMITATIONS`, README, and memory. A new ADR is warranted if
+   the label/positive-class, split, or report contract is non-obvious (likely ADR-016).
 
-- **Who owns `REQUEST_RECEIVED`** when ingress and gateway both handle one request
-  (see item 4). Record the choice in ADR-015 and test the exact sequence.
-- **How `/v1/requests` represents agent execution**: synchronous safe result for the
-  mock demo, approval-required response with a one-time token, and clarification/rejection
-  states. Keep it bounded and non-streaming (ADR-003).
-- **Whether `/v1/tool-calls/execute` exists at all.** If absent, document that
-  `/v1/requests` is the only execution surface and no client decision is trusted.
-- **Approval transport**: if `/v1/requests` creates the approval automatically, return
-  the one-time token only in the authenticated response (never logs/audit), or document
-  an out-of-band delivery contract. Do not put tokens in URLs.
-- **Principal assertion shape** from the host: strict fields, key→host/audience/tenant
-  constraints, expiry/issued-at bounds, no unsigned fallback. Prefer a strict Pydantic
-  model with `extra="forbid"` and an explicit verification function.
-- **Local model scope**: intent extraction only in Phase 8 unless a deterministic agent
-  planner is also justified; model output is never authorization. Keep `ALLOW_EXTERNAL_MODEL_CALLS=false`
-  behavior unchanged.
+### Design decisions to make and record (do not silently invent)
+
+- **Positive class per task.** For detection use positive = malicious/unauthorized and
+  document exactly which dispositions count as "flagged". For DLP use positive =
+  protected content that must not be released/egressed. Keep tasks separate — never one
+  aggregate accuracy number.
+- **Fixture ownership.** Cases are repository-owned synthetic fixtures with explicit
+  provenance. Public benchmark adapters, if any, stay optional and separate from the
+  deterministic suite.
+- **Split policy.** Fix seeds, deduplicate templates/paraphrases across splits, and do
+  not tune thresholds on the final holdout. Record the split version in every report.
+- **Risk reporting.** `risk-v2` weights are uncalibrated. Report scores/ordering and
+  threshold confusion matrices at the configured 40/80 only as operating points; do not
+  call them probabilities or claim calibration without a labeled calibration set.
+- **Latency scope.** Measure the defined local environment (in-process service calls,
+  documented hardware/container) and label it as such; do not imply production latency.
+- **What the harness may touch.** The CLI may construct services and call the gateway
+  with mock adapters/test principals exactly as tests do. It must not add routes, bypass
+  auth/policy/DLP, or persist evaluation data into the production audit chain unless a
+  separate explicit evaluation database/chain is used and documented.
 
 ## Honest scope boundaries to preserve
 
-- The API is an adapter over existing services; business/security logic stays in domain
-  modules and is invoked identically by in-process tests (§18). Routes must not duplicate
-  policy/risk/DLP logic.
-- No client-supplied principal, decision, risk score, approval outcome, or manifest may
-  become authority. `/v1/tool-calls/evaluate` is a preview and must not create a reusable
-  execution grant.
-- HMAC enforcement remains identical under `PRINCIPAL_RESOLVER=dev`; no route bypasses
-  it. Docs/OpenAPI gating stays as-is.
-- Streaming stays disabled. The complete response must be inspected before release.
-- Input findings/trust labels remain advisory: they may refuse/quarantine at intake, but
-  cannot produce `ALLOW` or enter policy facts. Intent can only narrow. Approval is a gate
-  for engine `ASK_USER` only. Audit is never an authorization input.
-- The local model is optional and bounded; provider failure must leave policy and the
-  gateway fully in control. No cloud calls by default.
-- Keep `compare_digest` confined to `security/constant_time.py`; use it for approval
-  tokens.
-- No secrets, tokens, raw prompts, arguments, content, or exception messages in logs,
-  audit, or error envelopes.
+- Policy remains the sole `ALLOW` producer; the gateway remains the only execution path.
+  The evaluation harness observes existing behavior and must not become an authority.
+- Input detection/intent/DLP stay advisory or narrowing; approvals stay a gate; audit is
+  never an authorization input. Do not add an evaluation-only allow path.
+- Do not weaken tests, skip security suites, or lower existing coverage to make metrics
+  look better. If a fixture exposes a real defect, add a regression test and fix the
+  defect (or document it as a known limitation with severity).
+- No real secrets, private documents, cloud calls, streaming, real connectors, or
+  approved-action resumption. Synthetic canaries only.
+- Keep `compare_digest` confined to `security/constant_time.py`; keep error envelopes and
+  logs free of raw payloads/tokens/secrets.
+- Reports must be reproducible from the versioned fixture set; include the metadata
+  required by §19.5/§19.6 and record any skipped tests honestly.
 
 ## Verification commands and expected results
 
 | Command | Expected |
 |---|---|
-| `uv run --frozen pytest -q` | All tests pass (≥827; new route/principal/provider/rate-limit/error suites added; real-PostgreSQL tests still run) |
+| `uv run --frozen pytest -q` | All tests pass (≥949; new evaluation/metric/split/report suites added; real-PostgreSQL tests still run) |
 | `uv run --frozen mypy` / `ruff check .` / `ruff format --check .` | clean |
 | `bash scripts/check.sh` | exit 0, all 8 steps (Gitleaks stays clean) |
-| Alembic sequence | single head; `current` → `upgrade head` → `downgrade -1` → `upgrade head` → `check` clean if a migration is added (Phase 8 should not need one unless a new store is justified) |
-| Route integration tests | signed `/v1/requests` works offline with the mock path; unsigned/forged/replayed requests denied by the existing middleware; client-supplied principal/decision fields have no effect |
-| Principal tests | missing/expired/malformed/cross-tenant/mismatched-audience assertions deny and audit `PRINCIPAL_REJECTED`; valid assertion audits `PRINCIPAL_RESOLVED` |
-| Input tests | direct/indirect attack fixtures produce `INPUT_INSPECTED` with redacted findings; no raw text in audit/logs; detector outage is an explicit non-PASS/refusal path |
-| Agent/provider tests | mock path completes offline; provider timeout/malformed output yields a safe clarification/failure with no execution; no network in tests |
-| Approval route tests | valid approver + token decides once; wrong principal/token/tenant/expired/replayed fail closed; no token in logs/audit |
-| Rate-limit/deadline tests | over-limit → 429; over-deadline → 504/timeout envelope; denials have no side effect |
-| Audit correlation | one `request_id` returns the complete implemented ingress→gateway sequence in chain order with no duplicate `REQUEST_RECEIVED` |
-| Prior suites | policy/intent/approval/DLP/audit/no-bypass still green; sink unchanged on every denial |
+| `uv run python -m ai_security.evaluation ...` (final CLI name decided in implementation) | one command reproduces JSON + Markdown from the versioned fixtures; exit non-zero on fixture/schema/metric errors |
+| Metric unit tests | hand-calculated cases match; undefined denominators are `N/A`; per-category matrices sum correctly |
+| Dataset tests | duplicate IDs, invalid splits, missing provenance, cross-split template leakage, and non-synthetic secrets are refused |
+| Report tests | metadata fields present; no fabricated metrics; unauthorized-side-effect counts derived from observed sink/adapter state |
+| Prior suites | policy/intent/approval/DLP/audit/no-bypass/route tests still green; no new allow path |
+| Alembic | no migration expected; if one is genuinely required, single head and `current` → `upgrade head` → `downgrade -1` → `upgrade head` → `check` clean |
 
-## Security constraints that must hold throughout Phase 8
+## Definition of Done (blueprint §21, Phase 9 condensed)
 
-- Preserve ADR-008 (engine facts/sole `ALLOW`), ADR-009 (gateway chokepoint/audit-first),
-  ADR-010 (advisory detection), ADR-011 (manifest boundary), ADR-012 (approval boundary),
-  ADR-013 (DLP boundary), and ADR-014 (audit taxonomy/verifier).
-- Every route that can lead to a tool call goes through `ToolGateway.invoke_tool`; no
-  route calls an adapter directly.
-- A failed/absent audit append cannot produce an unaudited execution or result release.
-  Keep the Phase 7 fail-closed matrix green.
-- The rate limiter must fail closed on malformed buckets and must not key on
-  attacker-chosen identity fields.
-- Error envelopes must not echo Pydantic input values, raw bodies, exception text, or
-  secrets.
-
-## Definition of Done (blueprint §21, Phase 8 condensed)
-
-The local/mock path works fully offline; no route trusts client-supplied decisions,
-principals, risk scores, or approval outcomes; optional model provider failure does not
-bypass policy; routes are authenticated, bounded, rate-limited, deadline-aware, safely
-erroring, audited, and documented; all prior suites and the 8-step gate stay green.
+One command reproduces results from a versioned fixture set and emits accurate confusion
+matrices/latency; all reported metrics are derived by code and match hand-calculated unit
+tests; JSON + Markdown reports contain the §19.6 metadata and honest limitations; the
+quick regression subset is wired in; prior suites and the 8-step gate stay green; docs and
+memory record measured results, not claims.
 
 ## Open decisions / notes for the operator
 
 - None blocking. `check.sh` pins Gitleaks to exactly 8.30.1 by design; a mismatch fails
   the gate.
-- Carried-forward limits (documented): no policy hot-reload; exact-match destination
-  allowlisting; `risk-v2` uncalibrated; per-process concurrency/intent-use/rate-limit
-  state; mock-only tools; no manifest transport; in-process guardrail (no sandbox) until
-  Phase 10; no external audit anchor; no automated retention.
+- Carried-forward limits (documented): the `/v1` runtime is a fixed two-call demo;
+  approved actions are not resumable; rate limits/intent uses are per process; the local
+  model is optional and uncalibrated; input heuristics are English-pattern based; DLP is
+  deterministic pattern matching, not a classifier; no policy hot-reload; exact-match
+  destinations; in-process guardrail (no sandbox) until Phase 10; no external audit
+  anchor or automated retention.
+- Phase 9 results may legitimately be modest. Report measured precision/recall/FN rates,
+  per-category failures, and known false positives/negatives; do not tune to a target.

@@ -53,7 +53,7 @@ rule and decision procedure.
 Rules: never upgrade a label without running the evidence; never mark something
 implemented because a document describes it; record discrepancies instead of hiding them.
 
-## Current snapshot (2026-10-26)
+## Current snapshot (2026-10-28)
 
 - **Phase 0a (repository foundation): COMPLETE and VERIFIED.** See
   [phases/PHASE_0A_COMPLETE.md](phases/PHASE_0A_COMPLETE.md).
@@ -75,30 +75,32 @@ implemented because a document describes it; record discrepancies instead of hid
 - **Phase 7 (audit persistence and verification): COMPLETE and VERIFIED.** See
   [phases/PHASE_7_COMPLETE.md](phases/PHASE_7_COMPLETE.md); ADR-014;
   [../docs/AUDIT_RETENTION_AND_DATA_HANDLING.md](../docs/AUDIT_RETENTION_AND_DATA_HANDLING.md).
-- The repository is **under git** (baseline `41e10da` + Phase 0b/1/2/3/4/5/6/7 commits on
-  `main`; no remote configured).
+- **Phase 8 (HTTP ingress, bounded runtime, local model): COMPLETE and VERIFIED.** See
+  [phases/PHASE_8_COMPLETE.md](phases/PHASE_8_COMPLETE.md); ADR-015;
+  [../docs/API_INTEGRATION.md](../docs/API_INTEGRATION.md).
+- The repository is **under git** (baseline `41e10da` + every phase series on `main`);
+  `origin` = `https://github.com/StivenArifaj/ProtAI.git`, pushed every stage.
 - Enforced today: `/v1/*` host HMAC authentication + atomic replay rejection + request
-  bounds; dev-resolver guard; deterministic policy engine + 21 self-check fixtures
-  (startup/readiness); typed tool registry + startup consistency; mock-only adapters;
-  the `invoke_tool` gateway as the only execution path (digest-bound execution
-  authorization, deadlines, timeouts, concurrency/result bounds, audit-first mandatory
-  lifecycle); `risk-v2` scoring (all `risk-v1` weights + one bounded resource-breadth
-  factor); complete §16.1 audit taxonomy with a fail-closed gateway lifecycle, approval
-  and intent producers, first-class redacted DLP events, derived correlation metadata,
-  and an exact-stored-bytes chain verifier; strict advisory input detection
-  (config/intake/normalization/heuristics/typed findings), trust-labelled context
-  assembly, and bound session signals; server-issued sealed intent manifests with exact
-  action/resource/destination/parameter/use constraints and trusted-timezone relative
-  dates (mock extractor only); durable one-time human approvals bound to the canonical
-  action digest with row-locked consumption and same-transaction audit; mandatory
-  two-phase output DLP/egress with deterministic detectors, effective-class floor,
-  exact-canonical destination trust, and whole-response release/redaction/suppression;
-  pinned Gitleaks in the gate. **Absent:** `/v1` routes + agent runtime,
-  manifest/approval transport, real model provider, ingress principal/input audit
-  producers, external audit anchor/retention automation, real connectors, process
-  isolation, request rate limits, and any consumer of detector findings/labels — do not
-  present the system as providing them.
-- **Phase 8 (FastAPI integration and local model) is the next task** — see
+  bounds + host-signed principal assertions; the signed request/preview/approval-decision
+  routes (requests = sole execution surface); a bounded two-call demo runtime; per-process
+  per-principal rate limits and request deadlines; deterministic policy engine + 21
+  self-check fixtures (startup/readiness); typed tool registry + startup consistency;
+  mock-only adapters; the `invoke_tool` gateway as the only execution path (digest-bound
+  execution authorization, deadlines, timeouts, concurrency/result bounds, audit-first
+  mandatory lifecycle); `risk-v2` scoring; complete §16.1 audit taxonomy with a
+  fail-closed gateway lifecycle, ingress/approval/intent producers, first-class redacted
+  DLP events, derived correlation metadata, and an exact-stored-bytes chain verifier;
+  strict advisory input detection gating the request path; trust-labelled context
+  assembly and bound session signals; server-issued sealed intent manifests with exact
+  constraints and trusted-timezone dates (mock or optional strict local provider);
+  durable one-time human approvals with a decision route and row-locked consumption;
+  mandatory two-phase output DLP/egress with destination trust and whole-response
+  release/redaction/suppression; pinned Gitleaks in the gate. **Absent:** general agent
+  planning, real connectors, approval delivery/UI/revocation/expiry sweeper,
+  approved-action resumption, a shared rate limiter, cloud model calls, streaming,
+  external audit anchor/retention automation, process isolation, an evaluation harness,
+  and a SOC — do not present the system as providing them.
+- **Phase 9 (evaluation harness and benchmark adapters) is the next task** — see
   [NEXT_SESSION.md](NEXT_SESSION.md).
 
 ## Files in this directory
@@ -108,7 +110,7 @@ implemented because a document describes it; record discrepancies instead of hid
 | [README.md](README.md) | Entry point, reading order, update rules. |
 | [PROJECT_CONTEXT.md](PROJECT_CONTEXT.md) | Identity, scope, non-goals, stack, operator context. |
 | [IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md) | Source of truth for what exists now (labels + evidence pointers). |
-| [NEXT_SESSION.md](NEXT_SESSION.md) | Exact handoff for the next task (Phase 8). |
+| [NEXT_SESSION.md](NEXT_SESSION.md) | Exact handoff for the next task (Phase 9). |
 | [ARCHITECTURE_MAP.md](ARCHITECTURE_MAP.md) | Current implemented architecture and target v1 map. |
 | [SECURITY_REQUIREMENTS.md](SECURITY_REQUIREMENTS.md) | Complete security contract with status per control and blueprint refs. |
 | [DECISION_LOG.md](DECISION_LOG.md) | Consolidated decisions; links to ADRs (ADRs live in `docs/adr/`). |
@@ -128,6 +130,7 @@ implemented because a document describes it; record discrepancies instead of hid
 | [phases/PHASE_5_PLAN.md](phases/PHASE_5_PLAN.md) / [phases/PHASE_5_COMPLETE.md](phases/PHASE_5_COMPLETE.md) | Phase 5 plan and completion record. |
 | [phases/PHASE_6_COMPLETE.md](phases/PHASE_6_COMPLETE.md) | Phase 6 completion record. |
 | [phases/PHASE_7_COMPLETE.md](phases/PHASE_7_COMPLETE.md) | Phase 7 completion record. |
+| [phases/PHASE_8_COMPLETE.md](phases/PHASE_8_COMPLETE.md) | Phase 8 completion record. |
 | [phases/PHASE_TEMPLATE.md](phases/PHASE_TEMPLATE.md) | Template for future phase records. |
 
 ## Relationship to `docs/`
