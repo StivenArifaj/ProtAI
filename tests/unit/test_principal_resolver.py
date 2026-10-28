@@ -93,10 +93,10 @@ def test_dev_resolver_refuses_non_dev_environments(env: AppEnv) -> None:
         DevPrincipalResolver(env)
 
 
-# --- Host resolver (fails closed until Phase 1) ---
+# --- Host resolver (typed signed assertion) ---
 
 
-def test_host_resolver_refuses_resolution_until_phase_1() -> None:
+def test_host_resolver_refuses_without_verified_host_or_assertion() -> None:
     resolver = HostPrincipalResolver()
     with pytest.raises(PrincipalResolutionError):
         resolver.resolve()
