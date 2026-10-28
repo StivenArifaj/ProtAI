@@ -7,8 +7,8 @@
 **Evidence:** V72–V75 in [../TESTING_AND_VERIFICATION.md](../TESTING_AND_VERIFICATION.md)
 **Commits:** `5e20075` (ADR-015), `edda8ea` (principal assertion/resolver),
 `2bdf30f` (input audit evidence), `b561dd6` (gateway preview support), `2fa66fe`
-(settings), `f0f9b6b` (format), `940600e` (signed routes), plus the local-provider,
-docs, and memory commits.
+(settings), `f0f9b6b` (format), `940600e` (signed routes), `b4f8357` (local provider + settings wiring), and
+`2f84269` (docs/memory).
 
 ## Definition of Done — verdict
 

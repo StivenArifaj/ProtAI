@@ -46,8 +46,8 @@ the V56 status record commit `c018955`; Phase 5 commits `ad9e76a`
 memory/completion commit `5ae9ebe` and the final V71 status record; Phase 8 commits
 `5e20075` (ADR-015), `edda8ea` (principal assertion/resolver), `2bdf30f` (input audit
 evidence), `b561dd6` (gateway preview support), `2fa66fe` (settings), `f0f9b6b`
-(format), `940600e` (signed routes), plus the local-provider implementation, docs, and
-memory commits. `origin` is `https://github.com/StivenArifaj/ProtAI.git`; every stage is
+(format), `940600e` (signed routes), `b4f8357` (local-provider implementation/settings),
+and `2f84269` (docs/memory). `origin` is `https://github.com/StivenArifaj/ProtAI.git`; every stage is
 pushed to `origin main`.
 
 ## What exists (all VERIFIED)
