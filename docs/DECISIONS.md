@@ -9,7 +9,9 @@ trust-label, and session-signal contract; ADR-011 records the Phase 4 server-iss
 intent-manifest and constraint contract; ADR-012 records the Phase 5 `risk-v2` and
 durable one-time approval contract; ADR-013 records the Phase 6 output-DLP and
 destination-aware egress contract; ADR-014 records the Phase 7 audit taxonomy,
-correlation metadata, and exact-bytes verifier contract.
+correlation metadata, and exact-bytes verifier contract; ADR-015 records the Phase 8
+FastAPI ingress, host-signed principal assertion, preview/approval routes, and local
+model provider contract.
 
 | ADR | Title | Status | Implementation phase |
 |---|---|---|---|
@@ -27,6 +29,7 @@ correlation metadata, and exact-bytes verifier contract.
 | [ADR-012](adr/ADR-012-risk-v2-and-human-approvals.md) | Versioned risk v2 and durable, one-time human approvals | Accepted | Phase 5 |
 | [ADR-013](adr/ADR-013-output-dlp-and-egress.md) | Mandatory output DLP, exact destination trust, and complete-response release/suppression | Accepted | Phase 6 |
 | [ADR-014](adr/ADR-014-audit-taxonomy-and-verification.md) | Audit event taxonomy, derived correlation metadata, exact-stored-bytes verifier, and retention boundary | Accepted | Phase 7 |
+| [ADR-015](adr/ADR-015-fastapi-ingress-principal-and-local-model.md) | FastAPI ingress, host-signed principal assertions, preview/approval routes, and the opt-in local model provider | Accepted | Phase 8 |
 
 ## Adding a new ADR
 
