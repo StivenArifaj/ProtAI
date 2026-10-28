@@ -280,7 +280,10 @@ class Settings(BaseSettings):
         default="http://host.docker.internal:11434", min_length=1, max_length=2048
     )
     local_model_name: str = Field(default=LOCAL_MODEL_PLACEHOLDER, min_length=1, max_length=256)
-    local_model_timeout_seconds: int = Field(default=10, ge=1, le=120)
+    # Per-attempt budget shared with ``LocalModelIntentExtractor`` (0.1-60 s). The
+    # environment surface is narrowed to whole seconds so an operator cannot configure
+    # a value the extractor would reject at startup.
+    local_model_timeout_seconds: int = Field(default=10, ge=1, le=60)
     allow_external_model_calls: bool = False
 
     _host_auth_keys: dict[str, HostAuthKey] = PrivateAttr(default_factory=dict)

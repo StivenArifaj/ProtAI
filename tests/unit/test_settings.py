@@ -415,6 +415,8 @@ def test_phase8_defaults_are_offline_and_bounded() -> None:
     assert settings.local_model_name == "SET_TO_EXACT_INSTALLED_MODEL"
     assert settings.local_model_timeout_seconds == 10
     assert settings.allow_external_model_calls is False
+    # The environment contract is narrowed to the extractor's shared 0.1-60 s bound.
+    assert make_settings(local_model_timeout_seconds=60).local_model_timeout_seconds == 60
 
 
 @pytest.mark.parametrize(
@@ -431,6 +433,7 @@ def test_phase8_defaults_are_offline_and_bounded() -> None:
         ("rate_limit_approval_decisions_per_minute", 0),
         ("rate_limit_approval_decisions_per_minute", 601),
         ("local_model_timeout_seconds", 0),
+        ("local_model_timeout_seconds", 61),
         ("local_model_timeout_seconds", 121),
     ],
 )

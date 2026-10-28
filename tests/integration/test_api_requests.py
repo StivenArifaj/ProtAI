@@ -25,6 +25,8 @@ from sqlalchemy import select, update
 from ai_security.api.app import create_app
 from ai_security.identity.signing import sign_request
 from ai_security.input_defense.models import Disposition, TrustLabel
+from ai_security.intent.extractors import LocalModelIntentExtractor, MockIntentExtractor
+from ai_security.intent.providers import LocalModelProviderError
 from ai_security.persistence.models import ApprovalRequest
 from ai_security.persistence.models import AuditEvent as StoredAuditEvent
 from ai_security.policy.models import PolicyBundle, Thresholds, ToolPolicy
@@ -404,6 +406,118 @@ def test_invalid_request_rate_limit_denies_repeated_schema_failures(
         assert second.status_code == 429
         assert second.json()["error"]["code"] == "rate_limited"
         assert second.json()["state"] == "REJECTED"
+
+
+# -- local model provider ------------------------------------------------------------
+
+
+class FailingIntentClient:
+    async def complete(self, *, prompt: str) -> str:
+        raise LocalModelProviderError("local model request failed")
+
+
+class StaticIntentClient:
+    def __init__(self, payload: dict[str, Any]) -> None:
+        self._payload = payload
+
+    async def complete(self, *, prompt: str) -> str:
+        return json.dumps(self._payload)
+
+
+def provider_settings(settings_factory: SettingsFactory, migrated_database: str) -> Settings:
+    return settings_factory(
+        database_url=migrated_database,
+        principal_resolver="host",
+        model_provider="local",
+        local_model_name="test-model",
+        local_model_base_url="http://localhost:11434",
+        local_model_timeout_seconds=1,
+    )
+
+
+def test_local_provider_startup_builds_the_configured_extractor(
+    settings_factory: SettingsFactory, migrated_database: str
+) -> None:
+    # Constructing the app performs no provider I/O; only requests may call the model.
+    with TestClient(create_app(provider_settings(settings_factory, migrated_database))) as client:
+        assert isinstance(client.app.state.intent_extractor, LocalModelIntentExtractor)
+
+    with TestClient(create_app(settings_factory(database_url=migrated_database))) as client:
+        assert isinstance(client.app.state.intent_extractor, MockIntentExtractor)
+
+
+def test_local_provider_failure_yields_no_manifest_and_no_execution(
+    settings_factory: SettingsFactory,
+    migrated_database: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def builder(_settings: Settings) -> LocalModelIntentExtractor:
+        return LocalModelIntentExtractor(FailingIntentClient(), timeout_seconds=1)
+
+    monkeypatch.setattr("ai_security.api.app._build_intent_extractor", builder)
+    settings = provider_settings(settings_factory, migrated_database)
+    with TestClient(create_app(settings)) as client:
+        key = settings.host_auth_keys[KEY_ID]
+        response = signed_post(client, key, "/v1/requests", encode(request_body(READ_REQUEST)))
+        assert response.status_code == 503, response.text
+        payload = response.json()
+        assert payload["error"]["code"] == "model_unavailable"
+        assert payload["state"] == "FAILED"
+
+        recorded = events_for(migrated_database, payload["error"]["request_id"])
+        types = event_types(recorded)
+        assert "INTENT_FAILED" in types
+        assert "TOOL_CALL_PROPOSED" not in types
+        assert "TOOL_EXECUTION_STARTED" not in types
+
+
+def test_local_provider_success_still_runs_the_enforced_gateway(
+    settings_factory: SettingsFactory,
+    migrated_database: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    extraction = {
+        "status": "ACTIVE",
+        "constraints": [
+            {
+                "tool_id": "mock_email.read",
+                "action_id": "read",
+                "allowed_resource_ids": ["email-1"],
+                "max_uses": 1,
+            },
+            {
+                "tool_id": "text.summarize",
+                "action_id": "summarize",
+                "allowed_parameter_values": {"max_chars": [200]},
+                "max_uses": 1,
+            },
+        ],
+        "confidence_score": 90,
+    }
+
+    def builder(_settings: Settings) -> LocalModelIntentExtractor:
+        return LocalModelIntentExtractor(StaticIntentClient(extraction), timeout_seconds=1)
+
+    monkeypatch.setattr("ai_security.api.app._build_intent_extractor", builder)
+    settings = provider_settings(settings_factory, migrated_database)
+    with TestClient(create_app(settings)) as client:
+        key = settings.host_auth_keys[KEY_ID]
+        response = signed_post(client, key, "/v1/requests", encode(request_body(READ_REQUEST)))
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        assert payload["state"] == "COMPLETED"
+        assert payload["result"]["email_id"] == "email-1"
+
+        recorded = events_for(migrated_database, payload["request_id"])
+        types = event_types(recorded)
+        assert types[:4] == [
+            "REQUEST_RECEIVED",
+            "PRINCIPAL_RESOLVED",
+            "INPUT_INSPECTED",
+            "INTENT_CREATED",
+        ]
+        assert types.count("POLICY_EVALUATED") == 2
+        assert types.count("TOOL_EXECUTION_STARTED") == 2
 
 
 # -- approval decision ---------------------------------------------------------------

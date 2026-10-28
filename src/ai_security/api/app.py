@@ -53,7 +53,12 @@ from ai_security.firewall.policy_engine import PolicyEngine
 from ai_security.identity.resolver import build_principal_resolver
 from ai_security.input_defense.config import load_input_defense_config
 from ai_security.input_defense.service import InputDefenseService
-from ai_security.intent.extractors import MockIntentExtractor
+from ai_security.intent.extractors import (
+    IntentExtractor,
+    LocalModelIntentExtractor,
+    MockIntentExtractor,
+)
+from ai_security.intent.providers import OllamaIntentModelClient
 from ai_security.intent.service import IntentManifestService
 from ai_security.intent.validator import IntentUsageTracker
 from ai_security.persistence.approval_repository import ApprovalRepository
@@ -75,6 +80,26 @@ from ai_security.tools.mock_text import MockTextAdapter
 from ai_security.tools.registry import build_registry
 
 APP_VERSION = "0.1.0"
+
+
+def _build_intent_extractor(settings: Settings) -> IntentExtractor:
+    """Select the deterministic mock or the optional local model (ADR-015).
+
+    Both extractors are advisory: they can only propose concrete constraints. A
+    local-provider outage yields no manifest and can never become a policy decision.
+    The builder is a seam for tests; production always derives the client from
+    operator-validated settings.
+    """
+    if settings.model_provider is ModelProviderKind.local:
+        client = OllamaIntentModelClient(
+            origin=settings.local_model_origin,
+            model=settings.local_model_name,
+            timeout_seconds=settings.local_model_timeout_seconds,
+        )
+        return LocalModelIntentExtractor(
+            client, timeout_seconds=settings.local_model_timeout_seconds
+        )
+    return MockIntentExtractor()
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -122,13 +147,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.nonce_registrar = SqlAlchemyNonceRepository(database.session_factory)
     app.state.audit_chain = AuditChainRepository(database.session_factory, chain_id=V1_CHAIN_ID)
     recorder = ChainAuditRecorder(app.state.audit_chain)
-    # Phase 8: the local model provider is not wired in this build. Refuse startup
-    # instead of silently substituting the deterministic mock extractor (ADR-015).
-    if resolved.model_provider is not ModelProviderKind.mock:
-        raise RuntimeError(
-            "MODEL_PROVIDER=local is not available in this build; refusing startup "
-            "rather than silently using the mock intent extractor (ADR-015)"
-        )
     # Phase 2: capability/policy consistency is proven at startup (fail closed) and the
     # single execution path is wired to the audit chain. The in-memory mock sink is
     # process-local by design (no network, no real side effect).
@@ -158,13 +176,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.approval_repository,
         ttl_seconds=resolved.approval_ttl_seconds,
     )
-    # Phase 4: manifests are issued only by this service (mock extractor in Phase 4;
-    # the local-model adapter interface is ready for Phase 8 provider wiring). The
-    # gateway is constructed with the tracker so production execution requires a
-    # verified, unexpired manifest and reserves each constraint's bounded uses.
+    # Phase 4: manifests are issued only by this service. Phase 8 selects the
+    # deterministic mock extractor by default or the operator-configured local model;
+    # either way the extractor is advisory and cannot create authority. The gateway is
+    # constructed with the tracker so production execution requires a verified,
+    # unexpired manifest and reserves each constraint's bounded uses.
     app.state.intent_usage_tracker = IntentUsageTracker()
+    app.state.intent_extractor = _build_intent_extractor(resolved)
     app.state.intent_manifest_service = IntentManifestService(
-        extractor=MockIntentExtractor(),
+        extractor=app.state.intent_extractor,
         registry=registry,
         bundle=policy_bundle,
         manifest_ttl_seconds=resolved.intent_manifest_ttl_seconds,
