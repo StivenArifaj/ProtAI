@@ -42,7 +42,12 @@ from ai_security.firewall.policy_engine import PolicyEngine
 from ai_security.identity.models import Principal
 from ai_security.persistence.audit_repository import AppendedAuditEvent
 from ai_security.policy.loader import load_policy_bundle
-from ai_security.policy.models import PolicyBundle, ToolPolicy
+from ai_security.policy.models import (
+    PolicyBundle,
+    RiskThresholdsDocument,
+    Thresholds,
+    ToolPolicy,
+)
 from ai_security.security.canonical_json import canonical_json_bytes
 from ai_security.tools.base import (
     ExecutionAuthorization,
@@ -418,6 +423,191 @@ def test_allowed_read_executes_and_audits_decision_then_outcome() -> None:
     payload = canonical_json_bytes(outcome_event.to_payload()).decode("utf-8")
     assert "budget" not in payload
     assert "Please review" not in payload
+
+
+def test_receipt_already_audited_suppresses_a_duplicate_receipt() -> None:
+    """The HTTP ingress owns ``REQUEST_RECEIVED``; a tool call must not duplicate it."""
+    recorder = RecordingAuditRecorder()
+    gateway, _ = make_gateway(bundle=starter_bundle(), recorder=recorder)
+    result = asyncio.run(
+        gateway.invoke_tool(
+            principal=principal(),
+            request_context=context(),
+            proposal=proposal(
+                "mock_email.read",
+                "read",
+                arguments={"email_id": "email-1"},
+                target_resources=("email-1",),
+            ),
+            receipt_already_audited=True,
+        )
+    )
+    assert result.outcome is InvocationOutcome.executed
+    assert [event.event_type for event in recorder.events] == [
+        AuditEventType.tool_call_proposed,
+        AuditEventType.egress_inspected,
+        AuditEventType.policy_evaluated,
+        AuditEventType.tool_execution_started,
+        AuditEventType.tool_execution_completed,
+        AuditEventType.output_inspected,
+        AuditEventType.response_released,
+    ]
+    assert result.decision_audit_sequence == 3
+    assert result.outcome_audit_sequence == 5
+
+
+def test_evaluate_tool_previews_without_executing_or_issuing_authority() -> None:
+    """Preview returns authoritative facts and no execution side effects."""
+    executed: list[bool] = []
+
+    async def hook() -> ToolResult:
+        executed.append(True)
+        return ValueResult(value="ok")
+
+    recorder = RecordingAuditRecorder()
+    gateway, _ = make_gateway(
+        bundle=custom_bundle(),
+        recorder=recorder,
+        extra_adapters=(HookAdapter(custom_registration(), hook),),
+    )
+    evaluation = asyncio.run(
+        gateway.evaluate_tool(
+            principal=principal(),
+            request_context=context(),
+            proposal=custom_proposal(),
+        )
+    )
+    assert evaluation.decision is FirewallDecision.allow
+    assert evaluation.reason is DecisionReason.authorized_read
+    assert evaluation.action_digest is not None
+    assert evaluation.data_class is DataClass.public
+    assert evaluation.side_effect_class is SideEffectClass.read_only
+    assert evaluation.decision_audit_sequence == 4
+    assert evaluation.approval_required is False
+    assert executed == []
+    assert [event.event_type for event in recorder.events] == [
+        AuditEventType.request_received,
+        AuditEventType.tool_call_proposed,
+        AuditEventType.egress_inspected,
+        AuditEventType.policy_evaluated,
+    ]
+
+
+def test_evaluate_tool_skips_an_already_audited_receipt() -> None:
+    recorder = RecordingAuditRecorder()
+    gateway, _ = make_gateway(bundle=starter_bundle(), recorder=recorder)
+    evaluation = asyncio.run(
+        gateway.evaluate_tool(
+            principal=principal(),
+            request_context=context(),
+            proposal=proposal(
+                "mock_email.read",
+                "read",
+                arguments={"email_id": "email-1"},
+                target_resources=("email-1",),
+            ),
+            receipt_already_audited=True,
+        )
+    )
+    assert evaluation.decision is FirewallDecision.allow
+    assert evaluation.decision_audit_sequence == 3
+    assert [event.event_type for event in recorder.events] == [
+        AuditEventType.tool_call_proposed,
+        AuditEventType.egress_inspected,
+        AuditEventType.policy_evaluated,
+    ]
+
+
+def ask_user_bundle() -> PolicyBundle:
+    """A read-only action routed to ASK_USER by the mid risk band."""
+    bundle = starter_bundle().with_tool_policy(
+        "mock_custom.run",
+        ToolPolicy(side_effect_class="READ_ONLY", approval_eligible=True),
+    )
+    return replace(
+        bundle,
+        risk_thresholds=RiskThresholdsDocument(
+            schema_version=1,
+            version="ask-user-thresholds",
+            thresholds=Thresholds(ask_user_at_or_above=1, block_at_or_above=100),
+        ),
+    )
+
+
+def approval_registration() -> ToolRegistration:
+    return replace(
+        custom_registration(),
+        data_class=DataClass.internal,
+        approval_required=True,
+        required_approver_rule="role:approver",
+    )
+
+
+def test_ask_user_returns_gateway_derived_approval_facts_without_executing() -> None:
+    executed: list[bool] = []
+
+    async def hook() -> ToolResult:
+        executed.append(True)
+        return ValueResult(value="ok")
+
+    recorder = RecordingAuditRecorder()
+    gateway, _ = make_gateway(
+        bundle=ask_user_bundle(),
+        recorder=recorder,
+        extra_adapters=(HookAdapter(approval_registration(), hook),),
+    )
+    result = asyncio.run(
+        gateway.invoke_tool(
+            principal=principal(),
+            request_context=context(),
+            proposal=custom_proposal(),
+        )
+    )
+    assert result.decision is FirewallDecision.ask_user
+    assert result.reason is DecisionReason.risk_requires_clarification
+    assert result.outcome is InvocationOutcome.denied
+    assert result.result is None
+    assert executed == []
+    assert result.action_digest is not None
+    assert result.approval_required is True
+    assert result.required_approver_rule == "role:approver"
+    assert result.data_class is DataClass.internal
+    assert result.side_effect_class is SideEffectClass.read_only
+    assert result.decision_audit_sequence == 4
+    assert result.approval_id is None
+    assert [event.event_type for event in recorder.events] == [
+        AuditEventType.request_received,
+        AuditEventType.tool_call_proposed,
+        AuditEventType.egress_inspected,
+        AuditEventType.policy_evaluated,
+    ]
+
+
+def test_ask_user_without_a_durable_decision_never_becomes_approval_eligible() -> None:
+    """An ASK_USER whose policy event could not persist is a BLOCK, not a request."""
+    recorder = RecordingAuditRecorder(fail_on_call=4)
+    gateway, _ = make_gateway(
+        bundle=ask_user_bundle(),
+        recorder=recorder,
+        extra_adapters=(
+            HookAdapter(approval_registration(), _result_hook(ValueResult(value="ok"))),
+        ),
+    )
+    result = asyncio.run(
+        gateway.invoke_tool(
+            principal=principal(),
+            request_context=context(),
+            proposal=custom_proposal(),
+        )
+    )
+    assert result.decision is FirewallDecision.block
+    assert result.reason is DecisionReason.audit_unavailable
+    assert result.outcome is InvocationOutcome.denied
+    assert result.result is None
+    assert result.action_digest is not None
+    assert result.approval_required is False
+    assert result.required_approver_rule is None
+    assert result.decision_audit_sequence is None
 
 
 def test_enabled_egress_executes_the_sink_and_records_the_digest() -> None:

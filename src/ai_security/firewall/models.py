@@ -24,13 +24,14 @@ from typing import Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator
 
+from ai_security.data_security.classification import DataClass
 from ai_security.data_security.dlp import DlpReport
 from ai_security.firewall.decision import DecisionReason, FirewallDecision
 from ai_security.firewall.risk_engine import RiskAssessment
 from ai_security.identity.models import Principal
 from ai_security.intent.models import IntentManifest
 from ai_security.policy.models import TOOL_ID_PATTERN
-from ai_security.tools.base import STABLE_ID_PATTERN, ToolResult
+from ai_security.tools.base import STABLE_ID_PATTERN, SideEffectClass, ToolResult
 
 _STABLE_ID = re.compile(STABLE_ID_PATTERN)
 _MAX_DECLARED_RESOURCES = 32
@@ -104,6 +105,36 @@ class InvocationOutcome(StrEnum):
 
 
 @dataclass(frozen=True)
+class ToolEvaluation:
+    """The gateway's non-executing evaluation of one proposal (preview-safe).
+
+    It carries the authoritative facts produced by validation, egress inspection, risk
+    scoring, and policy evaluation. It is not an execution grant: no authorization was
+    issued, no approval was consumed, no manifest use was reserved, and no adapter ran.
+    """
+
+    call_id: str
+    tool_id: str
+    action_id: str
+    decision: FirewallDecision
+    reason: DecisionReason
+    risk: RiskAssessment | None
+    policy_version: str
+    policy_hash: str
+    decision_audit_sequence: int | None
+    action_digest: str | None = None
+    data_class: DataClass | None = None
+    side_effect_class: SideEffectClass | None = None
+    resource_ids: tuple[str, ...] = ()
+    destination: str | None = None
+    dlp_egress: DlpReport | None = None
+    approval_id: str | None = None
+    approver_subject_id: str | None = None
+    approval_required: bool = False
+    required_approver_rule: str | None = None
+
+
+@dataclass(frozen=True)
 class ToolInvocationResult:
     """Typed gateway reply for one ``invoke_tool`` call."""
 
@@ -126,6 +157,16 @@ class ToolInvocationResult:
     # reports contain digests, categories, counts, and field paths — never match text.
     dlp_egress: DlpReport | None = None
     dlp_output: DlpReport | None = None
+    # Phase 8: authoritative action facts (gateway-derived, never caller-supplied) so the
+    # ingress can create an approval bound to the exact evaluated action without
+    # re-parsing untrusted arguments.
+    action_digest: str | None = None
+    data_class: DataClass | None = None
+    side_effect_class: SideEffectClass | None = None
+    resource_ids: tuple[str, ...] = ()
+    destination: str | None = None
+    approval_required: bool = False
+    required_approver_rule: str | None = None
 
 
 class ToolExecutor(Protocol):
@@ -148,6 +189,7 @@ __all__ = [
     "InvocationOutcome",
     "ProposedToolCall",
     "RequestContext",
+    "ToolEvaluation",
     "ToolExecutor",
     "ToolInvocationResult",
 ]

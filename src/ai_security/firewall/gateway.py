@@ -65,6 +65,7 @@ from ai_security.firewall.models import (
     InvocationOutcome,
     ProposedToolCall,
     RequestContext,
+    ToolEvaluation,
     ToolInvocationResult,
 )
 from ai_security.firewall.policy_engine import PolicyEngine, PolicyEvaluationRequest
@@ -155,31 +156,105 @@ class ToolGateway:
         proposal: ProposedToolCall,
         manifest: IntentManifest | None = None,
         approval_id: str | None = None,
+        receipt_already_audited: bool = False,
     ) -> ToolInvocationResult:
-        """Evaluate and, only on ``ALLOW`` or a valid one-time approval, execute."""
+        """Evaluate and, only on ``ALLOW`` or a valid one-time approval, execute.
+
+        ``receipt_already_audited`` is set by the HTTP ingress after it persisted the
+        request receipt. The gateway still records ``TOOL_CALL_PROPOSED`` and every later
+        event; it only avoids a duplicate receipt for the same request id.
+        """
+        return await self._invoke(
+            principal=principal,
+            request_context=request_context,
+            proposal=proposal,
+            manifest=manifest,
+            approval_id=approval_id,
+            receipt_already_audited=receipt_already_audited,
+            preview=False,
+        )
+
+    async def evaluate_tool(
+        self,
+        *,
+        principal: Principal,
+        request_context: RequestContext,
+        proposal: ProposedToolCall,
+        receipt_already_audited: bool = False,
+    ) -> ToolEvaluation:
+        """Evaluate a proposal without executing or consuming any authority.
+
+        This is the preview path behind ``POST /v1/tool-calls/evaluate``. It records the
+        proposal, egress inspection, and policy decision, but never verifies/claims a
+        manifest, consumes an approval, reserves a manifest use, issues an execution
+        authorization, or invokes an adapter.
+        """
+        result = await self._invoke(
+            principal=principal,
+            request_context=request_context,
+            proposal=proposal,
+            manifest=None,
+            approval_id=None,
+            receipt_already_audited=receipt_already_audited,
+            preview=True,
+        )
+        return ToolEvaluation(
+            call_id=result.call_id,
+            tool_id=result.tool_id,
+            action_id=result.action_id,
+            decision=result.decision,
+            reason=result.reason,
+            risk=result.risk,
+            policy_version=result.policy_version,
+            policy_hash=result.policy_hash,
+            decision_audit_sequence=result.decision_audit_sequence,
+            action_digest=result.action_digest,
+            data_class=result.data_class,
+            side_effect_class=result.side_effect_class,
+            resource_ids=result.resource_ids,
+            destination=result.destination,
+            dlp_egress=result.dlp_egress,
+            approval_id=result.approval_id,
+            approver_subject_id=result.approver_subject_id,
+            approval_required=result.approval_required,
+            required_approver_rule=result.required_approver_rule,
+        )
+
+    async def _invoke(
+        self,
+        *,
+        principal: Principal,
+        request_context: RequestContext,
+        proposal: ProposedToolCall,
+        manifest: IntentManifest | None,
+        approval_id: str | None,
+        receipt_already_audited: bool,
+        preview: bool,
+    ) -> ToolInvocationResult:
         now = self._now()
 
         # The request envelope is durable before any validation or side effect. If the
         # audit chain is unavailable, the gateway fails closed: a call that cannot be
         # correlated from request receipt onward never reaches policy or an adapter.
-        request_event = self._event(
-            event_type=AuditEventType.request_received,
-            request_context=request_context,
-            principal=principal,
-            proposal=None,
-            decision=None,
-            registration=None,
-            risk=None,
-            destination=None,
-            resource_ids=(),
-            outcome=None,
-            duration_ms=None,
-            result_digest=None,
-            result_bytes=None,
-            error_type=None,
-        )
-        if await self._record_event(request_event) is None:
-            return self._audit_unavailable(proposal)
+        if not receipt_already_audited:
+            request_event = self._event(
+                event_type=AuditEventType.request_received,
+                request_context=request_context,
+                principal=principal,
+                proposal=None,
+                decision=None,
+                registration=None,
+                risk=None,
+                destination=None,
+                resource_ids=(),
+                outcome=None,
+                duration_ms=None,
+                result_digest=None,
+                result_bytes=None,
+                error_type=None,
+            )
+            if await self._record_event(request_event) is None:
+                return self._audit_unavailable(proposal)
 
         proposal_event = self._event(
             event_type=AuditEventType.tool_call_proposed,
@@ -214,7 +289,7 @@ class ToolGateway:
                 proposal, decision, InvocationOutcome.denied, None, None, sequence, None
             )
 
-        if self._intent_tracker is not None:
+        if not preview and self._intent_tracker is not None:
             if manifest is None:
                 decision = self._decision(
                     FirewallDecision.block, DecisionReason.intent_manifest_invalid
@@ -251,7 +326,7 @@ class ToolGateway:
                 return self._result(
                     proposal, decision, InvocationOutcome.denied, None, None, sequence, None
                 )
-        elif manifest is not None:
+        elif not preview and manifest is not None:
             decision = self._decision(
                 FirewallDecision.block, DecisionReason.intent_manifest_invalid
             )
@@ -309,7 +384,7 @@ class ToolGateway:
                 proposal, decision, InvocationOutcome.denied, None, None, sequence, None
             )
 
-        if self._intent_tracker is not None and manifest is not None:
+        if not preview and self._intent_tracker is not None and manifest is not None:
             violation = validate_intent_constraints(
                 manifest,
                 tool_id=proposal.tool_id,
@@ -460,10 +535,13 @@ class ToolGateway:
         approver_subject_id: str | None = None
         approval_reference: str | None = None
 
-        # The canonical action digest is required for an engine ALLOW and for any
-        # ASK_USER attempt that presents an approval. A BLOCK never consults one.
-        if decision.decision is FirewallDecision.allow or (
-            decision.decision is FirewallDecision.ask_user and approval_id is not None
+        # The canonical action digest is required for an engine ALLOW and for every
+        # ASK_USER decision: an approval is bound to the gateway-derived digest, so the
+        # ingress must never reconstruct it from untrusted request arguments. A BLOCK
+        # never consults one.
+        if (
+            decision.decision is FirewallDecision.allow
+            or decision.decision is FirewallDecision.ask_user
         ):
             try:
                 action_digest = self._digest(
@@ -476,7 +554,11 @@ class ToolGateway:
             except CanonicalJSONError:
                 decision = self._decision(FirewallDecision.block, DecisionReason.invalid_arguments)
 
-        if decision.decision is FirewallDecision.ask_user and approval_id is not None:
+        if (
+            not preview
+            and decision.decision is FirewallDecision.ask_user
+            and approval_id is not None
+        ):
             consumption = await self._consume_approval(
                 approval_id=approval_id,
                 principal=principal,
@@ -503,7 +585,8 @@ class ToolGateway:
 
         if decision.decision is FirewallDecision.allow or approved_via_approval:
             if (
-                self._intent_tracker is not None
+                not preview
+                and self._intent_tracker is not None
                 and manifest is not None
                 and not self._intent_tracker.reserve(
                     manifest=manifest,
@@ -532,6 +615,44 @@ class ToolGateway:
             approver_subject_id=approver_subject_id,
             data_class=effective_data_class,
         )
+        evaluation = ToolEvaluation(
+            call_id=proposal.call_id,
+            tool_id=proposal.tool_id,
+            action_id=proposal.action_id,
+            decision=decision.decision,
+            reason=decision.reason,
+            risk=risk,
+            policy_version=decision.policy_version,
+            policy_hash=decision.policy_hash,
+            decision_audit_sequence=decision_sequence,
+            action_digest=action_digest,
+            data_class=effective_data_class,
+            side_effect_class=registration.side_effect_class,
+            resource_ids=resource_ids,
+            destination=canonical_destination,
+            dlp_egress=egress_report,
+            approval_id=approval_reference,
+            approver_subject_id=approver_subject_id,
+            approval_required=registration.approval_required,
+            required_approver_rule=registration.required_approver_rule,
+        )
+
+        # An ASK_USER decision whose policy event could not be persisted must never
+        # become an approval request: approvals are state changes and need the evaluated
+        # decision to be durable first. Plain denials keep their original reason (an
+        # audit outage cannot turn a denial into a grant).
+        if decision.decision is FirewallDecision.ask_user and decision_sequence is None:
+            blocked = self._decision(FirewallDecision.block, DecisionReason.audit_unavailable)
+            return self._result(
+                proposal,
+                blocked,
+                InvocationOutcome.denied,
+                None,
+                risk,
+                None,
+                None,
+                evaluation=evaluation,
+            )
         if decision.decision is not FirewallDecision.allow and not approved_via_approval:
             return self._result(
                 proposal,
@@ -541,7 +662,7 @@ class ToolGateway:
                 risk,
                 decision_sequence,
                 None,
-                dlp_egress=egress_report,
+                evaluation=evaluation,
             )
         if decision_sequence is None:
             # The decision event could not be persisted: never execute a side effect.
@@ -554,7 +675,21 @@ class ToolGateway:
                 risk,
                 None,
                 None,
-                dlp_egress=egress_report,
+                evaluation=evaluation,
+            )
+
+        if preview:
+            # The preview recorded its decision but stops here: no authorization, no
+            # approval consumption, no manifest reservation, and no adapter call.
+            return self._result(
+                proposal,
+                decision,
+                InvocationOutcome.denied,
+                None,
+                risk,
+                decision_sequence,
+                None,
+                evaluation=evaluation,
             )
 
         if action_digest is None:  # pragma: no cover - execution always computes a digest
@@ -587,6 +722,7 @@ class ToolGateway:
             approver_subject_id=approver_subject_id,
             effective_data_class=effective_data_class,
             dlp_egress=egress_report,
+            evaluation=evaluation,
         )
 
     # -- validation steps -------------------------------------------------------------
@@ -805,6 +941,7 @@ class ToolGateway:
         decision_sequence: int,
         effective_data_class: DataClass,
         dlp_egress: DlpReport,
+        evaluation: ToolEvaluation,
         approval_id: str | None = None,
         approver_subject_id: str | None = None,
     ) -> ToolInvocationResult:
@@ -844,6 +981,7 @@ class ToolGateway:
                 approval_id=approval_id,
                 approver_subject_id=approver_subject_id,
                 dlp_egress=dlp_egress,
+                evaluation=evaluation,
             )
 
         try:
@@ -873,6 +1011,7 @@ class ToolGateway:
                 duration_ms=_elapsed_ms(started),
                 effective_data_class=effective_data_class,
                 dlp_egress=dlp_egress,
+                evaluation=evaluation,
             )
         except Exception as exc:
             logger.warning(
@@ -895,6 +1034,7 @@ class ToolGateway:
                 duration_ms=_elapsed_ms(started),
                 effective_data_class=effective_data_class,
                 dlp_egress=dlp_egress,
+                evaluation=evaluation,
             )
 
         result_error = self._result_error(registration, adapter_result)
@@ -916,6 +1056,7 @@ class ToolGateway:
                 duration_ms=_elapsed_ms(started),
                 effective_data_class=effective_data_class,
                 dlp_egress=dlp_egress,
+                evaluation=evaluation,
             )
 
         if not isinstance(adapter_result, ToolResult):  # pragma: no cover - checked above
@@ -959,6 +1100,7 @@ class ToolGateway:
                 approval_id=approval_id,
                 approver_subject_id=approver_subject_id,
                 dlp_egress=dlp_egress,
+                evaluation=evaluation,
             )
 
         # Response release is all-or-nothing: the complete result was buffered, inspected
@@ -1004,6 +1146,7 @@ class ToolGateway:
                 approver_subject_id=approver_subject_id,
                 dlp_egress=dlp_egress,
                 dlp_output=dlp_output,
+                evaluation=evaluation,
             )
 
         response_outcome = (
@@ -1046,6 +1189,7 @@ class ToolGateway:
                 approver_subject_id=approver_subject_id,
                 dlp_egress=dlp_egress,
                 dlp_output=dlp_output,
+                evaluation=evaluation,
             )
 
         return self._result(
@@ -1060,6 +1204,7 @@ class ToolGateway:
             approver_subject_id=approver_subject_id,
             dlp_egress=dlp_egress,
             dlp_output=dlp_output,
+            evaluation=evaluation,
         )
 
     def _release_result(
@@ -1132,6 +1277,7 @@ class ToolGateway:
         duration_ms: int,
         effective_data_class: DataClass,
         dlp_egress: DlpReport,
+        evaluation: ToolEvaluation,
     ) -> ToolInvocationResult:
         event = self._execution_event(
             request_context=request_context,
@@ -1164,6 +1310,7 @@ class ToolGateway:
                 approval_id=approval_id,
                 approver_subject_id=approver_subject_id,
                 dlp_egress=dlp_egress,
+                evaluation=evaluation,
             )
         return self._result(
             proposal,
@@ -1176,6 +1323,7 @@ class ToolGateway:
             approval_id=approval_id,
             approver_subject_id=approver_subject_id,
             dlp_egress=dlp_egress,
+            evaluation=evaluation,
         )
 
     def _semaphore(self, tool_id: str, limit: int) -> asyncio.Semaphore:
@@ -1391,9 +1539,17 @@ class ToolGateway:
         approver_subject_id: str | None = None,
         dlp_egress: DlpReport | None = None,
         dlp_output: DlpReport | None = None,
+        evaluation: ToolEvaluation | None = None,
     ) -> ToolInvocationResult:
         # ``result`` is always a ``ToolResult`` or None by construction; the cast keeps
         # the frozen dataclass free of pydantic revalidation.
+        resolved_egress = dlp_egress if dlp_egress is not None else (
+            None if evaluation is None else evaluation.dlp_egress
+        )
+        # Approval facts describe a *requestable* approval. A result that is not an
+        # ASK_USER decision (including an ASK_USER downgraded to BLOCK by an audit
+        # failure) must never look approval-eligible to the ingress.
+        asks_user = decision.decision is FirewallDecision.ask_user
         return ToolInvocationResult(
             call_id=proposal.call_id,
             tool_id=proposal.tool_id,
@@ -1407,10 +1563,27 @@ class ToolGateway:
             policy_hash=decision.policy_hash,
             decision_audit_sequence=decision_sequence,
             outcome_audit_sequence=outcome_sequence,
-            approval_id=approval_id,
-            approver_subject_id=approver_subject_id,
-            dlp_egress=dlp_egress,
+            approval_id=approval_id if approval_id is not None else (
+                None if evaluation is None else evaluation.approval_id
+            ),
+            approver_subject_id=approver_subject_id if approver_subject_id is not None else (
+                None if evaluation is None else evaluation.approver_subject_id
+            ),
+            dlp_egress=resolved_egress,
             dlp_output=dlp_output,
+            action_digest=None if evaluation is None else evaluation.action_digest,
+            data_class=None if evaluation is None else evaluation.data_class,
+            side_effect_class=None if evaluation is None else evaluation.side_effect_class,
+            resource_ids=() if evaluation is None else evaluation.resource_ids,
+            destination=None if evaluation is None else evaluation.destination,
+            approval_required=(
+                asks_user and evaluation is not None and evaluation.approval_required
+            ),
+            required_approver_rule=(
+                evaluation.required_approver_rule
+                if asks_user and evaluation is not None
+                else None
+            ),
         )
 
     def _now(self) -> datetime:
