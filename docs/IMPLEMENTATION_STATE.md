@@ -1,24 +1,25 @@
 # Implementation State
 
-Last updated: 2026-10-28 (Phase 8, blueprint v1.2).
+Last updated: 2026-10-29 (Phase 9, blueprint v1.2).
 
 Phases 0a (repository foundation), 0b (security foundation), 1 (typed contracts and
 deterministic policy engine), 2 (tool registry and enforced gateway), 3 (advisory input
 defense and context provenance), 4 (intent extraction and action validation), 5
 (risk engine and approval workflow), 6 (output DLP and egress policy), 7 (audit
-persistence and verification), and 8 (HTTP ingress, bounded runtime, local model) are
-**complete and verified**; the Docker Compose path was verified in 0b. Phase 8 adds
-host-signed principal assertions bound to the signing key, the three documented `/v1`
-routes (`requests` execute, `tool-calls/evaluate` preview, `approvals/{id}/decision`
-record), ingress audit producers for `REQUEST_RECEIVED`/`PRINCIPAL_RESOLVED`/
-`PRINCIPAL_REJECTED`/`INPUT_INSPECTED`, a bounded read-then-summarize demo runtime,
-per-process per-principal rate limits and request deadlines, and an optional strict
-Ollama-compatible local model provider behind `LocalModelIntentExtractor`.
+persistence and verification), 8 (HTTP ingress, bounded runtime, local model), and 9
+(evaluation harness and dataset) are **complete and verified**; the Docker Compose path
+was verified in 0b. Phase 9 adds the installed `ai_security.evaluation` package (strict
+dataset loader, six task runners, confusion/latency metrics, provenance metadata, CLI,
+JSON/Markdown reports), a repository-owned synthetic dataset of 106 cases across
+42 dev / 34 validation / 30 holdout with a 15-case dev-only quick subset, and 64
+evaluation tests including hand-calculated metric arithmetic and a real quick-subset
+regression. The measured baseline reports 3 hard-negative input false positives, 0
+unauthorized side effects, and 0 DLP leak failures; it does not calibrate risk.
 The codebase still does **not** implement a general agent planner, real connectors,
 approval delivery/UI or approved-action resumption, process isolation, a cloud model
-adapter, classifier/entropy/semantic DLP, an external audit anchor, or automated
-retention. See `docs/API_INTEGRATION.md`, `docs/SECURITY_INVARIANTS.md`, and
-`docs/KNOWN_LIMITATIONS.md`.
+adapter, classifier/entropy/semantic DLP, an external audit anchor, automated retention,
+or risk calibration. See `docs/EVALUATION.md`, `docs/API_INTEGRATION.md`,
+`docs/SECURITY_INVARIANTS.md`, and `docs/KNOWN_LIMITATIONS.md`.
 
 ## What exists
 
@@ -39,22 +40,27 @@ retention. See `docs/API_INTEGRATION.md`, `docs/SECURITY_INVARIANTS.md`, and
 | Approval service | `firewall/approval.py`, `identity/approver_rules.py`, `persistence/approval_repository.py` | Strict request/decision/consumption API; token returned once and stored only as SHA-256; verified-principal rule evaluation with tenant and self-approval checks; 60-86,400 s TTL (default 900); lazy expiry; row-locked state machine and same-transaction audit events; Phase 6 consumption additionally requires the stored side-effect/data class to match current effective facts; no routes/token transport in Phase 5 |
 | Audit emission + verification | `audit/{models,writer,verifier,hash_chain}.py`, `persistence/audit_repository.py` | Phase 7 full §16.1 taxonomy (+`APPROVAL_CONSUMED`) with event-specific required fields; mandatory gateway lifecycle (`REQUEST_RECEIVED`→`TOOL_CALL_PROPOSED`→`EGRESS_INSPECTED`→`POLICY_EVALUATED`→`APPROVAL_CONSUMED`→`TOOL_EXECUTION_STARTED`→completed/failed→`OUTPUT_INSPECTED`→response) plus approval/intent events; Phase 8 ingress producers `REQUEST_RECEIVED`, `PRINCIPAL_RESOLVED`/`PRINCIPAL_REJECTED`, and `INPUT_INSPECTED` (redacted); first-class redacted DLP records; derived indexed metadata columns; read-only `verify_chain` over exact stored bytes (sequence/linkage/hash/canonical/metadata) with typed content-free failures; `SECURITY_ALERT_RAISED` remains producerless until Phase 10 |
 | Policy engine | `firewall/policy_engine.py`, `policy/{models,loader,self_checks}.py`, `config/{policies,risk_thresholds,policy_self_checks}.yaml` | Deterministic §10.2 evaluation order over validated facts; safe YAML (duplicate-key rejection); versioned bundle with content hashes; 21 fixtures (incl. 7 mandated names and the Phase 2 binding/deadline/inconsistent facts) evaluated at startup + readiness; replaces `policy/interim_matrix.py` (deleted) |
-| Tests | `tests/conftest.py`, `tests/unit/*` (32 test files + helper), `tests/integration/*` (15 test files + conftest/helpers), `tests/security/*` (4 test files) | **949 tests** (782 unit, 122 integration, 45 security): prior suites plus Phase 8 route contracts (auth/assertion/input/rate-limit/approval/decision/preview), provider request/response strictness, and local-provider failure/success integration |
+| Evaluation harness | `src/ai_security/evaluation/{models,dataset,metrics,metadata,runners,report,cli}.py`, `evaluation/` | Measurement only; strict manifest + six JSONL fixtures (106 synthetic cases, 42/34/30 splits, 15-case quick subset); SHA256/count/partition/template-leakage/duplicate-content refusal; six task runners over real services with in-memory mock adapters and audit recorder; task-specific confusion matrices, exact risk conformance/ordering, multiclass intent status, unauthorized side-effect and sink-write counts; nearest-rank in-process latency; §19.6 JSON-authoritative reports with Markdown derivation, `null`/`N/A` undefined denominators, direct-read git/lock metadata, CLI exit codes |
+| Tests | `tests/conftest.py`, `tests/unit/*` (32 test files + helper), `tests/integration/*` (15 test files + conftest/helpers), `tests/security/*` (4 test files), `tests/evaluation/*` (6 test files + helper) | **1013 tests** (782 unit, 122 integration, 45 security, 64 evaluation): prior suites plus Phase 8 route contracts and Phase 9 metric/dataset/metadata/report/CLI/quick-regression coverage; real-PostgreSQL integration skips cleanly when the database is unavailable |
 | Quality gate | `scripts/check.sh` | 8 steps: lockfile, ruff format, ruff lint, mypy, pytest, pinned Gitleaks (dir+git), prohibited-pattern greps, constant-time confinement |
 | Containers | `Dockerfile`, `docker-compose.yml` | Digest-pinned bases; non-root uid 10001; COPY `config/ migrations/ alembic.ini`; Compose `api` carries the disposable dev `HOST_AUTH_KEYS_JSON` |
-| Docs | `docs/*` (10 files), `docs/adr/ADR-001..015` | Status columns honest; ADR-008 records the Phase 1 engine contract, ADR-009 the Phase 2 registry/gateway contract, ADR-010 the Phase 3 advisory-detection/session contract, ADR-011 the Phase 4 manifest/constraint contract, ADR-012 the Phase 5 `risk-v2`/approval contract, ADR-013 the Phase 6 output-DLP/egress contract, ADR-014 the Phase 7 audit contract, ADR-015 the Phase 8 ingress/principal/local-model contract; `API_INTEGRATION.md` is the signed-route contract; matrix doc reflects gateway-enforced facts; `OUTPUT_DLP_FALSE_POSITIVES.md` documents tested benign cases and known false positives/negatives |
+| Docs | `docs/*` (11 files), `docs/adr/ADR-001..016` | Status columns honest; ADR-008 records the Phase 1 engine contract, ADR-009 the Phase 2 registry/gateway contract, ADR-010 the Phase 3 advisory-detection/session contract, ADR-011 the Phase 4 manifest/constraint contract, ADR-012 the Phase 5 `risk-v2`/approval contract, ADR-013 the Phase 6 output-DLP/egress contract, ADR-014 the Phase 7 audit contract, ADR-015 the Phase 8 ingress/principal/local-model contract, ADR-016 the Phase 9 evaluation/label/split/report contract; `EVALUATION.md` describes the measurement layer and measured baseline; `API_INTEGRATION.md` is the signed-route contract; matrix doc reflects gateway-enforced facts; `OUTPUT_DLP_FALSE_POSITIVES.md` documents tested benign cases and known false positives/negatives |
 | Git | baseline `41e10da`; 0b commits `0aa11d9`…`d180b89`; docs `c95f2a6`; Phase 1 commits `cffdd62`, `eaae462`, `b91729b`; Phase 2 commits `5725256`…`c7a0f8d`; Phase 3 commits `faafe13`…`30c0f41`; Phase 4 commits `2943593`, `74c502f`, `786cb08`, `c018955`; Phase 5 commits `ad9e76a`, `0b2f1c9`, `8cce014`; Phase 6 commits `df70cd9`, `e8919cb`, `e586c81`; Phase 7 commits `0b60ba0`, `d53b0ed`, `5ae9ebe`, `dad8501`; Phase 8 commits `5e20075` (ADR-015), `edda8ea` (assertion/resolver), `2bdf30f` (input evidence), `b561dd6` (gateway preview), `2fa66fe` (settings), `f0f9b6b` (format), `940600e` (routes), `b4f8357` (local provider/settings), `2f84269` (docs/memory) | Repository under git since 2026-10-19; linear history on `main`; `origin` = `github.com/StivenArifaj/ProtAI` |
 | Spec | `AI_Agent_Security_Platform_Master_Blueprint_v1.2.md`, `archive/..._v1.0_superseded.md` | v1.2 authoritative; v1.0 archived |
 
-Deliberately deferred beyond Phase 8: evaluation and risk calibration (Phase 9),
-isolation/SOC/SBOM (Phase 10). The `/v1` runtime is a fixed two-call demo, not a
-planner; real connectors, streaming, approval delivery/UI, and approved-action
-resumption do not exist. Input detection gates the request path but remains heuristic
-and advisory (it cannot authorize); intent and approvals can only narrow/gate; the
-local model is optional, uncalibrated, and never an authority. Output DLP runs at the
-gateway (validated arguments and complete buffered results) with no classifier or
-model-prompt inspection. Rate limits are per process and in memory; `evaluation/` does
-not exist.
+Deliberately deferred beyond Phase 9: risk calibration and public benchmark adapters
+(separate future work, not part of the Phase 9 DoD); Phase 10 covers threat-model
+hardening, deterministic alerts, an optional read-only summarizer, runbooks, and a
+CycloneDX SBOM (not isolation/sandboxing or automated containment). The `/v1` runtime is a
+fixed two-call demo, not a planner; real connectors, streaming, approval delivery/UI, and
+approved-action resumption do not exist. Input detection gates the request path but
+remains heuristic and advisory (it cannot authorize); intent and approvals can only
+narrow/gate; the local model is optional, uncalibrated, and never an authority. Output
+DLP runs at the gateway (validated arguments and complete buffered results) with no
+classifier or model-prompt inspection. Rate limits are per process and in memory. The
+evaluation harness measures these components but is not an authority and does not add an
+execution path; it measures in-process behavior with mock adapters, not production
+latency or real-connector behavior.
 
 ## Decisions taken during Phase 0b implementation (within blueprint constraints)
 
@@ -411,6 +417,53 @@ not exist.
   settings and exposes it on `app.state`; health/login do not contact the model. Tests
   inject a fake client through the builder seam.
 
+## Decisions taken during Phase 9 implementation (within blueprint constraints; ADR-016)
+
+- **Evaluation is a separate installed package plus a top-level dataset.** The harness
+  lives in `src/ai_security/evaluation/`; `evaluation/` holds the strict manifest, six
+  JSONL fixtures, the split file, the reports, and the convenience entry point. The CLI
+  is the only entry point; no HTTP route, application wiring, or authority path was
+  added. The harness observes the shipped services and is not reachable from the app.
+- **Tasks are measured separately, with task-specific positive classes.** There is no
+  aggregate accuracy. Detection and gating are distinct (a `FLAG` is a detection positive
+  but not a gate), DLP measures protected content that must not egress/release
+  unmodified, authorization measures an executed action that must not execute, risk
+  measures exact score/factor/band conformance and ordering (never probability), and
+  intent reports multiclass status plus separate unexpected/missed-manifest rates.
+- **The dataset is repository-owned, synthetic, versioned, and split-disciplined.**
+  `dataset_manifest.yaml` is strict YAML pinning version, seed, creation date,
+  provenance, license, fixture SHA256s, and counts. The loader refuses path escapes,
+  duplicate keys/IDs, exact duplicate content, cross-split `(task, template_id)`
+  leakage, non-partition or disagreeing splits, unknown split names, and an invalid
+  quick subset before any case runs. The quick subset is dev-only, at most 30 cases, and
+  must cover all six tasks. The holdout was not used to tune anything.
+- **Authorization evaluation is in-process but not mocked at the control boundary.**
+  Cases construct the real `ToolGateway`, registry, policy engine, and
+  `OutputDefenseService`, with mock adapters wrapped to count actual calls, an
+  `InMemoryAuditRecorder`, a sink store to count actual mutations, and a fixed gateway
+  clock. No PostgreSQL, HTTP ingress, host authentication, approval decision, or
+  production audit write is exercised; that limitation is reported. Shipped capabilities
+  produce no `ASK_USER` row, so approval behavior remains covered by the Phase 5 suite.
+- **Intent evaluation measures conformance, not live-model accuracy.** Cases use
+  `MockIntentExtractor` plus deterministic transcript-backed local-provider outputs. The
+  provider call/retry counts are observed; an 18/18 status match is adapter/gating
+  conformance on those fixtures, not semantic quality of an arbitrary model.
+- **JSON is authoritative and Markdown is derived.** Undefined denominators are `null`
+  in JSON and `N/A` in Markdown, never zero. Latency is in-process wall-clock per case,
+  summarized with nearest-rank p50/p95/p99 and sample counts, and labelled local. Git
+  metadata is read directly from `.git` and refs (no child process); a missing `.git` or
+  `uv.lock` yields `null`, never a fabricated value. Report names must be a plain stem.
+- **The CLI contract is explicit.** Exit `0` writes a report, `1` is a
+  dataset/manifest verification failure before execution, and `2` means
+  `--fail-on-failures` observed a failed expectation. `--quick` is accepted only with
+  `--split dev`. The actual invocation is recorded in the report, including module-style
+  calls that read `sys.argv`.
+- **No calibration or benchmark adapter was added.** Phase 9 changed no detector,
+  policy, DLP, risk, or model threshold. The three hard-negative input false positives
+  are reported rather than tuned away. Public benchmark adapters remain absent because no
+  license, pinned version, and reproducible download hash was verified; the report says
+  so instead of implying comparability.
+
 ## Phase 0a verification record (actual runs, 2026-10-19; historical)
 
 Environment: macOS (darwin), uv 0.13.1, CPython 3.12.15, Docker 29.3.1 / Compose
@@ -678,14 +731,56 @@ Rows 69+ continue the numbered record. Full evidence:
 | Rate limits and request deadlines fail closed | PASS — four per-principal buckets; authenticated invalid bodies are charged and exhaustion returns `429`; unverifiable principals are never charged; tool-call slots are reserved atomically before a plan runs |
 | All prior suites and the 8-step gate stay green; docs/memory/ADR updated | PASS — rows 69-73; **949** tests; mypy 73 files; ADR-015; `docs/API_INTEGRATION.md`; this file; `SECURITY_INVARIANTS`, `KNOWN_LIMITATIONS`, `THREAT_MODEL`, `ARCHITECTURE`, `DECISIONS`, README, memory refresh |
 
+## Phase 9 verification record (actual runs, 2026-10-29)
+
+Rows 74+ continue the numbered record. Full evidence:
+`project_memory/TESTING_AND_VERIFICATION.md` (V76+).
+
+| # | Command | Result |
+|---|---|---|
+| 74 | `uv run --frozen pytest -q` | PASS — **1013 passed** (782 unit + 122 integration + 45 security + 64 evaluation), including the real 15-case quick-subset regression |
+| 75 | `uv run --frozen pytest tests/evaluation -q` | PASS — 64 passed (hand-calculated metric arithmetic, dataset hash/count/partition/template-leakage/duplicate refusal, metadata, JSON/Markdown report derivation, CLI exit codes and module-style command recording, quick regression) |
+| 76 | `uv run --frozen python -m ai_security.evaluation --dataset evaluation/dataset_manifest.yaml --output-dir evaluation/reports` | PASS — 106 cases across 6 tasks; 3 failed expectations (the documented hard-negative input false positives); 0 unauthorized side effects (rate 0.000); 0 DLP leak failures; 0 detector errors; JSON + Markdown reports written |
+| 77 | `uv run --frozen python -m ai_security.evaluation --dataset evaluation/dataset_manifest.yaml --output-dir evaluation/reports --split dev --quick --report-name quick_report --fail-on-failures` | PASS — 15 dev cases across 6 tasks; 0 failed expectations; 0 unauthorized side effects; exit 0; JSON + Markdown reports written |
+| 78 | `bash scripts/check.sh` (pre-commit) | PASS — exit 0, all 8 steps; ruff format/lint clean (211 files); mypy clean (82 source files); 1013 tests; Gitleaks 8.30.1 dir+git no leaks; prohibited-pattern and constant-time-confinement checks clean |
+| 79 | Post-commit `bash scripts/check.sh` after the Phase 9 commits | PASS — recorded in `project_memory/TESTING_AND_VERIFICATION.md` and the phase record after the commits exist |
+
+The full report records dataset `2026.10.28-v1` (manifest SHA256
+`5638abbd…ee8552`), source revision `17b9fb0` at run time, Python 3.12.15, macOS arm64,
+and the exact reproduction command. Input detection measured 14 TP / 3 TN / 3 FP / 0 FN
+(precision 0.824, recall 1.000, FPR 0.500) and gating 13 TP / 5 TN / 1 FP / 1 FN
+(precision 0.929, recall 0.929, FPR 0.167); DLP egress and response each measured no
+leak failures; risk measured 18/18 exact scores/factors/bands and 0 ordering violations;
+intent measured 18/18 status matches with 0 unexpected/missed manifests; authorization
+measured 20/20 expected outcomes, 0 unauthorized executions, 1 expected/observed sink
+write, and 93 in-memory audit events. These are small-fixture measurements, not
+production estimates or calibration results.
+
+## Definition of Done checklist (blueprint section 21, Phase 9)
+
+| DoD item | Status |
+|---|---|
+| One command reproduces results from a versioned fixture set | **PASS** — the CLI command in row 76 loads the strict manifest, verifies fixture hashes/counts and the split partition before running, executes all six tasks, and writes authoritative JSON + derived Markdown. The quick command (row 77) is a dev-only 15-case regression |
+| Accurate confusion matrices and latency are emitted | PASS — per-task and per-category matrices with TP/FN/FP/TN and defined metrics; undefined denominators are `null`/`N/A`; latency is nearest-rank p50/p95/p99 with per-task sample counts and an explicit local/in-process label |
+| All reported metrics are derived by code and match hand-calculated unit tests | PASS — `metrics.py` computes every rate from counts; `tests/evaluation/test_metrics.py` checks hand-calculated values, boundary denominators, sparse multiclass unions, and nearest-rank behavior; `test_report.py` checks JSON-to-Markdown derivation; no desired value is hard-coded |
+| Versioned fixture set, provenance, license, and split tooling exist | PASS — dataset `2026.10.28-v1` has 106 synthetic cases (20 input, 16 DLP egress, 14 DLP response, 18 risk, 18 intent, 20 authorization), 42 dev / 34 validation / 30 holdout, and a 15-case dev quick subset. Every case carries `case_id`, task, category, split, `template_id`, provenance, license, and `synthetic: true`; fixtures are CC0-1.0 originals |
+| §19.6 artifacts are present | PASS — each report includes counts/dataset version, per-task and per-category matrices, metric definitions/values, latency/sample counts, detector/provider failures and retries, unauthorized side effects, configuration/version metadata, skipped tests, known limitations, and the exact reproduction command |
+| The harness is measurement-only and adds no authority | PASS — no route or app wiring was added; authorization cases run the real gateway/registry/policy/DLP with mock adapters, a counting wrapper, an in-memory audit recorder, and a sink store; no production audit write, PostgreSQL, HTTP/auth, approval, or real connector is exercised. Policy remains the sole `ALLOW` producer and the gateway the only execution path |
+| Split/leakage and dataset integrity are enforced before execution | PASS — the loader refuses hash/count drift, duplicate keys/IDs, exact duplicate content, cross-split `(task, template_id)` leakage, non-partition/disagreeing splits, path escapes, unknown split names, and an empty/oversized/non-dev/incomplete quick subset; refusal tests cover each rule |
+| All prior suites and the 8-step gate stay green; docs/memory/ADR updated | PASS — rows 74-78; **1013** tests; mypy 82 files; ADR-016; `docs/EVALUATION.md`; this file; `SECURITY_INVARIANTS`, `KNOWN_LIMITATIONS`, `THREAT_MODEL`, `ARCHITECTURE`, `DECISIONS`, README, `evaluation/README.md`, memory refresh |
+
 ## How to continue (next session)
 
-Phase 9 — evaluation and calibration (blueprint §20-21): build the `evaluation/` suite
-that measures injection-detection precision/recall, DLP false positives/negatives, and
-risk-score calibration against labeled fixtures; record honest metrics and thresholds
-without weakening existing tests or controls. Keep ADR-008 through ADR-015 boundaries:
-policy remains the sole `ALLOW` producer, the gateway the only execution path, intent/
-DLP/input defense advisory or narrowing, approval a gate, and audit never an
-authorization input. Do not add real connectors, cloud model calls, streaming, or
-approved-action resumption as part of calibration. Keep all suites and the 8-step gate
-green, and update the status/limitations docs with measured results rather than claims.
+Phase 10 — security hardening and AI-assisted monitoring (blueprint §17, §20.3, §21):
+perform the threat-model review, add abuse/load tests, deterministic alert rules with
+tested actions, the optional local read-only audit summarizer with adversarial-log tests
+(no tool execution, policy edit, or authority), runbooks, and a CycloneDX SBOM generated
+from the locked dependency set and archived with the release/evaluation artifacts. Keep
+ADR-001 through ADR-016 boundaries: policy remains the sole `ALLOW` producer, the gateway
+the only execution path, intent/DLP/input defense advisory or narrowing, approval a gate,
+audit never an authorization input, and the evaluation harness measurement-only. Do not
+add real connectors, cloud model calls, streaming, approved-action resumption, a
+distributed limiter, or a new authority path. Risk calibration and public benchmark
+adapters remain separate future work, not Phase 10 requirements. Keep all suites, the
+evaluation quick/full runs, and the 8-step gate green; update the status/limitations docs
+with measured results rather than claims.

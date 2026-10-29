@@ -1,23 +1,24 @@
 # Threat Model
 
-Status: **partially implemented through Phase 8.** This document transcribes the v1
+Status: **partially implemented through Phase 9.** This document transcribes the v1
 threat model from blueprint v1.2 section 2 with an implementation-status column. Phases
-0a-8 delivered host authentication/replay defense, host-signed principal assertions, the
+0a-9 delivered host authentication/replay defense, host-signed principal assertions, the
 deterministic policy engine, the mock-tool gateway, advisory input-threat detection with
 trust labels and session signals, server-issued intent manifests with concrete action
 constraints, `risk-v2`, durable one-time human approvals, deterministic output DLP with
 destination-aware egress and complete-response release/suppression, the full audit
-taxonomy/verifier, and signed `/v1` routes with an optional local-model provider. Real
-connectors, general planning, approval delivery/UI, and an external audit anchor remain
-future work. The input detector now gates the request path and intent extraction is
-available through the mock or local provider, but the demo runtime and heuristic
-detection leave rows 1-4 Partial. The repository must not be presented as providing
-controls not marked here. Update the status column as each phase lands; every row
-eventually needs the "required test evidence" listed in the blueprint.
+taxonomy/verifier, signed `/v1` routes with an optional local-model provider, and a
+measurement-only evaluation harness. Real connectors, general planning, approval
+delivery/UI, risk calibration, and an external audit anchor remain future work. The
+input detector now gates the request path and intent extraction is available through the
+mock or local provider, but the demo runtime and heuristic detection leave rows 1-4
+Partial. The repository must not be presented as providing controls not marked here.
+Update the status column as each phase lands; every row eventually needs the "required
+test evidence" listed in the blueprint.
 
 ## Threats
 
-| # | Threat | Example | Primary defenses (target v1) | Required test evidence | Status (Phase 8) |
+| # | Threat | Example | Primary defenses (target v1) | Required test evidence | Status (Phase 9) |
 |---|---|---|---|---|---|
 | 1 | Direct prompt injection | User asks the model to ignore policy or reveal hidden instructions | Input signals, bounded system context, action policy, output checks | Direct-injection fixtures plus tool-denial tests | **Implemented (Phase 3/8, heuristic scope):** versioned heuristics raise typed findings with quoted-context downgrade; `/v1/requests` gates `REJECT`/`QUARANTINE` before intent and records redacted `INPUT_INSPECTED` evidence; gateway policy remains mandatory. Detection is not a safety proof and model-prompt isolation is not implemented |
 | 2 | Indirect prompt injection | A web page/email/document instructs exfiltration | Provenance labels, context isolation, detector signals, firewall enforcement | Malicious retrieved-content tests end-to-end | Partial (3/8): external email content is labelled `EXTERNAL_UNTRUSTED` even for authenticated requesters, and external-only heuristics flag assistant-directed instructions; `/v1/requests` gates quarantined input and actions remain gateway-enforced. End-to-end retrieved-content tests with a general agent remain future work |
@@ -77,3 +78,8 @@ body inside an authenticated user request remains external content).
    transformation linked by digest, and `BLOCK`/`REVIEW`/inspection failure suppress the
    whole response. Phase 8 returns the buffered result or a `response_blocked` error;
    no token streaming exists in v1 (ADR-003).
+7. Evaluation harness -> shipped services: the Phase 9 CLI is an offline, in-process
+   observer. It constructs the real services with mock adapters and an in-memory audit
+   recorder, adds no HTTP route, and cannot produce `ALLOW`, execute an ungated tool, or
+   write to the production audit chain. Evaluation fixtures are repository-owned and
+   synthetic; public benchmark adapters are absent (ADR-016).

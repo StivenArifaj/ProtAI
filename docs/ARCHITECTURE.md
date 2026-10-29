@@ -1,17 +1,19 @@
 # Architecture
 
-Status: **implemented through Phase 8.** This document describes the intended v1
+Status: **implemented through Phase 9.** This document describes the intended v1
 architecture from blueprint v1.2 (sections 3-4) and marks what actually exists today.
 Host authentication, host-signed principal assertions, the deterministic policy engine, the
 mock-tool gateway, advisory input threat detection with trust labels and session signals,
 server-issued intent manifests with concrete action constraints, `risk-v2`, durable
 one-time human approvals, mandatory output DLP with destination-aware egress and
 complete-response release/suppression, the full structured audit lifecycle with an
-exact-stored-bytes verifier, and signed `/v1` request/preview/approval-decision routes
-exist and are tested; a general agent planner, real connectors, cloud models, approval
-delivery/UI, and an external audit anchor do not. The detector is advisory, the intent
-layer can only narrow execution, and the local model is optional and never an
-authorization input. Only components marked Implemented below may be cited as controls.
+exact-stored-bytes verifier, signed `/v1` request/preview/approval-decision routes, and
+the Phase 9 measurement harness exist and are tested; a general agent planner, real
+connectors, cloud models, approval delivery/UI, risk calibration, and an external audit
+anchor do not. The detector is advisory, the intent layer can only narrow execution, the
+local model is optional and never an authorization input, and the evaluation harness is
+not an authority or an execution path. Only components marked Implemented below may be
+cited as controls.
 
 ## Logical flow (target v1)
 
@@ -102,7 +104,7 @@ enforcement is not an agent security system (blueprint section 3.2).
 | `soc/` | Alert-only analytics | Not implemented (Phase 10) |
 | `config/*.yaml` | Policies, thresholds, self-checks | **Implemented (1-3/6):** `policies.yaml`, `risk_thresholds.yaml`, 21-fixture `policy_self_checks.yaml`, exhaustive-disposition `input_defense.yaml`, and strict `output_dlp.yaml` (`1.0.1`: five patterns, limits, exact destination trust map) |
 | `migrations/`, `alembic.ini` | Alembic schema management | **Implemented (0b/3/5/7):** baseline + `session_security_state` + `approval_requests` + audit-metadata migrations; upgrade/downgrade verified; `alembic check` clean |
-| `evaluation/` | Dataset, metrics, reports | Not implemented (Phase 9) |
+| `evaluation/` | Dataset, metrics, reports | **Implemented (9, measurement only):** strict manifest loader with SHA256/count/split refusal, six synthetic JSONL fixtures (106 cases), six task runners over the real services with mock adapters/in-memory audit, confusion/latency metrics, direct-read provenance metadata, CLI, and authoritative JSON + derived Markdown reports; no route, authority, production audit write, public benchmark, DB/HTTP evaluation, or risk calibration |
 | `docs/adr/` | Decision records | **Implemented:** ADR-001..015 recorded |
 
 ## Import boundaries (enforced from Phase 1 onward; check.sh enforces prohibited patterns)

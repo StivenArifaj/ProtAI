@@ -1,7 +1,11 @@
 # Security Invariants
 
 The 25 mandatory invariants from blueprint v1.2 section 20.2, with honest status as of
-**Phase 8**. An invariant may only be marked implemented when its tests exist and pass.
+**Phase 9**. An invariant may only be marked implemented when its tests exist and pass.
+Phase 9 is measurement-only: it does not change any invariant's authority or status.
+Its authorization evaluation independently exercises #1, #5, #6, #9, #10, #21, and the
+gateway lifecycle against mock adapters, but the invariant evidence remains the contract
+test suites, not the evaluation matrices.
 
 Legend: **Implemented** (tests written and passing) / **Partial** (only the listed part)
 / **Not implemented** (planned phase noted).
@@ -258,3 +262,29 @@ approval delivery/UI, a shared/distributed rate-limit store, model-prompt or too
 DLP, streaming, cloud models, per-event audit signatures, an external audit anchor, or
 process isolation. Error envelopes for new routes are `{"error": {...}}`; middleware
 denials remain `{"detail": "<code>"}`.
+
+## Phase 9 scope statement
+
+Phase 9 adds no control and changes no invariant status:
+
+- the evaluation harness is offline and in-process; it adds no HTTP route, no principal,
+  no approval path, and no execution authorization;
+- it calls the shipped input-defense, DLP, risk, intent, and gateway services with the
+  existing mock adapters; authorization cases use an in-memory audit recorder and sink
+  store, never the production audit chain;
+- it cannot produce `ALLOW`, cannot widen a manifest/approval, and cannot turn a control
+  failure into a passed metric; task-specific labels keep detection, gating, release,
+  risk conformance, intent status, and actual side effects separate;
+- dataset/split verification refuses duplicate content, cross-split template leakage,
+  hash/count drift, and an invalid quick subset before any case runs;
+- reports are derived from observed outcomes only, with undefined denominators as
+  `null`/`N/A`, and the three measured hard-negative false positives are reported rather
+  than tuned away;
+- 64 evaluation tests cover hand-calculated metric arithmetic, dataset refusal,
+  metadata, JSON/Markdown derivation, CLI exit codes, and a real 15-case quick
+  regression; the existing 949 contract/security tests remain in the gate alongside
+  them (**1013 total**).
+
+Not claimed in Phase 9: public benchmark adapters, risk calibration, live-model accuracy,
+real-connector or HTTP/database evaluation, production latency, or exhaustive DLP
+coverage. See `docs/EVALUATION.md` and ADR-016.

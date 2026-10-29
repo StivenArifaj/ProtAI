@@ -4,12 +4,13 @@ Repository foundation for the AI Agent Security & Safety Platform. The authorita
 specification is `AI_Agent_Security_Platform_Master_Blueprint_v1.2.md` in the repository
 root; the archived v1.0 is under `archive/` and is superseded.
 
-**Current state: Phases 0a-8 complete and verified** (repository foundation; security
+**Current state: Phases 0a-9 complete and verified** (repository foundation; security
 foundation; typed contracts + deterministic policy engine; tool registry + enforced
 gateway; advisory input defense + context provenance; intent extraction + manifest
 validation; risk v2 + durable one-time human approvals; output DLP + destination-aware
 egress policy; full audit taxonomy + correlation + exact-bytes verification; signed
-HTTP ingress, bounded request runtime, and optional local-model intent extraction).
+HTTP ingress, bounded request runtime, and optional local-model intent extraction; and a
+reproducible six-task evaluation harness over a versioned synthetic dataset).
 Implemented today: enforced
 configuration validation; host HMAC authentication + replay rejection on the `/v1/*`
 path prefix; deterministic policy engine with 21 startup/readiness self-check fixtures;
@@ -32,15 +33,20 @@ first-class redacted DLP events, indexed correlation metadata, and a read-only v
 over the exact stored hash-chain bytes with typed tamper findings. Phase 8 adds
 host-signed principal assertions, the three documented `/v1` routes (execute, preview,
 approval decision), a bounded read-then-summarize demo runtime, per-process rate limits,
-and an optional strict Ollama-compatible local model provider. Detection is advisory and
-intent/approval/DLP can only narrow, gate, or raise sensitivity: none can produce an
-`ALLOW` or bypass policy. **No general agent planner, real connectors, cloud model
-adapter, classifier/entropy-based DLP, approval UI/delivery, process sandbox, external
-audit anchor, automated retention, or audit query API/UI exists yet** — do not present
-the system as providing them. See `docs/API_INTEGRATION.md`,
-`docs/IMPLEMENTATION_STATE.md`, `docs/SECURITY_INVARIANTS.md`,
-`docs/OUTPUT_DLP_FALSE_POSITIVES.md`, `docs/AUDIT_RETENTION_AND_DATA_HANDLING.md`, and
-`docs/KNOWN_LIMITATIONS.md`.
+and an optional strict Ollama-compatible local model provider. Phase 9 adds a
+measurement-only evaluation harness (`ai_security.evaluation`) with a 106-case synthetic
+dataset (42 dev / 34 validation / 30 holdout), a 15-case dev quick subset, six separate
+task matrices, exact risk-conformance and unauthorized-side-effect counts, and
+JSON/Markdown reports with provenance metadata. The measured baseline contains 3
+hard-negative input false positives, 0 unauthorized side effects, and 0 DLP leaks; it is
+not a risk-calibration result. Detection is advisory and intent/approval/DLP can only
+narrow, gate, or raise sensitivity: none can produce an `ALLOW` or bypass policy. **No
+general agent planner, real connectors, cloud model adapter, classifier/entropy-based
+DLP, approval UI/delivery, process sandbox, external audit anchor, automated retention,
+or audit query API/UI exists yet** — do not present the system as providing them. See
+`docs/API_INTEGRATION.md`, `docs/EVALUATION.md`, `docs/IMPLEMENTATION_STATE.md`,
+`docs/SECURITY_INVARIANTS.md`, `docs/OUTPUT_DLP_FALSE_POSITIVES.md`,
+`docs/AUDIT_RETENTION_AND_DATA_HANDLING.md`, and `docs/KNOWN_LIMITATIONS.md`.
 
 ## Prerequisites
 
@@ -52,11 +58,32 @@ the system as providing them. See `docs/API_INTEGRATION.md`,
 
 ```bash
 uv sync --frozen          # install from the committed lockfile
-uv run pytest             # full suite (949 unit/integration/security tests)
+uv run pytest             # full suite (1013 unit/integration/security/evaluation tests)
 bash scripts/check.sh     # full local gate: lockfile, ruff, mypy, pytest, invariant greps
 ```
 
 `scripts/check.sh` exits non-zero on any failure.
+
+## Evaluation
+
+The Phase 9 harness is measurement-only and runs offline against repository-owned
+synthetic fixtures. It does not add routes or bypass any control.
+
+```bash
+# Full 106-case dataset, all splits
+uv run --frozen python -m ai_security.evaluation \
+  --dataset evaluation/dataset_manifest.yaml --output-dir evaluation/reports
+
+# 15-case dev quick regression; exit 2 on any failed expectation
+uv run --frozen python -m ai_security.evaluation \
+  --dataset evaluation/dataset_manifest.yaml --output-dir evaluation/reports \
+  --split dev --quick --report-name quick_report --fail-on-failures
+```
+
+Reports are written as authoritative JSON plus derived Markdown in
+`evaluation/reports/`. See `docs/EVALUATION.md` and `evaluation/README.md` for the
+positive-class conventions, split rules, metric semantics, and measured limitations.
+Do not present the measured matrices as production accuracy or benchmark comparability.
 
 ## Local run without Docker
 
@@ -116,6 +143,7 @@ partially configured state.
 ## Documentation map
 
 - `docs/ARCHITECTURE.md` — component map and request lifecycle
+- `docs/EVALUATION.md` — six-task measurement contract, dataset/splits, measured baseline, limits
 - `docs/API_INTEGRATION.md` — signed `/v1` routes, host auth, status/error mapping, local model setup
 - `docs/THREAT_MODEL.md` — threat table and trust boundaries with implementation status
 - `docs/SECURITY_INVARIANTS.md` — the 25 mandatory invariants and their status

@@ -11,7 +11,8 @@ durable one-time approval contract; ADR-013 records the Phase 6 output-DLP and
 destination-aware egress contract; ADR-014 records the Phase 7 audit taxonomy,
 correlation metadata, and exact-bytes verifier contract; ADR-015 records the Phase 8
 FastAPI ingress, host-signed principal assertion, preview/approval routes, and local
-model provider contract.
+model provider contract; ADR-016 records the Phase 9 evaluation harness, positive-class
+labels, split discipline, and report contract.
 
 | ADR | Title | Status | Implementation phase |
 |---|---|---|---|
@@ -30,6 +31,7 @@ model provider contract.
 | [ADR-013](adr/ADR-013-output-dlp-and-egress.md) | Mandatory output DLP, exact destination trust, and complete-response release/suppression | Accepted | Phase 6 |
 | [ADR-014](adr/ADR-014-audit-taxonomy-and-verification.md) | Audit event taxonomy, derived correlation metadata, exact-stored-bytes verifier, and retention boundary | Accepted | Phase 7 |
 | [ADR-015](adr/ADR-015-fastapi-ingress-principal-and-local-model.md) | FastAPI ingress, host-signed principal assertions, preview/approval routes, and the opt-in local model provider | Accepted | Phase 8 |
+| [ADR-016](adr/ADR-016-evaluation-harness-and-dataset-contract.md) | Evaluation harness, task-specific positive classes, split discipline, and JSON-authoritative reports | Accepted | Phase 9 |
 
 ## Adding a new ADR
 

@@ -1,7 +1,7 @@
 # Known Limitations
 
-As of **Phase 8 (signed HTTP ingress and local model, 2026-10-28)**. This list must
-be updated every phase; anything not explicitly implemented must remain listed here or in
+As of **Phase 9 (evaluation harness, 2026-10-29)**. This list must be updated every
+phase; anything not explicitly implemented must remain listed here or in
 `docs/IMPLEMENTATION_STATE.md`.
 
 ## Security controls still absent or narrowed (do not claim otherwise)
@@ -20,8 +20,11 @@ be updated every phase; anything not explicitly implemented must remain listed h
    output or tool results. Detection accuracy is modest (regex heuristics over normalized
    text): homoglyphs are detected as indicators but not converted before matching,
    coverage is English-pattern based, quoted/educational content can still raise FLAG
-   findings, and novel/paraphrased or non-text attacks can be missed. Phase 6 output DLP
-   is a separate deterministic control at the gateway; it is not an input classifier.
+   findings, and novel/paraphrased or non-text attacks can be missed. Phase 9 measured
+   detection 14 TP / 3 TN / 3 FP / 0 FN and gating 13 TP / 5 TN / 1 FP / 1 FN on its
+   20-case input fixture; the three hard-negative false positives are reported in
+   `evaluation/reports/evaluation_report.json`, not tuned away. Phase 6 output DLP is a
+   separate deterministic control at the gateway; it is not an input classifier.
 3. **Approvals have a decision route, but no delivery/UI/resumption.** Phase 8 exposes
    `POST /v1/approvals/{approval_id}/decision` with a token carried only in the signed
    body, and `POST /v1/requests` creates an approval in-process for gateway-eligible
@@ -71,8 +74,10 @@ be updated every phase; anything not explicitly implemented must remain listed h
     bounded 2-4/5-8/9+ resource-breadth factor (5/10/15). Since Phase 6 the data class
     used for risk/policy is the *effective* class: the registration's declared class
     raised by deterministic DLP findings (never lowered). There are still no anomaly,
-    identity, session, or historical factors, and weights remain experimental; Phase 9
-    calibrates them. Thresholds (40/80) are unchanged. No score or approval can override
+    identity, session, or historical factors, and weights remain experimental. Phase 9
+    measures exact score/factor/band conformance and ordering only; it does **not**
+    calibrate the weights or thresholds, because no larger labeled calibration set
+    exists. Thresholds (40/80) are unchanged. No score or approval can override
     a hard denial. An adapter/registration change that does not change the policy or
     threshold files does not change the combined policy hash; rotate policy
     version/hash when registration facts change. DLP configuration changes rotate the
@@ -209,8 +214,52 @@ be updated every phase; anything not explicitly implemented must remain listed h
     text (after input inspection) and returns advisory constraints; its output is bounded,
     strictly validated, and unable to set authority, approvals, policy, or risk. A
     provider timeout/failure yields `503 model_unavailable` with no manifest. Prompt
-    privacy, model pinning, and output-quality evaluation are operator/evaluation-phase
-    concerns. No cloud model adapter exists.
+    privacy and model pinning remain operator concerns. Phase 9 measures only
+    deterministic transcript conformance, not live-model semantic accuracy, because the
+    suite runs offline. No cloud model adapter exists.
 42. **Streaming and real-time progress are absent.** Responses are buffered, inspected,
     and released or suppressed whole (ADR-003). No SSE/WebSocket endpoint exists, and the
     approval decision route does not execute the approved action.
+
+## Evaluation-specific limits (Phase 9)
+
+43. **The dataset is small, synthetic, and self-authored.** It has 106 cases
+    (42 dev / 34 validation / 30 holdout), written by the same project that implements
+    the controls. It supports reproducibility and regression, not an unbiased estimate of
+    field performance. The holdout was not used for tuning, but it is not an independent
+    third-party sample.
+44. **No public benchmark adapter exists.** InjecAgent, AgentDojo, or any other public
+    benchmark is not vendored or adapted; no result is comparable to a benchmark run
+    without matching the model, tools, scaffold, and configuration. Adding an adapter
+    requires a verified license, pinned version, reproducible download hash, and explicit
+    opt-in (ADR-016).
+45. **Authorization evaluation is in-process and mock-only.** It runs the real gateway,
+    registry, policy engine, and DLP over mock adapters, a fixed clock, an in-memory
+    audit recorder, and a sink store. It does not exercise PostgreSQL durability, HTTP
+    ingress, host authentication, approvals, or real connectors. The 20-case authorization
+    matrix is not evidence of real-connector completeness.
+46. **Intent evaluation is not live-model accuracy.** Cases use `MockIntentExtractor` and
+    deterministic transcript-backed local-provider outputs. An 18/18 status match
+    measures adapter/gating conformance on those fixtures, not the semantic quality of an
+    arbitrary local model.
+47. **Risk evaluation does not calibrate.** The 18 risk fixtures confirm exact scores,
+    factors, bands, and ordering for the current uncalibrated `risk-v2` weights. There is
+    no labeled calibration set, so no probability/calibration claim is made and the 40/80
+    thresholds remain operating points, not validated cutoffs.
+48. **Latency is local and in-process.** The reported p50/p95/p99 values are per-case
+    wall-clock measurements on the machine named in the report. They exclude HTTP,
+    database, network, real adapters, and concurrency, and are not production latency or
+    a throughput claim.
+49. **The measured detector false positives are deliberate.** Three hard-negative input
+    cases (`in-dev-quote-01`, `in-dev-readthis-01`, `in-val-quote-01`) fail their benign
+    expectation. They remain in the dataset and in the report; Phase 9 did not tune
+    detector patterns or dispositions to improve the metric.
+50. **DLP matrices are pattern-scoped.** The five deterministic DLP patterns pass the
+    fixtures designed to exercise them; this is not exhaustive secret/PII coverage and does
+    not measure semantic, entropy, multilingual, or unseen-secret detection.
+51. **Evaluation is not a CI service.** The 15-case quick subset runs inside the pytest
+    suite and the 8-step local gate; the full 106-case run is manual/scheduled. No
+    coverage measurement exists.
+52. **Report metadata names the checked-out source revision.** `metadata.git.commit` is
+    read at run time. A report committed afterwards names its parent revision unless
+    regenerated; the reproduction command and dataset hashes identify the exact run.
