@@ -1,10 +1,10 @@
 # Implementation Status
 
-**Last inspected: 2026-10-28** (Phase 8 completion; Phases 0a–7 completed earlier).
+**Last inspected: 2026-10-29** (Phase 9 completion; Phases 0a–8 completed earlier).
 This file is the operational source of truth for what exists. Evidence IDs (V1–V29 for
 0a/0b, V30–V35 for Phase 1, V36–V42 for Phase 2, V43–V50 for Phase 3, V51–V56 for
-Phase 4, V57–V62 for Phase 5, V63–V66 for Phase 6, V67–V71 for Phase 7, V72+ for
-Phase 8) are defined in
+Phase 4, V57–V62 for Phase 5, V63–V66 for Phase 6, V67–V71 for Phase 7, V72–V75 for
+Phase 8, V76+ for Phase 9) are defined in
 [TESTING_AND_VERIFICATION.md](TESTING_AND_VERIFICATION.md). Keep this file and
 [../docs/IMPLEMENTATION_STATE.md](../docs/IMPLEMENTATION_STATE.md) consistent whenever
 phase state changes.
@@ -22,8 +22,9 @@ phase state changes.
 | Phase 5 — Risk engine and approval workflow | **COMPLETE — VERIFIED** | [phases/PHASE_5_COMPLETE.md](phases/PHASE_5_COMPLETE.md); V57–V62 |
 | Phase 6 — Output DLP and egress policy | **COMPLETE — VERIFIED** | [phases/PHASE_6_COMPLETE.md](phases/PHASE_6_COMPLETE.md); V63–V66 |
 | Phase 7 — Audit persistence and verification | **COMPLETE — VERIFIED** | [phases/PHASE_7_COMPLETE.md](phases/PHASE_7_COMPLETE.md); V67–V71 |
-| Phase 8 — HTTP ingress, runtime, local model | **COMPLETE — VERIFIED** | [phases/PHASE_8_COMPLETE.md](phases/PHASE_8_COMPLETE.md); V72+ |
-| Phases 9–10 | **NOT IMPLEMENTED** | [PHASE_ROADMAP.md](PHASE_ROADMAP.md) |
+| Phase 8 — HTTP ingress, runtime, local model | **COMPLETE — VERIFIED** | [phases/PHASE_8_COMPLETE.md](phases/PHASE_8_COMPLETE.md); V72–V75 |
+| Phase 9 — Evaluation harness and dataset | **COMPLETE — VERIFIED** | [phases/PHASE_9_COMPLETE.md](phases/PHASE_9_COMPLETE.md); V76–V80 |
+| Phase 10 — Security hardening and monitoring | **NEXT — NOT IMPLEMENTED** | [PHASE_ROADMAP.md](PHASE_ROADMAP.md) |
 
 Repository state: **git repository** since 2026-10-19, branch `main`, linear history:
 baseline `41e10da` (Phase 0a) + Phase 0b commits `0aa11d9`…`d180b89` + docs/memory
@@ -47,7 +48,9 @@ memory/completion commit `5ae9ebe` and the final V71 status record; Phase 8 comm
 `5e20075` (ADR-015), `edda8ea` (principal assertion/resolver), `2bdf30f` (input audit
 evidence), `b561dd6` (gateway preview support), `2fa66fe` (settings), `f0f9b6b`
 (format), `940600e` (signed routes), `b4f8357` (local-provider implementation/settings),
-and `2f84269` (docs/memory). `origin` is `https://github.com/StivenArifaj/ProtAI.git`; every stage is
+and `2f84269` (docs/memory); Phase 9 commits `b8d6ae3` (harness/dataset/tests),
+`4acdbe0` (docs/ADR), and the final memory/status record commit recorded after the
+post-commit gate. `origin` is `https://github.com/StivenArifaj/ProtAI.git`; every stage is
 pushed to `origin main`.
 
 ## What exists (all VERIFIED)
@@ -69,12 +72,13 @@ pushed to `origin main`.
 | Approval workflow | `../src/ai_security/firewall/approval.py`, `identity/approver_rules.py`, `persistence/approval_repository.py` | Strict request/decision/consumption API; 256-bit token returned once and stored only as SHA-256; verified-principal rule evaluation with tenant/self-approval checks; TTL 60–86,400 s (default 900); lazy expiry; row-locked state machine + same-transaction audit; consumption binds the effective side-effect/data class; `APPROVAL_REQUESTED`/`_DECIDED`/`_CONSUMED`/`_EXPIRED` audit events; no routes/UI/token transport/revocation/sweeper |
 | Audit emission + verification | `../src/ai_security/audit/{models,writer,verifier}.py` | **Phase 7:** full §16.1 taxonomy (+`APPROVAL_CONSUMED`) with event-specific required fields; mandatory gateway lifecycle (`REQUEST_RECEIVED`→`TOOL_CALL_PROPOSED`→`EGRESS_INSPECTED`→`POLICY_EVALUATED`→`APPROVAL_CONSUMED` when granted→`TOOL_EXECUTION_STARTED`→completed/failed→`OUTPUT_INSPECTED`→response) plus approval/intent producers; first-class redacted `EGRESS_INSPECTED`/`OUTPUT_INSPECTED`/`RESPONSE_*` records; read-only `verify_chain` over exact stored bytes with typed content-free failures; **Phase 8:** ingress emits one `REQUEST_RECEIVED`, `PRINCIPAL_RESOLVED`/`PRINCIPAL_REJECTED` (rejection only), and redacted `INPUT_INSPECTED`; `SECURITY_ALERT_RAISED` remains producerless until Phase 10; no external anchor/retention automation/query API |
 | Policy engine | `../src/ai_security/firewall/policy_engine.py`, `policy/{models,loader,self_checks}.py`, `../config/{policies,risk_thresholds,policy_self_checks}.yaml` | Deterministic §10.2 engine over validated facts; safe YAML loader (duplicate-key rejection); versioned bundle (sha256 + combined hash); **21 fixtures** (7 mandated names + Phase 2 rows) at startup + readiness |
-| Tests | `../tests/conftest.py`, `unit/` (32 test files + helper), `integration/` (15 test files + conftest/helpers), `security/` (4 files) | **949 tests** (782 unit + 122 integration + 45 security), all passing (V72); DB-backed integration skips cleanly when PostgreSQL is unreachable |
+| Evaluation harness | `../src/ai_security/evaluation/{__init__,__main__,models,dataset,metrics,metadata,runners,report,cli}.py`, `../evaluation/` | **Phase 9, measurement only:** strict manifest + six synthetic JSONL fixtures (106 cases; 42 dev / 34 validation / 30 holdout; 15-case dev quick subset); SHA256/count/partition/template-leakage/duplicate-content/path refusal; six task runners over the real input-defense/DLP/risk/intent/gateway services with mock adapters, a counting wrapper, in-memory audit recorder, sink store, and fixed clock; task-specific confusion matrices, exact risk conformance/ordering, multiclass intent status, unauthorized side-effect and sink-write counts; nearest-rank in-process latency; §19.6 JSON-authoritative reports with derived Markdown, `null`/`N/A` undefined denominators, direct-read git/lock metadata, CLI exit codes; no route, authority, production audit write, DB/HTTP/auth/approval path, public benchmark, or calibration |
+| Tests | `../tests/conftest.py`, `unit/` (32 test files + helper), `integration/` (15 test files + conftest/helpers), `security/` (4 files), `evaluation/` (6 test files + helper) | **1013 tests** (782 unit + 122 integration + 45 security + 64 evaluation), all passing (V76); DB-backed integration skips cleanly when PostgreSQL is unreachable |
 | Quality gate | `../scripts/check.sh` | 8 steps incl. pinned Gitleaks 8.30.1 (dir+git) and constant-time confinement |
 | Containers | `../Dockerfile`, `../docker-compose.yml` | Digest pins; non-root uid 10001; COPY `config/ migrations/ alembic.ini`; Compose dev `HOST_AUTH_KEYS_JSON` |
 | Git | commits above | `gitleaks git` clean across history (V29/V37/V58/V61/V70/V73) |
-| Spec-adjacent docs | [../docs/](../docs/) (10 files + `adr/ADR-001..015`) | Status columns honest; `API_INTEGRATION.md` is the signed-route contract; matrix doc reflects gateway-enforced facts; ADR-014 records the Phase 7 taxonomy/verifier; ADR-015 records the Phase 8 assertion/routes/local-model contract; `AUDIT_RETENTION_AND_DATA_HANDLING.md` records stored/excluded fields, retention/export/backup/deletion, and integrity guarantees |
-| Memory (this directory) | `project_memory/*` | Updated 2026-10-28 for Phase 8 completion |
+| Spec-adjacent docs | [../docs/](../docs/) (11 files + `adr/ADR-001..016`) | Status columns honest; `EVALUATION.md` describes the six-task measurement contract, splits, metric semantics, measured baseline, and limits; `API_INTEGRATION.md` is the signed-route contract; matrix doc reflects gateway-enforced facts; ADR-014 records the Phase 7 taxonomy/verifier; ADR-015 records the Phase 8 assertion/routes/local-model contract; ADR-016 records the Phase 9 evaluation/label/split/report contract; `AUDIT_RETENTION_AND_DATA_HANDLING.md` records stored/excluded fields, retention/export/backup/deletion, and integrity guarantees |
+| Memory (this directory) | `project_memory/*` | Updated 2026-10-29 for Phase 9 completion |
 
 ## Security controls — what is actually enforced today
 
@@ -206,6 +210,16 @@ Implemented and tested (Phases 0a/0b/1/2/3/4/5/6/7):
   Any provider failure yields no manifest and `503 model_unavailable` with no tool
   events; a successful path still passes every gateway gate. No cloud adapter exists;
   `ALLOW_EXTERNAL_MODEL_CALLS=true` refuses startup.
+- **Evaluation is measurement only (9, ADR-016):** the CLI runs the shipped services
+  against a repository-owned synthetic dataset and writes authoritative JSON plus derived
+  Markdown. The dataset loader verifies hashes, counts, the exact split partition,
+  duplicate content, cross-split `(task, template_id)` leakage, path escapes, and the
+  quick-subset rules before executing anything. Detection and gating, DLP egress and
+  release, risk conformance/ordering, intent status, and authorization side effects are
+  reported separately; undefined denominators are `null`/`N/A`, never zero. Authorization
+  runs the real gateway/registry/policy/DLP with mock adapters and an in-memory audit
+  recorder, never the production chain, HTTP/auth, PostgreSQL, or approvals. The harness
+  adds no route, authority, execution path, threshold change, or public benchmark claim.
 
 NOT implemented (do not claim otherwise): general agent planning (the runtime executes
 only the fixed two-call demo plan), real connectors, approved-action resumption through
@@ -215,50 +229,66 @@ classifier/entropy/semantic/multilingual DLP, per-resource classification metada
 model-prompt or adapter-internal content inspection, response-review transport, process
 isolation/sandbox, an **external audit checkpoint/anchor**, automated audit
 retention/purging, an audit query API/UI, per-event signatures, a producer for
-`SECURITY_ALERT_RAISED`, cloud model calls, streaming, SOC, and a consumer that feeds
-detector findings/trust labels into a model prompt. See
+`SECURITY_ALERT_RAISED`, cloud model calls, streaming, SOC, a consumer that feeds
+detector findings/trust labels into a model prompt, risk calibration or a validated
+probability model, public benchmark adapters, real-connector/HTTP/PostgreSQL evaluation,
+and production latency/throughput measurements. See
 [../docs/SECURITY_INVARIANTS.md](../docs/SECURITY_INVARIANTS.md) (the file is authoritative
 for every row).
 
-## Current-session verification (2026-10-28, fresh runs)
+## Current-session verification (2026-10-29, fresh runs)
 
 All PASS — full commands and results in [TESTING_AND_VERIFICATION.md](TESTING_AND_VERIFICATION.md):
 
-- `uv run --frozen pytest -q` → **949 passed** (782 unit + 122 integration + 45
-  security), including 28 signed `/v1` route tests, 9 API-support unit tests, 36
-  provider tests, and local-provider failure/success integration against real
-  PostgreSQL (V72).
-- `uv run --frozen mypy` → clean, 73 source files; `ruff check`/`format --check` clean
-  (188 files formatted; V73).
-- `uv lock --check` → consistent after moving `httpx2` to runtime dependencies; 44
-  packages resolved (V73).
-- Full `bash scripts/check.sh` (pre-commit) → exit 0, all 8 steps; **949 passed**;
-  Gitleaks 8.30.1 dir+git "no leaks found" (48 commits scanned); prohibited-pattern and
-  constant-time-confinement checks clean (V74).
-- Targeted Phase 8 suites (`test_api_requests`, `test_api_support`,
-  `test_intent_providers`, `test_principal_assertion`, `test_principal_resolver`,
-  `test_settings`) → PASS (route contracts, rate limits, approval decisions, preview
-  non-execution, provider strictness/failure mapping, assertion binding, settings
-  bounds; V75).
-- Phase 7 evidence (V67–V71) and Phase 6 evidence (V63–V66) retained; Phase 8 adds no
-  migration (head remains `f7a8b9c0d1e2`).
+- `uv run --frozen pytest -q` → **1013 passed** (782 unit + 122 integration + 45
+  security + 64 evaluation), including hand-calculated metric tests and the real
+  15-case quick-subset regression (V76).
+- `uv run --frozen pytest tests/evaluation -q` → **64 passed** (dataset hash/count/
+  partition/template-leakage/duplicate refusal, metrics, metadata, report derivation,
+  CLI exit codes and module-style command recording, quick regression; V77).
+- Full evaluation command (row 76 in `../docs/IMPLEMENTATION_STATE.md`) → 106 cases /
+  6 tasks; 3 expected hard-negative input failures; 0 unauthorized side effects; 0 DLP
+  leak failures; 0 detector errors; authoritative JSON + derived Markdown written (V78).
+- Quick evaluation command → 15 dev cases / 6 tasks; 0 failures; exit 0; reports written
+  (V78).
+- `bash scripts/check.sh` (pre-commit) → exit 0, all 8 steps; **1013 passed**; ruff
+  format/lint clean (211 files); mypy clean (82 source files); Gitleaks 8.30.1 dir+git
+  no leaks; prohibited-pattern and constant-time-confinement checks clean (V79).
+- Phase 8 evidence (V72–V75), Phase 7 (V67–V71), and earlier evidence retained; Phase 9
+  adds no migration (head remains `f7a8b9c0d1e2`) and no application route.
+
+Measured baseline (dataset `2026.10.28-v1`): input detection 14 TP / 3 TN / 3 FP / 0 FN;
+gating 13 TP / 5 TN / 1 FP / 1 FN; DLP egress 11 protected / 5 benign with 0 leaks; DLP
+response 10 protected (6 redacted, 4 suppressed) / 4 benign with 0 leaks; risk 18/18
+exact score/factor/band, 0 ordering violations; intent 18/18 status matches, 0
+unexpected/missed manifests, 11 provider calls, 1 retry; authorization 20/20 expected
+outcomes, 15 must-not-execute blocked, 5 expected executions, 0 unauthorized executions,
+1 expected/observed sink write, 93 in-memory audit events. These are in-process
+measurements on a small synthetic dataset, not calibration or production estimates.
 
 ## Environment (verified this session)
 
 macOS (darwin); uv 0.13.x; Python 3.12.15; Docker 29.3.1 / Compose v5.1.1 (Docker
 Desktop running); PostgreSQL 17.2 (`protai-db-1`) on 127.0.0.1:5432; git 2.54.0;
-Gitleaks 8.30.1 installed; no markdown linter installed. The project virtualenv was
-recreated at `/Users/stiven/Desktop/ProtAI/.venv` after the repository moved. Current
-stack state: `db` running (preserved for tests), `api` stopped.
+Gitleaks 8.30.1 installed; no markdown linter installed. The project virtualenv is at
+`/Users/stiven/Desktop/ProtAI/.venv`. Current stack state: `db` running (preserved for
+tests), `api` stopped. Phase 9 evaluation needs neither the database nor the Docker
+stack.
 
-## Deferred to Phase 9 (planned, not implemented)
+## Deferred beyond Phase 9 (not implemented)
 
-Evaluation and calibration (blueprint §20 and §21 Phase 9): build `evaluation/` with
-labeled fixtures and honest metrics for injection-detection precision/recall, DLP false
-positives/negatives, and risk-score calibration; document measured results and adjust
-thresholds only with evidence. Do not add real connectors, cloud model calls, streaming,
-approved-action resumption, a distributed rate-limit store, or any new authority path as
-part of calibration. Policy remains the sole `ALLOW` producer; the gateway remains the
-only execution path; input defense/intent/DLP stay advisory or narrowing; approval stays
-a gate; audit is never an authorization input. Preserve ADR-008 through ADR-015 and keep
-all suites/gate green. Read blueprint §21 Phase 9 before starting.
+Risk calibration and public benchmark adapters remain separate future work. Phase 9
+measured exact conformance and ordering but did not calibrate the `risk-v2` weights or
+the 40/80 thresholds, and it did not add a public benchmark adapter because no license,
+pinned version, and reproducible download hash was verified. Real-connector, HTTP/auth,
+PostgreSQL, approval-resumption, and production-latency evaluation also remain absent.
+
+Deferred to Phase 10: threat-model review, abuse/load tests, deterministic alert rules
+with tested actions, the optional local read-only audit summarizer with adversarial-log
+tests, runbooks, and a CycloneDX SBOM from the locked dependency set. Preserve ADR-001
+through ADR-016 boundaries: policy remains the sole `ALLOW` producer; the gateway the
+only execution path; input defense/intent/DLP advisory or narrowing; approval a gate;
+audit never an authorization input; evaluation measurement-only. Do not add real
+connectors, cloud model calls, streaming, approved-action resumption, a distributed
+limiter, or a new authority path. Read blueprint §§17, 20.3, and 21 Phase 10 before
+starting.

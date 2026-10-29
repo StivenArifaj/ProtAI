@@ -2,6 +2,34 @@
 
 Concise, dated history of project activity. Newest first.
 
+## 2026-10-29
+
+- **Phase 9 (evaluation harness and dataset) implemented and verified:** new installed
+  `ai_security.evaluation` package (strict dataset loader, six task runners,
+  confusion/latency metrics, direct-read provenance metadata, CLI, JSON-authoritative
+  and Markdown-derived reports), a repository-owned synthetic dataset of **106 cases**
+  across **42 dev / 34 validation / 30 holdout** with a **15-case dev-only quick subset**,
+  and **64 evaluation tests** including hand-calculated metric arithmetic and a real
+  quick-subset regression. The harness is measurement-only: it adds no route, authority,
+  execution path, threshold change, or production audit write; authorization cases run
+  the real gateway/registry/policy/DLP with mock adapters and an in-memory audit recorder.
+  Measured baseline: 3 hard-negative input false positives, 0 unauthorized side effects,
+  0 DLP leak failures, 0 detector errors; risk measured exact conformance/ordering only
+  (no calibration); intent measured conformance, not live-model accuracy. Contract in
+  ADR-016; documentation in [../docs/EVALUATION.md](../docs/EVALUATION.md) and
+  [../evaluation/README.md](../evaluation/README.md). Evidence V76–V79 in
+  [TESTING_AND_VERIFICATION.md](TESTING_AND_VERIFICATION.md) — **1013 tests** (782 unit +
+  122 integration + 45 security + 64 evaluation), 8/8 gate, mypy 82 files, no new
+  migration (`f7a8b9c0d1e2`). Phase record:
+  [phases/PHASE_9_COMPLETE.md](phases/PHASE_9_COMPLETE.md).
+- **Phase 9 honest limits:** the dataset is small, synthetic, and self-authored; no
+  public benchmark adapter exists; authorization evaluation is in-process/mock-only and
+  does not exercise PostgreSQL, HTTP/auth, approvals, or real connectors; intent is
+  deterministic transcript conformance, not live-model semantic accuracy; risk weights
+  and thresholds are still uncalibrated; latency is local/in-process; DLP coverage is
+  pattern-scoped; and the three detector false positives remain reported rather than
+  tuned away.
+
 ## 2026-10-28
 
 - **Phase 8 (HTTP ingress, bounded runtime, local model) implemented and verified:** new

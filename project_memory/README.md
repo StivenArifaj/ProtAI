@@ -53,7 +53,7 @@ rule and decision procedure.
 Rules: never upgrade a label without running the evidence; never mark something
 implemented because a document describes it; record discrepancies instead of hiding them.
 
-## Current snapshot (2026-10-28)
+## Current snapshot (2026-10-29)
 
 - **Phase 0a (repository foundation): COMPLETE and VERIFIED.** See
   [phases/PHASE_0A_COMPLETE.md](phases/PHASE_0A_COMPLETE.md).
@@ -78,6 +78,10 @@ implemented because a document describes it; record discrepancies instead of hid
 - **Phase 8 (HTTP ingress, bounded runtime, local model): COMPLETE and VERIFIED.** See
   [phases/PHASE_8_COMPLETE.md](phases/PHASE_8_COMPLETE.md); ADR-015;
   [../docs/API_INTEGRATION.md](../docs/API_INTEGRATION.md).
+- **Phase 9 (evaluation harness and dataset): COMPLETE and VERIFIED.** See
+  [phases/PHASE_9_COMPLETE.md](phases/PHASE_9_COMPLETE.md); ADR-016;
+  [../docs/EVALUATION.md](../docs/EVALUATION.md) and
+  [../evaluation/README.md](../evaluation/README.md).
 - The repository is **under git** (baseline `41e10da` + every phase series on `main`);
   `origin` = `https://github.com/StivenArifaj/ProtAI.git`, pushed every stage.
 - Enforced today: `/v1/*` host HMAC authentication + atomic replay rejection + request
@@ -95,12 +99,14 @@ implemented because a document describes it; record discrepancies instead of hid
   constraints and trusted-timezone dates (mock or optional strict local provider);
   durable one-time human approvals with a decision route and row-locked consumption;
   mandatory two-phase output DLP/egress with destination trust and whole-response
-  release/redaction/suppression; pinned Gitleaks in the gate. **Absent:** general agent
-  planning, real connectors, approval delivery/UI/revocation/expiry sweeper,
-  approved-action resumption, a shared rate limiter, cloud model calls, streaming,
-  external audit anchor/retention automation, process isolation, an evaluation harness,
-  and a SOC — do not present the system as providing them.
-- **Phase 9 (evaluation harness and benchmark adapters) is the next task** — see
+  release/redaction/suppression; a measurement-only harness with a versioned 106-case
+  synthetic dataset and reproducible JSON/Markdown reports; pinned Gitleaks in the gate.
+  **Absent:** general agent planning, real connectors, approval
+  delivery/UI/revocation/expiry sweeper, approved-action resumption, a shared rate
+  limiter, cloud model calls, streaming, external audit anchor/retention automation,
+  process isolation, risk calibration, public benchmark adapters, and a SOC — do not
+  present the system as providing them.
+- **Phase 10 (security hardening and AI-assisted monitoring) is the next task** — see
   [NEXT_SESSION.md](NEXT_SESSION.md).
 
 ## Files in this directory
@@ -110,7 +116,7 @@ implemented because a document describes it; record discrepancies instead of hid
 | [README.md](README.md) | Entry point, reading order, update rules. |
 | [PROJECT_CONTEXT.md](PROJECT_CONTEXT.md) | Identity, scope, non-goals, stack, operator context. |
 | [IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md) | Source of truth for what exists now (labels + evidence pointers). |
-| [NEXT_SESSION.md](NEXT_SESSION.md) | Exact handoff for the next task (Phase 9). |
+| [NEXT_SESSION.md](NEXT_SESSION.md) | Exact handoff for the next task (Phase 10). |
 | [ARCHITECTURE_MAP.md](ARCHITECTURE_MAP.md) | Current implemented architecture and target v1 map. |
 | [SECURITY_REQUIREMENTS.md](SECURITY_REQUIREMENTS.md) | Complete security contract with status per control and blueprint refs. |
 | [DECISION_LOG.md](DECISION_LOG.md) | Consolidated decisions; links to ADRs (ADRs live in `docs/adr/`). |

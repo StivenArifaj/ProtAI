@@ -5,7 +5,7 @@ blueprint. Full narrative and the per-request lifecycle: [../docs/ARCHITECTURE.m
 (mark status per component there as well). **Nothing under "Target v1" may be claimed as
 existing.**
 
-## Implemented today (Phases 0a–8 — VERIFIED 2026-10-28)
+## Implemented today (Phases 0a–9 — VERIFIED 2026-10-29)
 
 Components:
 
@@ -166,6 +166,21 @@ Components:
     reservation, `NO_ACTION` for unsupported manifests) and `ReceiptedToolExecutor`;
   - `routes_requests.py` — `POST /v1/requests`, `POST /v1/tool-calls/evaluate`, and
     `POST /v1/approvals/{approval_id}/decision`.
+- `ai_security.evaluation` (`models`, `dataset`, `metrics`, `metadata`, `runners`,
+  `report`, `cli`, `__main__`) + `../evaluation/`: **Phase 9, measurement only.** Strict
+  manifest loader (version/seed/provenance/CC0-1.0/SHA256/counts) with refusal of path
+  escapes, duplicate keys/IDs/content, cross-split `(task, template_id)` leakage,
+  non-partition/disagreeing splits, and invalid quick subsets before any case runs. Six
+  task runners observe the shipped services: input detection/gating, DLP egress, DLP
+  response, risk conformance/ordering, intent status (mock/transcript provider), and
+  authorization through the real `ToolGateway`/registry/policy/`OutputDefenseService`
+  with mock adapters, a call-counting wrapper, an in-memory audit recorder, a sink store,
+  and a fixed clock. Hand-calculated confusion/latency metrics (`null`/`N/A` undefined
+  denominators; nearest-rank p50/p95/p99), direct-read `.git`/`uv.lock` metadata, and
+  JSON-authoritative/Markdown-derived reports. CLI-only; no route, app wiring, authority,
+  production audit write, PostgreSQL/HTTP/auth/approval path, or calibration. A 15-case
+  dev quick subset runs inside pytest; the full 106-case run is manual/scheduled.
+  (ADR-016; `../docs/EVALUATION.md`.)
 - `ai_security.api.routes_health`: `GET /health/live` → 200 `{"status":"alive"}`;
   `GET /health/ready` → 200/503 with `checks: {config, database, policy_self_checks}`
   plus `policy_version`/`policy_hash`; only booleans and version metadata, never
@@ -248,7 +263,7 @@ Component map with planned phases:
 | `audit/` (hash chain, taxonomy, verifier) | 7 (scaffold 0b, emission 2/5/6/8) | **VERIFIED (7/8)** — full §16.1 taxonomy/conditional fields, mandatory gateway/approval/intent lifecycle with fail-closed gating, first-class redacted DLP events, derived correlation metadata, exact-stored-bytes verifier, ingress producers (ADR-014/015); no external anchor/retention automation/query API | Serialized append, verifier |
 | `api/` `/v1/*` routes | 8 | **VERIFIED (8)** — signed request/evaluate/approval-decision routes, bounded runtime, rate limits, error envelopes, captured principal assertions (ADR-015); no streaming/approval resumption | Request/tool/approval endpoints |
 | `soc/` (alert-only) | 10 | NOT IMPLEMENTED | Deterministic alerts; read-only analyzer |
-| `evaluation/` | 9 | NOT IMPLEMENTED | Dataset, metrics, reproducible reports |
+| `evaluation/` + `ai_security/evaluation/` | 9 | **VERIFIED (9, measurement only)** — strict synthetic dataset/splits, six task runners over shipped services, derived confusion/latency metrics, JSON + Markdown reports, CLI, quick regression; no route/authority/calibration/public benchmark (ADR-016) | Dataset, metrics, reproducible reports |
 
 Requested path today (implemented route surface): `/health/live`, `/health/ready`, and
 the three signed `/v1` routes. `/v1/*` is guarded by the host-auth middleware before

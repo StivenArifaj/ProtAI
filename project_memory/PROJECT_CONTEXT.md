@@ -51,7 +51,7 @@ These are settled design decisions, not open questions for an implementer to re-
 - SOC analyzer read-only/alert-only; attacker-influenced fields treated as untrusted
   (§17, ADR-004).
 
-## Stack (current, verified through Phase 8)
+## Stack (current, verified through Phase 9)
 
 - Python `>=3.12,<3.13` (3.12.15 in use), managed with uv 0.13.1.
 - FastAPI + uvicorn; pydantic / pydantic-settings; asyncpg + SQLAlchemy 2.x async
@@ -60,6 +60,12 @@ These are settled design decisions, not open questions for an implementer to re-
 - pytest + httpx2 (needed by Starlette 1.9's `TestClient`), ruff, mypy (strict, `src/`),
   Gitleaks 8.30.1 (pinned in the gate).
 - `scripts/check.sh` is the local quality gate (8 steps); no CI system is configured.
+- Phase 9 evaluation is a separate installed package (`ai_security.evaluation`) plus
+  top-level `evaluation/` artifacts. It is CLI-only, needs neither Docker nor
+  PostgreSQL, and is explicitly measurement-only. The full 106-case run is manual or
+  scheduled; the 15-case dev quick subset runs inside the gate. Reports are
+  JSON-authoritative with derived Markdown; no public benchmark adapter or calibration
+  exists yet.
 
 ## Operator and environment
 

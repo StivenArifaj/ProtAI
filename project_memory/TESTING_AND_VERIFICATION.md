@@ -3,8 +3,8 @@
 Rules: never claim a result that was not produced by a command actually run. Fresh
 re-runs and historical records are kept in separate tables. Evidence IDs (V1–V29 for
 0a/0b; V30–V35 for Phase 1; V36–V42 for Phase 2; V43–V50 for Phase 3; V51–V56 for
-Phase 4; V57–V62 for Phase 5; V63–V66 for Phase 6; V67–V71 for Phase 7; V72+ for
-Phase 8) are referenced from
+Phase 4; V57–V62 for Phase 5; V63–V66 for Phase 6; V67–V71 for Phase 7; V72–V75 for
+Phase 8; V76+ for Phase 9) are referenced from
 [IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md) and the phase records.
 
 ## How to verify (documented commands)
@@ -12,7 +12,9 @@ Phase 8) are referenced from
 | Command | What it checks | Expected |
 |---|---|---|
 | `uv sync --frozen` | lockfile/install consistency | installs with no resolution drift |
-| `uv run pytest` | unit/integration/security tests | 949 passed (DB-backed integration skips cleanly if PostgreSQL is unreachable) |
+| `uv run pytest` | unit/integration/security/evaluation tests | 1013 passed (DB-backed integration skips cleanly if PostgreSQL is unreachable) |
+| `uv run python -m ai_security.evaluation --dataset evaluation/dataset_manifest.yaml --output-dir evaluation/reports` | full evaluation (blueprint §19) | 106 cases / 6 tasks; JSON + Markdown written; 3 documented hard-negative input failures |
+| `uv run python -m ai_security.evaluation --dataset evaluation/dataset_manifest.yaml --output-dir evaluation/reports --split dev --quick --report-name quick_report --fail-on-failures` | 15-case dev-only quick regression | exit 0; 0 failed expectations; reports written |
 | `bash scripts/check.sh` | full local gate (8 steps) | exit 0; prints "All checks passed." |
 | `uv run alembic upgrade head` | migrations (needs §5.4 env; host `db`→`127.0.0.1`) | applies baseline through `f7a8b9c0d1e2`; second run reports already at head |
 | `docker compose config -q` | Compose file syntax | exit 0 |
@@ -142,6 +144,49 @@ evidence was moved off `POLICY_EVALUATED`/execution events onto first-class insp
 response events. The newest-event truncation limit is tested and documented rather than
 hidden.
 
+## Fresh evidence (2026-10-29, Phase 9 session)
+
+| ID | Command / check | Result |
+|---|---|---|
+| V76 | `uv run --frozen pytest -q` | PASS — **1013 passed** (782 unit + 122 integration + 45 security + 64 evaluation), including the real 15-case quick-subset regression; DB-backed suites ran against Compose PostgreSQL |
+| V77 | `uv run --frozen pytest tests/evaluation -q` | PASS — **64 passed** (hand-calculated metric arithmetic, dataset hash/count/partition/template-leakage/duplicate refusal, metadata `null` behavior, JSON-to-Markdown derivation, CLI exit codes, module-style command recording, quick regression) |
+| V78 | `uv run --frozen python -m ai_security.evaluation --dataset evaluation/dataset_manifest.yaml --output-dir evaluation/reports` and the `--split dev --quick --report-name quick_report --fail-on-failures` run | PASS — full run: 106 cases, 6 tasks, 3 expected hard-negative input failures, 0 unauthorized side effects (rate 0.000), 0 DLP leak failures, 0 detector errors; quick run: 15 dev cases, 0 failures, exit 0. Both wrote authoritative JSON + derived Markdown |
+| V79 | `bash scripts/check.sh` (pre-commit) | PASS — exit 0, all 8 steps; **1013 passed**; ruff format/lint clean (211 files); mypy clean (82 source files); Gitleaks 8.30.1 dir+git "no leaks found"; prohibited-pattern and constant-time-confinement checks clean |
+| V80 | Post-commit `bash scripts/check.sh` after the Phase 9 commits | PASS — recorded after the commits exist (see the phase record and `../docs/IMPLEMENTATION_STATE.md` row 79) |
+
+Phase 9 adds **no migration** (head remains `f7a8b9c0d1e2`), **no route**, and no
+application wiring. The harness is an installed package with a CLI-only entry point. The
+full run's three failures are the intentional hard-negative input false positives
+(`in-dev-quote-01`, `in-dev-readthis-01`, `in-val-quote-01`); they were not tuned away.
+Measured baseline (dataset `2026.10.28-v1`, 106 cases; 42 dev / 34 validation / 30
+holdout):
+
+| Task | Measured result |
+|---|---|
+| Input detection | 14 TP / 3 TN / 3 FP / 0 FN (precision 0.824, recall 1.000, FPR 0.500); gating 13 TP / 5 TN / 1 FP / 1 FN (precision 0.929, recall 0.929, FPR 0.167) |
+| DLP egress | 11 protected / 5 benign; 0 leak failures |
+| DLP response | 10 protected (6 redacted, 4 suppressed) / 4 benign; 0 leak failures |
+| Risk | 18/18 exact score+factors+band; 0 ordering violations; conformance only, not calibration |
+| Intent | 18/18 status matches; 0 unexpected/missed manifests; 11 provider calls; 1 retry; mock/transcript conformance, not live-model accuracy |
+| Authorization | 20/20 expected outcomes; 15 must-not-execute blocked; 5 expected executions; 0 unauthorized executions; 1 expected/observed sink write; 93 in-memory audit events |
+
+Latency in the report is in-process per-case wall-clock time summarized with nearest-rank
+p50/p95/p99 and sample counts; it is explicitly labelled local and is not a production
+HTTP/database/concurrency measurement. Full details and limitations:
+[../docs/EVALUATION.md](../docs/EVALUATION.md), [../evaluation/README.md](../evaluation/README.md),
+and ADR-016.
+
+Development-time findings settled in Phase 9: dataset fixtures are synthetic originals
+(CC0-1.0) with explicit provenance/license/template/split metadata; the loader refuses
+cross-split `(task, template_id)` leakage, exact duplicate content, hash/count drift, and
+invalid quick subsets before execution; undefined denominators serialize as `null` in
+JSON and `N/A` in Markdown, never zero; git metadata is read directly from `.git` without
+a child process and is `null` when unavailable; the CLI records the actual `sys.argv`
+invocation; and a synthetic credential value was shortened to `abcdef` to avoid a
+Gitleaks `generic-api-key` false positive without adding an allowlist (DLP still matches
+it, and the manifest hash was updated). The three hard-negative false positives are
+reported, not tuned.
+
 ## Fresh evidence (2026-10-28, Phase 8 session)
 
 | ID | Command / check | Result |
@@ -265,7 +310,7 @@ iterations, at the ruff format and lint steps. Removing the file restored exit 0
 The Phase 0b gate additionally fails if Gitleaks is missing or version-mismatched
 (deliberate pin, 8.30.1).
 
-## Test inventory (949 tests)
+## Test inventory (1013 tests)
 
 Unit (`tests/unit/`):
 
@@ -439,6 +484,32 @@ Integration (`tests/integration/`):
 - `conftest.py` + `db_helpers.py` — auto-create `firewall_test`, run Alembic, skip
   cleanly when PostgreSQL is unreachable; NullPool harness for asyncio.run tests.
 
+Evaluation (`tests/evaluation/`, 64 tests):
+
+- `test_metrics.py` — hand-calculated binary metrics (precision/recall/F1/accuracy/FPR/
+  FNR), zero-denominator `None` semantics, sparse multiclass union labels, nearest-rank
+  p50/p95/p99 and sample counts.
+- `test_dataset.py` — repository manifest loads (106 cases, expected counts/splits),
+  strict schema/version/provenance/license checks, SHA256/count drift refusal, path
+  escape refusal, duplicate key/ID and exact duplicate content refusal, cross-split
+  `(task, template_id)` leakage refusal, non-partition/disagreeing split refusal,
+  unknown split names, and dev-only/≤30/all-task quick-subset rules.
+- `test_metadata.py` — direct `.git`/refs and `uv.lock` reads, missing-file `null`
+  behavior, Python/platform/environment metadata, no fabricated values.
+- `test_report.py` — JSON-authoritative report shape (§19.6 counts, matrices, metric
+  definitions/values, latency, failures/retries, unauthorized side effects, skipped
+  tests, limitations, command), Markdown derivation, and `N/A` for undefined values.
+- `test_cli.py` — exit codes (`0` report, `1` dataset/verification refusal before
+  execution, `2` `--fail-on-failures`), report-name safety, module-style command
+  recording, and the `--quick`/`--split dev` contract.
+- `test_quick_regression.py` — runs the real 15-case dev quick subset through the CLI
+  runner; asserts all six tasks, 0 failures, and report emission (no PostgreSQL).
+- `conftest.py` — builds minimal hash-consistent temporary datasets for loader/report
+  tests and supplies the shipped dataset path.
+
+Evaluation runs need neither PostgreSQL nor Docker. The full 106-case run is manual/
+scheduled; the quick subset runs inside pytest and therefore inside `check.sh`.
+
 ## Verification gaps (be honest about these)
 
 - No coverage measurement; no CI system (`check.sh` is the gate).
@@ -455,3 +526,30 @@ Integration (`tests/integration/`):
   and documented, not claimed away.
 - Metadata backfill is best-effort; corrupt historical payloads stay unbackfilled and are
   surfaced only when the verifier is run.
+- The evaluation dataset is small, synthetic, and self-authored (106 cases), and its
+  42/34/30 split is reproducibility discipline rather than an independent third-party
+  sample; no field-performance or production estimate follows from it.
+- No public benchmark adapter exists (license/pinned version/reproducible download hash
+  were not verified), so no result is comparable to InjecAgent, AgentDojo, or any other
+  public benchmark.
+- Authorization evaluation runs the real gateway/registry/policy/DLP in-process with mock
+  adapters and an in-memory audit recorder; it does not exercise PostgreSQL, HTTP
+  ingress, host authentication, approvals, or real connectors. Approval behavior remains
+  covered by the Phase 5 suites, and shipped capabilities produce no `ASK_USER` row.
+- Intent evaluation uses `MockIntentExtractor` and deterministic transcript-backed
+  local-provider outputs; it measures adapter/gating conformance, not live local-model
+  semantic accuracy.
+- Risk evaluation measures exact score/factor/band conformance and ordering; it is not
+  calibration, and the `risk-v2` weights and 40/80 thresholds remain uncalibrated.
+- DLP measurements are pattern-scoped (five deterministic detectors): 0 leaks on these
+  fixtures is not exhaustive secret/PII coverage.
+- Evaluation latency is local in-process wall-clock time; it excludes HTTP, database,
+  network, real adapters, and concurrency. There is no production latency/throughput or
+  SLO claim.
+- The three hard-negative input false positives and the one gating miss are deliberate
+  reported findings; no detector, policy, DLP, risk, or model threshold was changed in
+  Phase 9.
+- The full evaluation run is not a CI service and has no coverage measurement; only the
+  15-case quick subset runs in the gate. `metadata.git.commit` names the checked-out
+  revision at run time, so a report committed afterwards names its parent unless
+  regenerated.
