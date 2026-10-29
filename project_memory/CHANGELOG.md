@@ -17,7 +17,7 @@ Concise, dated history of project activity. Newest first.
   0 DLP leak failures, 0 detector errors; risk measured exact conformance/ordering only
   (no calibration); intent measured conformance, not live-model accuracy. Contract in
   ADR-016; documentation in [../docs/EVALUATION.md](../docs/EVALUATION.md) and
-  [../evaluation/README.md](../evaluation/README.md). Evidence V76–V79 in
+  [../evaluation/README.md](../evaluation/README.md). Evidence V76–V80 in
   [TESTING_AND_VERIFICATION.md](TESTING_AND_VERIFICATION.md) — **1013 tests** (782 unit +
   122 integration + 45 security + 64 evaluation), 8/8 gate, mypy 82 files, no new
   migration (`f7a8b9c0d1e2`). Phase record:

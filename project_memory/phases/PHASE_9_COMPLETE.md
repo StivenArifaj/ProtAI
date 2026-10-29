@@ -6,8 +6,8 @@
 **Documentation:** [../../docs/EVALUATION.md](../../docs/EVALUATION.md),
 [../../evaluation/README.md](../../evaluation/README.md)
 **Evidence:** V76–V80 in [../TESTING_AND_VERIFICATION.md](../TESTING_AND_VERIFICATION.md)
-**Commits:** `b8d6ae3` (harness/dataset/tests), `4acdbe0` (docs/ADR-016), and the final
-memory/status record commit recorded after the post-commit gate (see
+**Commits:** `b8d6ae3` (harness/dataset/tests), `4acdbe0` (docs/ADR-016), `6ac3089`
+(memory/phase record), and the final V80 status-record commit (see
 [../IMPLEMENTATION_STATUS.md](../IMPLEMENTATION_STATUS.md)).
 
 ## Definition of Done — verdict
@@ -21,7 +21,7 @@ memory/status record commit recorded after the post-commit gate (see
 | §19.6 artifacts are present | PASS | JSON + Markdown include counts/dataset version, per-task/per-category matrices, metric definitions/values, latency/sample counts, detector/provider failures and retries, unauthorized side effects, configuration/version/git/lock metadata, seed, skipped tests, limitations, and the exact reproduction command |
 | The harness is measurement-only and adds no authority | PASS | No route, application wiring, or production audit write was added. Authorization cases run the real `ToolGateway`/registry/policy/`OutputDefenseService` with mock adapters wrapped to count calls, an `InMemoryAuditRecorder`, a sink store, and a fixed clock; no PostgreSQL/HTTP/auth/approval path. Policy remains the sole `ALLOW` producer and the gateway the only execution path |
 | Split/leakage and dataset integrity are enforced before execution | PASS | Loader refuses path escapes, duplicate keys/IDs, exact duplicate content, cross-split `(task, template_id)` leakage, non-partition/disagreeing splits, unknown split names, hash/count drift, and an empty/oversized/non-dev/incomplete quick subset; each rule has a refusal test |
-| All prior suites and the gate stay green; docs/memory/ADR updated | PASS | V76–V79: **1013 passed** (782 unit + 122 integration + 45 security + 64 evaluation); mypy 82 source files; ruff clean (211 files); Gitleaks 8.30.1 dir+git clean; no migration (`f7a8b9c0d1e2`); ADR-016, `docs/EVALUATION.md`, and memory records updated |
+| All prior suites and the gate stay green; docs/memory/ADR updated | PASS | V76–V80: **1013 passed** (782 unit + 122 integration + 45 security + 64 evaluation); mypy 82 source files; ruff clean (212 files); Gitleaks 8.30.1 dir+git clean; no migration (`f7a8b9c0d1e2`); ADR-016, `docs/EVALUATION.md`, and memory records updated |
 | ADR-008 through ADR-016 boundaries untouched | PASS | Policy sole `ALLOW`; gateway sole execution path; intent/DLP/input defense narrowing/gating/advisory only; approval a gate; audit never an authorization input; evaluation measurement only. No threshold was tuned to a metric |
 
 ## Delivered
@@ -142,10 +142,11 @@ estimates, or public-benchmark comparisons.
   effects, 0 DLP leaks, 0 detector errors; quick evaluation — 15 dev cases, 0 failures,
   exit 0.
 - V79: pre-commit `bash scripts/check.sh` — PASS, exit 0, all 8 steps; 1013 tests;
-  ruff/mypy clean (211 files / 82 source files); Gitleaks 8.30.1 dir+git no leaks;
+  ruff/mypy clean (212 files / 82 source files); Gitleaks 8.30.1 dir+git no leaks;
   prohibited-pattern and constant-time-confinement checks clean.
-- V80: post-commit `bash scripts/check.sh` — PASS, recorded after the Phase 9 commits
-  exist.
+- V80: post-commit `bash scripts/check.sh` after `b8d6ae3`, `4acdbe0`, and `6ac3089` —
+  PASS, exit 0, all 8 steps; 1013 tests; ruff/mypy clean; Gitleaks dir+git "no leaks
+  found" (54 commits scanned); prohibited-pattern and constant-time checks clean.
 - Phase 9 adds no migration; Alembic head remains `f7a8b9c0d1e2`.
 
 ## Next

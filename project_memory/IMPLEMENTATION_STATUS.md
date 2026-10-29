@@ -49,9 +49,9 @@ memory/completion commit `5ae9ebe` and the final V71 status record; Phase 8 comm
 evidence), `b561dd6` (gateway preview support), `2fa66fe` (settings), `f0f9b6b`
 (format), `940600e` (signed routes), `b4f8357` (local-provider implementation/settings),
 and `2f84269` (docs/memory); Phase 9 commits `b8d6ae3` (harness/dataset/tests),
-`4acdbe0` (docs/ADR), and the final memory/status record commit recorded after the
-post-commit gate. `origin` is `https://github.com/StivenArifaj/ProtAI.git`; every stage is
-pushed to `origin main`.
+`4acdbe0` (docs/ADR), `6ac3089` (memory/phase record), and the final V80 status-record
+commit. `origin` is `https://github.com/StivenArifaj/ProtAI.git`; every stage is pushed
+to `origin main`.
 
 ## What exists (all VERIFIED)
 
@@ -252,8 +252,11 @@ All PASS — full commands and results in [TESTING_AND_VERIFICATION.md](TESTING_
 - Quick evaluation command → 15 dev cases / 6 tasks; 0 failures; exit 0; reports written
   (V78).
 - `bash scripts/check.sh` (pre-commit) → exit 0, all 8 steps; **1013 passed**; ruff
-  format/lint clean (211 files); mypy clean (82 source files); Gitleaks 8.30.1 dir+git
+  format/lint clean (212 files); mypy clean (82 source files); Gitleaks 8.30.1 dir+git
   no leaks; prohibited-pattern and constant-time-confinement checks clean (V79).
+- Post-commit `bash scripts/check.sh` after `b8d6ae3`, `4acdbe0`, and `6ac3089` → exit
+  0, all 8 steps; **1013 passed**; ruff/mypy clean; Gitleaks dir+git no leaks
+  (**54 commits scanned**); prohibited-pattern and constant-time checks clean (V80).
 - Phase 8 evidence (V72–V75), Phase 7 (V67–V71), and earlier evidence retained; Phase 9
   adds no migration (head remains `f7a8b9c0d1e2`) and no application route.
 
