@@ -1,0 +1,55 @@
+# ProtAI evaluation dataset manifest (blueprint v1.2 section 19; ADR-016).
+#
+# All fixtures are original repository-authored synthetic cases. No public benchmark
+# dataset is vendored, copied, or implied. The manifest pins the exact bytes and counts
+# the harness must load: every hash mismatch, missing case, or split inconsistency
+# refuses the run before any component is exercised.
+#
+# Dataset identity is versioned independently from the application; regenerate the
+# hashes only through the documented update procedure in evaluation/README.md.
+
+schema_version: 1
+dataset_version: "2026.10.28-v1"
+description: >-
+  Deterministic synthetic evaluation set for input detection, DLP egress/response,
+  risk scoring, intent gating, and authorization correctness.
+license: "CC0-1.0"
+provenance: >-
+  Repository-authored synthetic fixtures created for ProtAI. No third-party data,
+  customer data, public benchmark records, or real credentials are present.
+seed: 20261028
+created_at: 2026-10-28
+
+fixtures:
+  input_detection:
+    path: fixtures/input_detection.jsonl
+    sha256: ebc9b8cfddc86d40ceb070d4cc2456826616aced84569bf4a4574447233e0030
+    case_count: 20
+  dlp_egress:
+    path: fixtures/dlp_egress.jsonl
+    sha256: 496749816857456842363dcd03f7c4937cfe48d88fb87931bcfe47ca6ef2aba8
+    case_count: 16
+  dlp_response:
+    path: fixtures/dlp_response.jsonl
+    sha256: d6ede31a9e2e60905cdac51d2c2b02a74395c1279c4865b209da45ab8ff768a6
+    case_count: 14
+  risk:
+    path: fixtures/risk.jsonl
+    sha256: dcfea6315b9bf01c80f52c8ab3bcedad7427f4a50aead5ca10740678c929f135
+    case_count: 18
+  intent:
+    path: fixtures/intent.jsonl
+    sha256: d52f6e6062698e1229544db6d2093c7d61c4b1ddb1092aec839ad6acead0205d
+    case_count: 18
+  authorization:
+    path: fixtures/authorization.jsonl
+    sha256: 0d7a578a6b9c8008d5e7fc313fb9f4817cd3cc6f953ac924cb52351d33087fcf
+    case_count: 20
+
+splits:
+  path: splits/splits.json
+  sha256: 20ae8603160e6f39c2c58576930520a2cd872638b83ef2c62f31ae7947f7108f
+  counts:
+    dev: 42
+    validation: 34
+    holdout: 30
