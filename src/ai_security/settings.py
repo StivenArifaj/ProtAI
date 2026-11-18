@@ -103,14 +103,17 @@ class PrincipalResolverKind(StrEnum):
 
 
 class ModelProviderKind(StrEnum):
-    """Optional intent-extraction provider (ADR-015).
+    """Optional intent-extraction provider (ADR-015, ADR-018).
 
     ``mock`` is deterministic and offline. ``local`` selects the Ollama-compatible
-    client; no cloud provider exists in v1.
+    client. ``cloud`` is a post-v1 opt-in OpenAI-compatible provider; it performs
+    network I/O only when explicitly configured with a key and never becomes an
+    authorization input.
     """
 
     mock = "mock"
     local = "local"
+    cloud = "cloud"
 
 
 LOCAL_MODEL_PLACEHOLDER = "SET_TO_EXACT_INSTALLED_MODEL"
@@ -287,6 +290,16 @@ class Settings(BaseSettings):
     local_model_timeout_seconds: int = Field(default=10, ge=1, le=60)
     allow_external_model_calls: bool = False
 
+    # Post-v1 opt-in cloud intent provider (ADR-018). No key by default: the cloud
+    # provider cannot be selected without an explicit key and exact model name.
+    cloud_model_base_url: str = Field(
+        default="https://api.openai.com", min_length=1, max_length=2048
+    )
+    cloud_model_name: str = Field(default=LOCAL_MODEL_PLACEHOLDER, min_length=1, max_length=256)
+    cloud_model_api_key: SecretStr = Field(default=SecretStr(""))
+    cloud_model_timeout_seconds: int = Field(default=30, ge=1, le=60)
+    cloud_model_max_response_bytes: int = Field(default=1_048_576, ge=1024, le=8_388_608)
+
     # Post-v1 dashboard (opt-in; disabled by default so v1 behavior is unchanged).
     console_enabled: bool = False
     console_admin_username: str = Field(default="admin", min_length=1, max_length=128)
@@ -397,6 +410,22 @@ class Settings(BaseSettings):
                     "LOCAL_MODEL_NAME must be 1-256 characters of letters, digits, "
                     "'.', '_', ':', '/', or '-'"
                 )
+        if self.model_provider is ModelProviderKind.cloud:
+            validate_local_model_origin(
+                self.cloud_model_base_url, development_like=self.app_env.development_like
+            )
+            if self.cloud_model_name == LOCAL_MODEL_PLACEHOLDER:
+                raise ValueError(
+                    "CLOUD_MODEL_NAME must name an exact model when MODEL_PROVIDER=cloud (ADR-018)"
+                )
+            if LOCAL_MODEL_NAME_PATTERN.fullmatch(self.cloud_model_name) is None:
+                raise ValueError("CLOUD_MODEL_NAME must be a bounded single-line name")
+            key = self.cloud_model_api_key.get_secret_value()
+            if len(key) < 8 or CONTROL_CHARACTERS.search(key) is not None:
+                raise ValueError(
+                    "CLOUD_MODEL_API_KEY must be set to a real key (8+ chars, control-free) "
+                    "when MODEL_PROVIDER=cloud (ADR-018)"
+                )
         return self
 
     @property
@@ -408,6 +437,11 @@ class Settings(BaseSettings):
     def local_model_origin(self) -> str:
         """The validated origin without a trailing slash (``/api/generate`` is fixed)."""
         return self.local_model_base_url.rstrip("/")
+
+    @property
+    def cloud_model_origin(self) -> str:
+        """The validated cloud origin without a trailing slash (ADR-018)."""
+        return self.cloud_model_base_url.rstrip("/")
 
     @property
     def database_dsn(self) -> str:

@@ -55,6 +55,7 @@ from ai_security.input_defense.config import load_input_defense_config
 from ai_security.input_defense.service import InputDefenseService
 from ai_security.intent.extractors import (
     IntentExtractor,
+    IntentModelClient,
     LocalModelIntentExtractor,
     MockIntentExtractor,
 )
@@ -90,6 +91,7 @@ def _build_intent_extractor(settings: Settings) -> IntentExtractor:
     The builder is a seam for tests; production always derives the client from
     operator-validated settings.
     """
+    client: IntentModelClient
     if settings.model_provider is ModelProviderKind.local:
         client = OllamaIntentModelClient(
             origin=settings.local_model_origin,
@@ -98,6 +100,20 @@ def _build_intent_extractor(settings: Settings) -> IntentExtractor:
         )
         return LocalModelIntentExtractor(
             client, timeout_seconds=settings.local_model_timeout_seconds
+        )
+    if settings.model_provider is ModelProviderKind.cloud:
+        # ADR-018: opt-in, key-bearing, advisory-only. The key never leaves this client.
+        from ai_security.intent.cloud_provider import OpenAIChatIntentModelClient
+
+        client = OpenAIChatIntentModelClient(
+            origin=settings.cloud_model_origin,
+            model=settings.cloud_model_name,
+            api_key=settings.cloud_model_api_key.get_secret_value(),
+            timeout_seconds=settings.cloud_model_timeout_seconds,
+            max_response_bytes=settings.cloud_model_max_response_bytes,
+        )
+        return LocalModelIntentExtractor(
+            client, timeout_seconds=settings.cloud_model_timeout_seconds
         )
     return MockIntentExtractor()
 

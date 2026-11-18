@@ -33,6 +33,7 @@ labels, split discipline, and report contract.
 | [ADR-015](adr/ADR-015-fastapi-ingress-principal-and-local-model.md) | FastAPI ingress, host-signed principal assertions, preview/approval routes, and the opt-in local model provider | Accepted | Phase 8 |
 | [ADR-016](adr/ADR-016-evaluation-harness-and-dataset-contract.md) | Evaluation harness, task-specific positive classes, split discipline, and JSON-authoritative reports | Accepted | Phase 9 |
 | [ADR-017](adr/ADR-017-soc-alert-summarizer-trust-contract.md) | SOC alert/summarizer trust contract: read-only/alert-only, `EXTERNAL_UNTRUSTED` envelope, no authority | Accepted | Phase 10 |
+| [ADR-018](adr/ADR-018-cloud-intent-provider.md) | Opt-in OpenAI-compatible cloud intent provider; advisory-only output, no authority | Accepted | post-v1 |
 
 ## Adding a new ADR
 

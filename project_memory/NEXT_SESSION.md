@@ -75,3 +75,22 @@ real connectors behind threat-review gates; dependency advisory review.
   regression test added (`test_emitter_handles_long_rule_ids`).
 - **UI fix:** ChainRibbon no longer marks the oldest visible event as a gap.
 - Final 12-step gate: all pass; 1141 backend + 64 alert + 14 abuse + 6 frontend tests.
+
+## Cloud intent provider (ADR-018, 2026-11-18)
+
+- Added opt-in `MODEL_PROVIDER=cloud` with `OpenAIChatIntentModelClient`
+  (`src/ai_security/intent/cloud_provider.py`): OpenAI-compatible `/chat/completions`,
+  fixed system instruction, user text in user role only, `temperature=0`, JSON-object
+  format, no redirects, no env proxy trust, bounded timeout/response.
+- Key sent only in Authorization header; never logged, stored, echoed in errors, or
+  exposed to the console. Output is duplicate-key-checked, bounded, and remains
+  advisory — the gateway/policy still decide. Failures yield no manifest.
+- Settings require `CLOUD_MODEL_API_KEY`, exact `CLOUD_MODEL_NAME`, and a validated
+  HTTPS origin (loopback allowed in dev/test). `ALLOW_EXTERNAL_MODEL_CALLS=true`
+  remains refused (v1 placeholder flag).
+- 16 unit tests pass. End-to-end with a local fake OpenAI-compatible endpoint:
+  `COMPLETED` for the supported request, `REQUIRES_CLARIFICATION` (no execution) for
+  an out-of-scope request. No real cloud key was used or stored in the repo.
+- Real key is supplied by the operator via `CLOUD_MODEL_API_KEY` at runtime.
+- Final gate: 1157 backend tests + 64 alert + 14 abuse + 6 frontend tests pass;
+  all 12 steps green; Gitleaks clean (test fixtures use non-key-shaped placeholders).

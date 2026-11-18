@@ -76,3 +76,11 @@ enabled; set a unique `CONSOLE_ADMIN_PASSWORD` for any shared deployment.
 - 6 frontend unit tests (UI primitives + DecisionTrace)
 - TypeScript check and production build
 - All v1 tests and the 12-step gate remain green
+
+## Cloud intent provider (ADR-018)
+
+`MODEL_PROVIDER=cloud` is an opt-in, OpenAI-compatible intent provider. It requires
+`CLOUD_MODEL_API_KEY`, `CLOUD_MODEL_NAME`, and an HTTPS `CLOUD_MODEL_BASE_URL`. The key
+is sent only in an Authorization header, never logged or stored. Model output remains
+advisory: it is validated into constraints, and the gateway/policy still decide.
+See `docs/adr/ADR-018-cloud-intent-provider.md`.
