@@ -1,0 +1,142 @@
+/* Design tokens — dark high-contrast SOC console.
+   All colors are OKLCH. State colors carry meaning, never decoration. */
+:root {
+  color-scheme: dark;
+
+  --bg: oklch(0.16 0.018 255);
+  --surface: oklch(0.205 0.02 255);
+  --surface-raised: oklch(0.235 0.022 255);
+  --panel: oklch(0.185 0.018 255);
+  --ink: oklch(0.965 0.008 255);
+  --ink-soft: oklch(0.86 0.01 255);
+  --muted: oklch(0.74 0.014 255);
+  --faint: oklch(0.62 0.014 255);
+  --border: oklch(0.32 0.02 255);
+  --border-strong: oklch(0.42 0.022 255);
+
+  --operational: oklch(0.74 0.16 152);
+  --operational-bg: oklch(0.28 0.07 152 / 0.35);
+  --incident: oklch(0.68 0.2 25);
+  --incident-bg: oklch(0.3 0.09 25 / 0.35);
+  --maintenance: oklch(0.8 0.15 82);
+  --maintenance-bg: oklch(0.31 0.07 82 / 0.35);
+  --accent: oklch(0.72 0.14 246);
+  --accent-bg: oklch(0.3 0.08 246 / 0.3);
+  --info: oklch(0.74 0.12 230);
+  --info-bg: oklch(0.3 0.07 230 / 0.3);
+
+  --shadow-drawer: -8px 0 24px oklch(0 0 0 / 0.32);
+  --radius: 10px;
+  --radius-sm: 6px;
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+
+  --font-ui: 'Fira Sans', system-ui, -apple-system, sans-serif;
+  --font-mono: 'Fira Code', ui-monospace, SFMono-Regular, monospace;
+
+  --z-base: 0;
+  --z-sticky: 10;
+  --z-dropdown: 20;
+  --z-backdrop: 30;
+  --z-modal: 40;
+  --z-toast: 50;
+  --z-tooltip: 60;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-ui);
+  font-size: 15px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection {
+  background: var(--accent-bg);
+  color: var(--ink);
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+a {
+  color: var(--info);
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
+}
+
+h1,
+h2,
+h3,
+h4 {
+  margin: 0;
+  font-weight: 600;
+  text-wrap: balance;
+  letter-spacing: -0.015em;
+}
+
+h1 {
+  font-size: 22px;
+}
+
+h2 {
+  font-size: 17px;
+}
+
+h3 {
+  font-size: 15px;
+}
+
+code,
+.mono {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+  font-variant-ligatures: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

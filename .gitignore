@@ -21,3 +21,8 @@ htmlcov/
 
 # OS noise
 .DS_Store
+
+# Frontend build artifacts
+web/node_modules/
+web/dist/
+*.tsbuildinfo
