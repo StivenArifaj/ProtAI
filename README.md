@@ -157,3 +157,23 @@ partially configured state.
 - `docs/KNOWN_LIMITATIONS.md` — known gaps of the current phase
 - `docs/OUTPUT_DLP_FALSE_POSITIVES.md` — tested DLP hard negatives, false positives, false negatives
 - `docs/AUDIT_RETENTION_AND_DATA_HANDLING.md` — stored/excluded audit fields, retention, export/backup/deletion, integrity limits
+
+## Web console (post-v1, opt-in)
+
+A React + TypeScript dashboard is available in `web/`. It connects to a new, RBAC'd
+`/admin` API and covers overview, alerts/triage, audit exploration, approvals, tool and
+connector management, policy, settings, and evaluation reports. It is **authority-free**:
+no execution button, no containment, no token persistence, and no raw audit content.
+
+```bash
+# build the SPA
+cd web && npm install && npm run build && cd ..
+
+# enable in your environment (dev values shown; set a unique password for shared use)
+# CONSOLE_ENABLED=true CONSOLE_ADMIN_PASSWORD=<strong unique value>
+uv run uvicorn ai_security.api.app:app --host 127.0.0.1 --port 8080
+# open http://127.0.0.1:8080
+```
+
+The console is post-v1 work on a separate branch and is merged into `main` only after
+explicit operator approval. See `docs/CONSOLE.md` for the full contract and limitations.

@@ -1,0 +1,50 @@
+{
+  "version": "alerts-v1",
+  "rules": [
+    {
+      "rule_id": "blocked-calls-10-per-hour",
+      "kind": "repeated_blocked_calls",
+      "window_seconds": 3600,
+      "threshold": 10,
+      "severity": "HIGH",
+      "enabled": true,
+      "description": "More than 10 policy BLOCK decisions in one hour"
+    },
+    {
+      "rule_id": "approval-failures-5-per-hour",
+      "kind": "repeated_approval_failures",
+      "window_seconds": 3600,
+      "threshold": 5,
+      "severity": "MEDIUM",
+      "enabled": true,
+      "description": "More than 5 approval denials or expiries in one hour"
+    },
+    {
+      "rule_id": "broad-resource-access-5-per-hour",
+      "kind": "broad_resource_access",
+      "window_seconds": 3600,
+      "threshold": 5,
+      "severity": "MEDIUM",
+      "enabled": true,
+      "description": "A single principal touching more than 5 distinct tools"
+    },
+    {
+      "rule_id": "burst-reads-10-per-hour",
+      "kind": "burst_reads_across_resources",
+      "window_seconds": 3600,
+      "threshold": 10,
+      "severity": "MEDIUM",
+      "enabled": true,
+      "description": "More than 10 distinct resources read in one hour"
+    },
+    {
+      "rule_id": "external-destinations-10-per-hour",
+      "kind": "repeated_external_destination_attempts",
+      "window_seconds": 3600,
+      "threshold": 10,
+      "severity": "HIGH",
+      "enabled": true,
+      "description": "More than 10 calls to external destinations in one hour"
+    }
+  ]
+}

@@ -53,6 +53,7 @@ type COMPONENT = Literal[
     "intent.service",
     "api.ingress",
     "soc.alert_emitter",
+    "soc.approval_lifecycle",
 ]
 
 _HEX64 = re.compile(r"[0-9a-f]{64}")

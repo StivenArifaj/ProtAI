@@ -227,6 +227,32 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.add_middleware(HostAuthMiddleware, settings=resolved)
     app.include_router(health_router)
     app.include_router(requests_router)
+
+    # Post-v1 dashboard: opt-in, additive, authority-free. It is mounted after the v1
+    # routers so no existing route is shadowed, and the built SPA is served only when
+    # explicitly enabled. The browser never receives the host HMAC secret.
+    if resolved.console_enabled:
+        from pathlib import Path
+
+        from fastapi.staticfiles import StaticFiles
+
+        from ai_security.console.wiring import mount_console
+
+        mount_console(app, resolved)
+        static_dir = Path(resolved.console_static_dir)
+        if static_dir.is_dir():
+            assets_dir = static_dir / "assets"
+            if assets_dir.is_dir():
+                app.mount("/assets", StaticFiles(directory=str(assets_dir)), name="console-assets")
+
+            from fastapi.responses import FileResponse
+
+            @app.get("/{full_path:path}", include_in_schema=False)
+            async def console_spa(full_path: str) -> FileResponse:
+                """Serve the SPA for any non-API path (client-side routing)."""
+                del full_path
+                return FileResponse(static_dir / "index.html")
+
     return app
 
 

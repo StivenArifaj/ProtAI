@@ -54,6 +54,7 @@ DATABASE_URL_REQUIRED_PREFIX = "postgresql+asyncpg://"
 SAMPLE_DATABASE_PASSWORD = "firewall_dev_only"  # noqa: S105
 SAMPLE_HOST_AUTH_SECRET_B64 = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="  # noqa: S105
 SAMPLE_HOST_AUTH_SECRET_BYTES = b"\x00" * 32
+SAMPLE_CONSOLE_PASSWORD = "CONSOLE_DEV_ONLY_PASSWORD"  # noqa: S105
 
 HOST_AUTH_SECRET_MIN_BYTES = 32
 CONTROL_CHARACTERS = re.compile(r"[\x00-\x1f\x7f]")
@@ -286,6 +287,14 @@ class Settings(BaseSettings):
     local_model_timeout_seconds: int = Field(default=10, ge=1, le=60)
     allow_external_model_calls: bool = False
 
+    # Post-v1 dashboard (opt-in; disabled by default so v1 behavior is unchanged).
+    console_enabled: bool = False
+    console_admin_username: str = Field(default="admin", min_length=1, max_length=128)
+    console_admin_password: SecretStr = Field(default=SecretStr(SAMPLE_CONSOLE_PASSWORD))  # noqa: S105
+    alert_rules_path: str = Field(default="config/alerts.json", min_length=1)
+    # Path to the built frontend bundle; served only when console_enabled is true.
+    console_static_dir: str = Field(default="web/dist", min_length=1)
+
     _host_auth_keys: dict[str, HostAuthKey] = PrivateAttr(default_factory=dict)
 
     @field_validator("database_url")
@@ -352,6 +361,17 @@ class Settings(BaseSettings):
                 "HOST_AUTH_NONCE_TTL_SECONDS must be at least twice "
                 "HOST_AUTH_TIMESTAMP_TOLERANCE_SECONDS so nonces outlive the full "
                 "acceptance window plus skew margin (blueprint section 9.2)"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _refuse_sample_console_password_outside_dev(self) -> Settings:
+        if self.app_env.development_like or not self.console_enabled:
+            return self
+        if self.console_admin_password.get_secret_value() == SAMPLE_CONSOLE_PASSWORD:
+            raise ValueError(
+                "refusing the sample console password outside development/test; "
+                "set CONSOLE_ADMIN_PASSWORD to a unique value"
             )
         return self
 
