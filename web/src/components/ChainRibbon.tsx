@@ -15,8 +15,9 @@ export function ChainRibbon({
   const sequences = new Set(recent.map((event) => event.sequence_number))
   const cells: ReactNode[] = []
 
-  for (const event of recent) {
-    const previous = sequences.has(event.sequence_number - 1) || event.sequence_number === 1
+  for (const [index, event] of recent.entries()) {
+    // The oldest visible event is the start of the window, not a chain gap.
+    const previous = index === 0 || sequences.has(event.sequence_number - 1) || event.sequence_number === 1
     const isHead = event.sequence_number === headSequence
     const isCheckpoint = checkpointSequences.has(event.sequence_number)
     const className = `ribbon-cell${isHead ? ' head' : isCheckpoint ? ' checkpoint' : !previous ? ' gap' : ''}`

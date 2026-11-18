@@ -52,3 +52,26 @@ docs) → `c448ddd` (post-v1 foundations) → `4eeffb2` (console) → `e3dba05` 
 No further implementation was requested. Potential follow-ups: real DB validation of
 `/admin` reads with Docker running; SSO adapter; durable triage/checkpoint storage;
 real connectors behind threat-review gates; dependency advisory review.
+
+## Real-stack verification (2026-11-18, second session)
+
+- Docker Desktop started; `protai-db-1` (postgres:17.2-alpine) healthy on 127.0.0.1:5432.
+- `alembic upgrade head` applied all four migrations successfully.
+- `uv run --frozen pytest -q` against real PostgreSQL: **1141 passed, 0 skipped**.
+- Generated real signed gateway traffic via `TestClient` + real HMAC signatures:
+  12 valid read+summarize requests (200), 15 blocked external-sink previews (200 with
+  `dlp_egress_blocked` decisions), 4 injection rejections (403), 8 external-content
+  requests sourced from the free DummyJSON quotes API (all 200). The built-in local
+  intent extractor is the deterministic offline "AI" — no cloud API/key was used.
+- Audit chain reached 766 events including `TOOL_EXECUTION_COMPLETED`,
+  `RESPONSE_RELEASED`, `POLICY_EVALUATED` BLOCK events, and 5 real
+  `SECURITY_ALERT_RAISED` events emitted by deterministic rules over that evidence.
+- Console verified in real Chromium against the live DB: all 8 screens render real
+  data (732→766 events, live alerts, BLOCK reasons), 8-node Decision Trace shows
+  `POLICY: BLOCK`, triage annotation persisted across reload, ⌘K palette works,
+  mobile 375px clean, no runtime JS errors.
+- **Bug found and fixed:** alert rule IDs longer than 32 chars broke emission because
+  `AuditEvent.risk_version` is capped at 32. Emitter now truncates the audited field;
+  regression test added (`test_emitter_handles_long_rule_ids`).
+- **UI fix:** ChainRibbon no longer marks the oldest visible event as a gap.
+- Final 12-step gate: all pass; 1141 backend + 64 alert + 14 abuse + 6 frontend tests.

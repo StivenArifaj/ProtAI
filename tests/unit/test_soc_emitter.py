@@ -118,6 +118,17 @@ def test_emitter_emit_all_independent() -> None:
     assert len(recorder.events) == 2
 
 
+def test_emitter_handles_long_rule_ids() -> None:
+    """AuditEvent.risk_version caps at 32 chars; long rule ids must still emit."""
+    recorder = RecordingAuditRecorder()
+    emitter = AlertEmitter(recorder, clock=lambda: FIXED_NOW)
+    firing = _firing(rule_id="external-destinations-10-per-hour", count=3)
+    emission = _run(emitter.emit(firing))
+    assert emission.emitted is True
+    assert recorder.events[0].risk_version == "external-destinations-10-per-hou"
+    assert emission.rule_id == "external-destinations-10-per-hour"
+
+
 def test_emitter_no_authority_fields() -> None:
     """The emitted event carries no tool, approval, destination, or authorization fields."""
     recorder = RecordingAuditRecorder()
