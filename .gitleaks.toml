@@ -13,3 +13,7 @@ useDefault = true
 description = "Disposable development-only host-auth key in docker-compose.yml"
 regexTarget = "match"
 regexes = ['ZmlyZXdhbGwtZGV2LWhvc3QtYXV0aC1zZWNyZXQtMzJi']
+
+[[allowlists]]
+description = "Local .env is gitignored and never committed; developers keep runtime secrets there"
+paths = ['''^\.env$''']
