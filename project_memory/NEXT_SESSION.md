@@ -1,100 +1,54 @@
 # Next Session Handoff
 
-**Last updated: 2026-10-29.** All v1 implementation phases (0a-10) are **COMPLETE — VERIFIED**.
+**Last updated: 2026-11-18.** v1 (Phases 0a–10) plus post-v1 foundations and the full
+web console are **COMPLETE — VERIFIED — MERGED TO MAIN**.
 
 ## Where we are
 
-Phases 0a through 10 are complete, verified, committed, and pushed to `origin/main`.
-HEAD is `b0788a5` ("Phase 10: security hardening and AI-assisted monitoring"), identical
-to `origin/main`, clean working tree.
+`main` HEAD is `e3dba05` (merge of `dashboard/console`), pushed to `origin/main`, clean.
+History: `c38d92f` (Phase 9) → `b0788a5` (Phase 10) → `44c09a0` (interaction/integration
+docs) → `c448ddd` (post-v1 foundations) → `4eeffb2` (console) → `e3dba05` (merge).
 
-Phase 10 delivered:
-- Deterministic alert rules (`src/ai_security/soc/config.py`, `rules.py`, `emitter.py`)
-  with content-free `SECURITY_ALERT_RAISED` emission through the audit recorder
-- Optional read-only audit summarizer (`src/ai_security/soc/summarizer.py`) — opt-in,
-  off by default, `EXTERNAL_UNTRUSTED` envelope labels, bounded/redacted input,
-  deterministic stub (no model, no network), adversarial-log tests
-- Read-only audit evidence provider (`src/ai_security/soc/audit_provider.py`)
-- Bounded offline abuse/load tests (`tests/abuse/test_abuse_load.py`)
-- SOC no-authority security tests (`tests/security/test_soc_no_authority.py`)
-- Incident-response runbooks (`docs/RUNBOOKS.md`)
-- CycloneDX SBOM from `uv.lock` (`releases/sbom/cyclonedx-sbom.json`, SHA256:
-  `912dfa134f7b2f2151d5c38cb06020175f0a28e973b67bcc5f6c53724532f552`)
-- Release-gate extensions (steps 9-11 in `scripts/check.sh`)
-- ADR-017 (SOC alert/summarizer trust contract)
-- Invariant #22 enforced (alert-only per ADR-004/ADR-017)
+## What now exists beyond v1
 
-Verification results:
-- **987 tests pass** (782 unit, 122 integration, 45 security, 64 evaluation, plus new
-  SOC config/rules/emitter/summarizer/no-authority and abuse/load suites); 103 skipped
-  without PostgreSQL
-- `uv run --frozen mypy` — clean (88 source files)
-- `uv run --frozen ruff check .` — clean
-- `uv run --frozen ruff format --check .` — clean
-- `bash scripts/check.sh` — exit 0, all 11 steps pass, Gitleaks clean
-- Evaluation full: 106 cases / 6 tasks; 3 documented hard-negative failures; 0
-  unauthorized side effects; 0 DLP leaks
-- Evaluation quick: 15 dev cases; 0 failures; exit 0
-- Post-commit gate passed after push to `origin/main`
+- **Post-v1 foundations** (`src/ai_security/soc/`): distributed rate limiter with Redis
+  Lua atomic script, external audit checkpointer, approval revocation/resumption
+  services, connector registration framework. Documented in `docs/POST_V1_FOUNDATIONS.md`.
+- **Full web console**: FastAPI `/admin` API (`src/ai_security/console/`) with local
+  PBKDF2 auth, HttpOnly cookie + separate CSRF token, six-role RBAC, SSO-ready
+  `AuthProvider`, strict redacted schemas, read projections for every service, SSE
+  stream, and narrow human actions (triage, approve/deny, revoke, connector enable,
+  checkpoint seal). No execution/containment authority.
+- **React 19 + Vite + TS frontend** (`web/`): OKLCH dark design system, Fira Sans/Code,
+  command palette (⌘K), collapsible rail, live status bar, signature Decision Trace +
+  Chain Ribbon, 8 working screens. Docs: `docs/CONSOLE.md`.
 
-## What Remains (post-v1 documentation, already completed)
+## Verification evidence (actual)
 
-The following documentation was created as part of Phase 10 completion:
+- `uv run --frozen pytest -q`: **1037 passed, 103 skipped** (no PostgreSQL), 1 warning
+- Console API tests: **11 passed** (`tests/unit/test_console.py`)
+- Frontend Vitest: **6 passed**; `npm run typecheck` and `npm run build` pass
+- `bash scripts/check.sh`: **exit 0, all 12 steps**, Gitleaks clean, invariant/constant-time
+  greps clean, evaluation suites green
+- Real Chromium smoke test (headless, stubbed data layer): all 8 screens rendered with
+  correct titles, ⌘K palette visible, checkpoint seal + user creation writes succeeded,
+  mobile 375px has no horizontal overflow, no runtime JS errors
+- Post-merge gate rerun on `main`: all 12 steps pass
 
-- `docs/PRODUCT_INTERACTION_MODEL.md` — six-actor human-interaction model with
-  interaction classification, complete ALLOW/BLOCK/ASK lifecycle analysis, and UI
-  design decision (no UI in v1)
-- `docs/COMPANY_INTEGRATION.md` — company-integration architecture comparing
-  agent-framework adapter, centralized enforcement service, and tool-server/protocol
-  patterns; security property preservation; bypass prevention; incremental pilot
-  deployment for one agent and one narrowly scoped tool
+## Honest limitations
 
-Updated docs:
-- `docs/SECURITY_INVARIANTS.md` — invariant #22 marked implemented (Phase 10)
-- `docs/THREAT_MODEL.md` — threats 16-19 updated; status through Phase 10
-- `docs/ARCHITECTURE.md` — soc/ component row added
-- `docs/KNOWN_LIMITATIONS.md` — Phase 10 limits added (items 30-36)
-- `docs/IMPLEMENTATION_STATE.md` — Phase 10 status, test count 987, SOC component
-- `docs/DECISIONS.md` — ADR-017 added to index
-- `docs/adr/ADR-017-soc-alert-summarizer-trust-contract.md` — new ADR
-- `docs/SECURITY_ALERT_RULES.md` — documented alert rules
-- `docs/ALERT_SUMMARIZER_ADVERSARIAL.md` — adversarial-log test protocol
-- `project_memory/PHASE_ROADMAP.md` — Phase 10 marked complete
-- `project_memory/phases/PHASE_10_PLAN.md` — Phase 10 plan
-- `README.md` — Phase 10 status line
+- PostgreSQL was unavailable during this session (Docker daemon down), so DB-backed
+  integration tests skipped; console tests use a stubbed session layer. Real-DB behavior
+  of the new `/admin` reads is exercised by projections over the same repositories.
+- Local console sessions are in-memory (not shared across workers); SSO adapter is an
+  interface, not an implementation.
+- Triage annotations and checkpoints are process-local, not durable.
+- No real connectors ship; no UI-driven execution, resumption, or containment.
+- `npm audit` reported 4 advisories in transitive dev/build packages; review before any
+  internet-facing deployment.
 
-## v1 Boundary (preserved)
+## Next steps
 
-UI, real company connectors, complete approval delivery/UI, and production deployment
-hardening remain **outside v1**. All Phase 10 work is hardening and monitoring only —
-no new authority path, no automated containment, no UI, no real connectors.
-
-## Post-v1 Work (future, not started)
-
-Per blueprint §23 maturity path:
-
-1. **Research/demo release** — optional local model, versioned fixtures, local UI/API
-   demo with mock/real labeling; measured claims only
-2. **Controlled integration release** — separate threat-model review, connector
-   permission design, secret/egress plans, runbooks, regression benchmark, host
-   identity integration; real connectors disabled by default
-3. **Company deployment** — operator, security/privacy reviews, availability/backup,
-   supply chain, monitoring/IR, responsibility boundary
-
-## Verification Commands (all pass)
-
-| Command | Expected |
-|---|---|
-| `uv run --frozen pytest -q` | 987 passed, 103 skipped (no PostgreSQL) |
-| `uv run --frozen mypy` | clean |
-| `uv run --frozen ruff check .` | clean |
-| `uv run --frozen ruff format --check .` | clean |
-| `bash scripts/check.sh` | exit 0, all 11 steps |
-| Evaluation full | 106 cases; 3 hard-negative failures; 0 unauthorized side effects; 0 DLP leaks |
-| Evaluation quick | 15 dev cases; 0 failures; exit 0 |
-
-## Next Steps (autonomous)
-
-No further v1 implementation work remains. The operator should be consulted before
-starting post-v1 work (real connectors, UI, approval delivery, etc.). All v1
-deliverables are complete and verified.
+No further implementation was requested. Potential follow-ups: real DB validation of
+`/admin` reads with Docker running; SSO adapter; durable triage/checkpoint storage;
+real connectors behind threat-review gates; dependency advisory review.
