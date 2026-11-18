@@ -158,6 +158,37 @@ phase; anything not explicitly implemented must remain listed here or in
     everything else is clarified. `MODEL_PROVIDER=local` selects
     `LocalModelIntentExtractor` with a strict, bounded provider; semantic accuracy is
     unmeasured, the model is never an authorization input, and no cloud adapter exists.
+
+## Phase 10 Limits (added 2026-10-29)
+
+30. **Deterministic alerts are alert-only.** Alert rules emit `SECURITY_ALERT_RAISED`
+    events through the audit recorder but have no authority: no block, allow, consume,
+    revoke, or containment. Thresholds are experimental and not calibrated. Alert
+    evaluation is read-only; it never writes to the production audit path.
+
+31. **Optional summarizer is unverified analysis.** The summarizer is off by default,
+    uses a deterministic local stub (no model, no network, no cloud calls), and
+    produces unverified hypotheses at most annotating an alert. It has no tool,
+    policy, approval, audit-write, or containment authority. Live-model evaluation is
+    future work.
+
+32. **No external audit checkpoint.** The audit chain is tamper-evident but not
+   tamper-proof; truncation of the newest events is undetectable without an externally
+   anchored checkpoint (documented in ADR-014).
+
+33. **No automated containment or circuit breaker.** v1 has no automated response
+   capability; all incident response is manual and human-driven (runbooks in
+   `docs/RUNBOOKS.md`).
+
+34. **Rate limiting is per process.** Fixed-window in-memory limits are not shared
+   across workers; an N-worker deployment multiplies each limit by N.
+
+35. **SBOM covers only locked Python dependencies.** The CycloneDX SBOM is generated
+   from `uv.lock` (44 components) and does not cover base images, system packages, or
+   non-Python dependencies.
+
+36. **No UI.** There is no graphical interface; all human interaction is through the
+   signed `/v1` API, configuration files, CLI workflows, logs, or integration points.
 30. **Intent use limits are per process and in memory.** `IntentUsageTracker` fails
     closed at 10,000 live manifests and purges on expiry, but a multi-worker deployment
     would enforce `max_uses` independently per worker; a shared store is later work.

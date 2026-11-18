@@ -70,5 +70,28 @@ elif [ "$grep_rc" -ne 1 ]; then
 fi
 echo "compare_digest usage confined to the constant-time helper"
 
+step "[9/11] deterministic alert-rule tests (Phase 10, read-only/alert-only)"
+uv run --frozen pytest tests/unit/test_soc_config.py tests/unit/test_soc_rules.py tests/unit/test_soc_emitter.py tests/unit/test_soc_summarizer.py tests/security/test_soc_no_authority.py -q \
+    || fail "alert-rule/summarizer/no-authority tests reported failures"
+
+step "[10/11] abuse/load tests (Phase 10, bounded offline, deterministic)"
+uv run --frozen pytest tests/abuse/test_abuse_load.py -q \
+    || fail "abuse/load tests reported failures"
+
+step "[11/11] CycloneDX SBOM presence and validation (Phase 10)"
+SBOM=$(ls releases/sbom/cyclonedx-*.json 2>/dev/null | head -1 || true)
+if [ -z "$SBOM" ]; then
+    fail "no CycloneDX SBOM found under releases/sbom/ (generate with scripts/generate_sbom.sh)"
+fi
+if command -v cyclonedx-py >/dev/null 2>&1; then
+    cyclonedx-py validate --of JSON -i "$SBOM" >/dev/null 2>&1 \
+        || fail "CycloneDX SBOM $SBOM failed validation"
+else
+    echo "cyclonedx-py not installed; validating SBOM JSON structure with python"
+    uv run --frozen python -c "import json,sys; json.load(open('$SBOM')); print('SBOM JSON parses: $SBOM')" \
+        || fail "CycloneDX SBOM $SBOM is not valid JSON"
+fi
+echo "SBOM present and valid: $SBOM"
+
 echo ""
 echo "All checks passed."

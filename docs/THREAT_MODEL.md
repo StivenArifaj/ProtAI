@@ -1,18 +1,18 @@
 # Threat Model
 
-Status: **partially implemented through Phase 9.** This document transcribes the v1
+Status: **partially implemented through Phase 10.** This document transcribes the v1
 threat model from blueprint v1.2 section 2 with an implementation-status column. Phases
-0a-9 delivered host authentication/replay defense, host-signed principal assertions, the
+0a-10 delivered host authentication/replay defense, host-signed principal assertions, the
 deterministic policy engine, the mock-tool gateway, advisory input-threat detection with
 trust labels and session signals, server-issued intent manifests with concrete action
 constraints, `risk-v2`, durable one-time human approvals, deterministic output DLP with
 destination-aware egress and complete-response release/suppression, the full audit
-taxonomy/verifier, signed `/v1` routes with an optional local-model provider, and a
-measurement-only evaluation harness. Real connectors, general planning, approval
-delivery/UI, risk calibration, and an external audit anchor remain future work. The
-input detector now gates the request path and intent extraction is available through the
-mock or local provider, but the demo runtime and heuristic detection leave rows 1-4
-Partial. The repository must not be presented as providing controls not marked here.
+taxonomy/verifier, signed `/v1` routes with an optional local-model provider, a
+measurement-only evaluation harness, deterministic alert rules, an optional read-only
+audit summarizer, abuse/load tests, incident-response runbooks, and a CycloneDX SBOM.
+Real connectors, general planning, approval delivery/UI, risk calibration, and an
+external audit anchor remain future work. The repository must not be presented as
+providing controls not marked here.
 Update the status column as each phase lands; every row eventually needs the "required
 test evidence" listed in the blueprint.
 
@@ -35,7 +35,10 @@ test evidence" listed in the blueprint.
 | 13 | Tool adapter compromise | Adapter performs an unapproved side effect | Narrow adapter APIs, minimal credentials, sandbox/egress restrictions | Adapter contract test and isolated mock runtime | Partial (2): narrow adapter protocol + digest verification + typed refusal; process isolation Phase 10 |
 | 14 | Host-to-gateway impersonation/replay | Forged principal assertion or captured request replayed | Per-host HMAC, short timestamp window, unique nonce, body signature, private transport | Forged signature, body mutation, stale timestamp, replay tests | **Implemented (0b/8):** full HMAC denial matrix + live replay proof; every `/v1` route also requires a host-signed principal assertion bound to the key's `host_id`/`audience`/tenant scope, with all rejections audited and no unsigned fallback |
 | 15 | Audit append race | Concurrent requests reuse the same `prev_hash` | DB-serialized append, monotonic per-chain sequence | Multi-worker concurrent append + chain verification | **Implemented (Phase 7):** advisory-lock append + unique `(chain_id, sequence_number)`; 5-writer append contiguity and an 8-writer verifier test; the verifier recomputes each hash from exact stored bytes |
-| 16 | AI SOC prompt injection | Attacker text in audit events manipulates the summarizer | Event fields treated as untrusted; analyzer read-only and alert-only | Injected log strings cannot trigger tools/policy/containment | Not implemented (Phase 10) |
+| 16 | AI SOC prompt injection | Attacker text in audit events manipulates the summarizer | Event fields treated as untrusted; analyzer read-only and alert-only | Injected log strings cannot trigger tools/policy/containment | **Implemented (Phase 10):** `EXTERNAL_UNTRUSTED` envelope labels all request/tool-originated fields; bounded/redacted input; summarizer off by default; output labeled unverified; adversarial-log tests in `tests/unit/test_soc_summarizer.py` prove injected text cannot trigger any action |
+| 17 | Alert authority abuse | Alert rules used to block/allow/consume/revoke/contain | Alerts are read-only/alert-only; rules emit `SECURITY_ALERT_RAISED` only; no authority path | `tests/security/test_soc_no_authority.py` asserts no tool/policy/audit/approval/containment surface | **Implemented (Phase 10, ADR-004/ADR-017):** deterministic alerts are evidence/notification only; invariant #22 enforced |
+| 18 | SBOM supply chain | Unknown or untracked dependencies in the locked set | CycloneDX SBOM generated from `uv.lock` with pinned tool version; archived with SHA256 | `releases/sbom/cyclonedx-sbom.json` + `releases/sbom/SHA256SUMS`; validated in `scripts/check.sh` | **Implemented (Phase 10):** SBOM covers the locked Python dependency set (44 components); base images/system packages are separate |
+| 19 | Abuse/load bypass | Attacker overwhelms rate limits, request caps, or audit append | Bounded request size, JSON depth, rate limits, deadline enforcement, audit append pressure | `tests/abuse/test_abuse_load.py` | **Implemented (Phase 10):** per-process fixed-window rate limits; request-size/depth caps; tool-call slot reservation; deadline behavior; fail-closed failure paths |
 
 ## Security assets
 

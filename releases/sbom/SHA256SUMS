@@ -1,0 +1,12 @@
+# CycloneDX SBOM SHA256 checksums (Phase 10)
+# Generated from uv.lock via: uv export --frozen --no-hashes --format requirements-txt |
+#   cyclonedx-py requirements --pyproject pyproject.toml --of JSON --validate
+# Tool: cyclonedx-bom==7.6.0 (cyclonedx-py 7.6.0), CycloneDX spec version 1.6
+#
+# Reproduction:
+#   uv export --frozen --no-hashes --format requirements-txt -o requirements.txt
+#   uv run --with cyclonedx-bom==7.6.0 cyclonedx-py requirements \
+#     --pyproject pyproject.toml --of JSON -o releases/sbom/cyclonedx-sbom.json --validate
+#   sha256sum releases/sbom/cyclonedx-sbom.json
+
+912dfa134f7b2f2151d5c38cb06020175f0a28e973b67bcc5f6c53724532f552  releases/sbom/cyclonedx-sbom.json

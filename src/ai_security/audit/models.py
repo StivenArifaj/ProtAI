@@ -47,7 +47,13 @@ from ai_security.input_defense.models import (
 from ai_security.tools.base import STABLE_ID_PATTERN, SideEffectClass
 
 AUDIT_SCHEMA_VERSION: Literal[1] = 1
-type COMPONENT = Literal["firewall.gateway", "firewall.approval", "intent.service", "api.ingress"]
+type COMPONENT = Literal[
+    "firewall.gateway",
+    "firewall.approval",
+    "intent.service",
+    "api.ingress",
+    "soc.alert_emitter",
+]
 
 _HEX64 = re.compile(r"[0-9a-f]{64}")
 _STABLE_ID = re.compile(STABLE_ID_PATTERN)

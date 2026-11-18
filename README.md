@@ -4,13 +4,17 @@ Repository foundation for the AI Agent Security & Safety Platform. The authorita
 specification is `AI_Agent_Security_Platform_Master_Blueprint_v1.2.md` in the repository
 root; the archived v1.0 is under `archive/` and is superseded.
 
-**Current state: Phases 0a-9 complete and verified** (repository foundation; security
+**Current state: Phases 0a-10 complete and verified** (repository foundation; security
 foundation; typed contracts + deterministic policy engine; tool registry + enforced
 gateway; advisory input defense + context provenance; intent extraction + manifest
 validation; risk v2 + durable one-time human approvals; output DLP + destination-aware
 egress policy; full audit taxonomy + correlation + exact-bytes verification; signed
-HTTP ingress, bounded request runtime, and optional local-model intent extraction; and a
-reproducible six-task evaluation harness over a versioned synthetic dataset).
+HTTP ingress, bounded request runtime, and optional local-model intent extraction; a
+reproducible six-task evaluation harness over a versioned synthetic dataset; and Phase 10
+security hardening: deterministic alert rules with content-free `SECURITY_ALERT_RAISED`
+emission, optional read-only audit summarizer (opt-in, off by default) with
+adversarial-log tests, bounded offline abuse/load tests, incident-response runbooks,
+CycloneDX SBOM from `uv.lock`, and release-gate extensions).
 Implemented today: enforced
 configuration validation; host HMAC authentication + replay rejection on the `/v1/*`
 path prefix; deterministic policy engine with 21 startup/readiness self-check fixtures;
@@ -58,7 +62,7 @@ or audit query API/UI exists yet** — do not present the system as providing th
 
 ```bash
 uv sync --frozen          # install from the committed lockfile
-uv run pytest             # full suite (1013 unit/integration/security/evaluation tests)
+uv run pytest             # full suite (unit/integration/security/evaluation/abuse tests; real-PostgreSQL integration skips when the database is unavailable)
 bash scripts/check.sh     # full local gate: lockfile, ruff, mypy, pytest, invariant greps
 ```
 
