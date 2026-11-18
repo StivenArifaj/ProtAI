@@ -189,10 +189,10 @@ def test_settings_cloud_requires_key_and_exact_model() -> None:
         **base,
         cloud_model_api_key=API_KEY,
         cloud_model_name=MODEL,
-        cloud_model_base_url="https://api.example.com",
+        cloud_model_base_url="https://api.example.com/v1",
     )  # type: ignore[arg-type]
     assert settings.model_provider is ModelProviderKind.cloud
-    assert settings.cloud_model_origin == "https://api.example.com"
+    assert settings.cloud_model_origin == "https://api.example.com/v1"
     assert settings.cloud_model_api_key.get_secret_value() == API_KEY
 
 

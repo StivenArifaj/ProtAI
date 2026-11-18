@@ -121,6 +121,43 @@ LOCAL_MODEL_NAME_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}")
 LOCAL_MODEL_GENERATE_PATH = "/api/generate"
 
 
+def validate_cloud_model_origin(raw: str, *, development_like: bool) -> str:
+    """Validate a cloud LLM base URL (ADR-018).
+
+    Unlike the local Ollama origin, OpenAI-compatible providers commonly require a
+    short path prefix (e.g. ``https://api.openai.com/v1``). We allow bounded path
+    segments but never credentials, queries, fragments, traversal, or control chars.
+    """
+    if CONTROL_CHARACTERS.search(raw):
+        raise ValueError("CLOUD_MODEL_BASE_URL must not contain control characters")
+    try:
+        split = urlsplit(raw)
+        port = split.port
+    except ValueError as exc:
+        raise ValueError("CLOUD_MODEL_BASE_URL is not a valid URL") from exc
+    if split.scheme not in ("http", "https"):
+        raise ValueError("CLOUD_MODEL_BASE_URL must use http:// or https://")
+    if split.username is not None or split.password is not None:
+        raise ValueError("CLOUD_MODEL_BASE_URL must not contain credentials")
+    if split.query or split.fragment:
+        raise ValueError("CLOUD_MODEL_BASE_URL must not contain a query or fragment")
+    if not split.hostname:
+        raise ValueError("CLOUD_MODEL_BASE_URL must include a host")
+    if port == 0:
+        raise ValueError("CLOUD_MODEL_BASE_URL must not use port 0")
+    path = split.path.rstrip("/")
+    if path and not re.fullmatch(r"(?:/[A-Za-z0-9._~-]{1,64}){1,3}", path):
+        raise ValueError("CLOUD_MODEL_BASE_URL path must be at most 3 simple segments (e.g. /v1)")
+    loopback = False
+    try:
+        loopback = ipaddress.ip_address(split.hostname).is_loopback
+    except ValueError:
+        loopback = split.hostname.lower() == "localhost"
+    if not development_like and not loopback and split.scheme != "https":
+        raise ValueError("CLOUD_MODEL_BASE_URL must use HTTPS outside development/test")
+    return f"{split.scheme}://{split.netloc}{path}"
+
+
 def validate_local_model_origin(raw: str, *, development_like: bool) -> str:
     """Validate ``LOCAL_MODEL_BASE_URL`` as a bare HTTP(S) origin (ADR-015).
 
@@ -411,7 +448,7 @@ class Settings(BaseSettings):
                     "'.', '_', ':', '/', or '-'"
                 )
         if self.model_provider is ModelProviderKind.cloud:
-            validate_local_model_origin(
+            validate_cloud_model_origin(
                 self.cloud_model_base_url, development_like=self.app_env.development_like
             )
             if self.cloud_model_name == LOCAL_MODEL_PLACEHOLDER:
@@ -440,8 +477,10 @@ class Settings(BaseSettings):
 
     @property
     def cloud_model_origin(self) -> str:
-        """The validated cloud origin without a trailing slash (ADR-018)."""
-        return self.cloud_model_base_url.rstrip("/")
+        """The validated cloud base URL (origin + optional /v1 prefix), ADR-018."""
+        return validate_cloud_model_origin(
+            self.cloud_model_base_url, development_like=self.app_env.development_like
+        )
 
     @property
     def database_dsn(self) -> str:
