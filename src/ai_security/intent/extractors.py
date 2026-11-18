@@ -214,9 +214,12 @@ class FallbackIntentExtractor:
     still enforce every action. The fallback never masks a policy decision.
     """
 
+    extractor_version: str
+
     def __init__(self, primary: object, fallback: object) -> None:
         self._primary = primary
         self._fallback = fallback
+        self.extractor_version = str(getattr(primary, "extractor_version", "fallback-v1"))
 
     async def extract(self, request: IntentExtractionRequest) -> IntentExtraction:
         try:
