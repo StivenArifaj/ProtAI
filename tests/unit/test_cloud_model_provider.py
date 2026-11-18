@@ -213,3 +213,23 @@ def test_settings_cloud_rejects_http_outside_dev() -> None:
     }
     with pytest.raises(ValueError):
         Settings(_env_file=None, **base)  # type: ignore[arg-type]
+
+
+def test_fallback_extractor_uses_mock_on_cloud_failure() -> None:
+    from ai_security.intent.extractors import FallbackIntentExtractor, MockIntentExtractor
+
+    class FailingClient:
+        async def complete(self, *, prompt: str) -> str:
+            raise CloudModelProviderError("quota exhausted")
+
+    primary = LocalModelIntentExtractor(FailingClient())
+    fallback = FallbackIntentExtractor(primary, MockIntentExtractor())
+    request = IntentExtractionRequest(
+        request_id="req-2",
+        principal_subject_id="user-1",
+        text="read email-1 and summarize it",
+        received_at=datetime.now(UTC),
+    )
+    result = _run(fallback.extract(request))
+    assert result.status is IntentExtractionStatus.active
+    assert len(result.constraints) == 2

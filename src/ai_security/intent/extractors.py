@@ -206,6 +206,25 @@ def _prompt_for(request: IntentExtractionRequest) -> str:
     )
 
 
+class FallbackIntentExtractor:
+    """Try a primary extractor, then a deterministic fallback on provider failure.
+
+    Opt-in (``CLOUD_FALLBACK_TO_MOCK=true``). Intent extraction is advisory, so falling
+    back to the narrow offline mock cannot create authority: the gateway and policy
+    still enforce every action. The fallback never masks a policy decision.
+    """
+
+    def __init__(self, primary: object, fallback: object) -> None:
+        self._primary = primary
+        self._fallback = fallback
+
+    async def extract(self, request: IntentExtractionRequest) -> IntentExtraction:
+        try:
+            return await self._primary.extract(request)  # type: ignore[attr-defined,no-any-return]
+        except IntentExtractorUnavailable:
+            return await self._fallback.extract(request)  # type: ignore[attr-defined,no-any-return]
+
+
 class LocalModelIntentExtractor:
     """Strict adapter around an injected local-model client (no network here)."""
 

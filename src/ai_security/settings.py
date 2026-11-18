@@ -336,6 +336,8 @@ class Settings(BaseSettings):
     cloud_model_api_key: SecretStr = Field(default=SecretStr(""))
     cloud_model_timeout_seconds: int = Field(default=30, ge=1, le=60)
     cloud_model_max_response_bytes: int = Field(default=1_048_576, ge=1024, le=8_388_608)
+    # Opt-in resilience: a cloud outage falls back to the offline deterministic mock.
+    cloud_fallback_to_mock: bool = False
 
     # Post-v1 dashboard (opt-in; disabled by default so v1 behavior is unchanged).
     console_enabled: bool = False

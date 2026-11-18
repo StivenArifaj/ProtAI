@@ -54,6 +54,7 @@ from ai_security.identity.resolver import build_principal_resolver
 from ai_security.input_defense.config import load_input_defense_config
 from ai_security.input_defense.service import InputDefenseService
 from ai_security.intent.extractors import (
+    FallbackIntentExtractor,
     IntentExtractor,
     IntentModelClient,
     LocalModelIntentExtractor,
@@ -112,9 +113,12 @@ def _build_intent_extractor(settings: Settings) -> IntentExtractor:
             timeout_seconds=settings.cloud_model_timeout_seconds,
             max_response_bytes=settings.cloud_model_max_response_bytes,
         )
-        return LocalModelIntentExtractor(
+        cloud_extractor = LocalModelIntentExtractor(
             client, timeout_seconds=settings.cloud_model_timeout_seconds
         )
+        if settings.cloud_fallback_to_mock:
+            return FallbackIntentExtractor(cloud_extractor, MockIntentExtractor())
+        return cloud_extractor
     return MockIntentExtractor()
 
 

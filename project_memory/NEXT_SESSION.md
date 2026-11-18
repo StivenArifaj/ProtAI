@@ -94,3 +94,18 @@ real connectors behind threat-review gates; dependency advisory review.
 - Real key is supplied by the operator via `CLOUD_MODEL_API_KEY` at runtime.
 - Final gate: 1157 backend tests + 64 alert + 14 abuse + 6 frontend tests pass;
   all 12 steps green; Gitleaks clean (test fixtures use non-key-shaped placeholders).
+
+## Cloud key runtime setup (2026-11-18, final)
+
+- Local gitignored `.env` holds the Alibaba Cloud Model Studio key and:
+  `MODEL_PROVIDER=cloud`, `CLOUD_MODEL_BASE_URL=https://dashscope-intl.aliyuncs.com/compatible-mode/v1`,
+  `CLOUD_MODEL_NAME=qwen-plus`, `CLOUD_MODEL_API_KEY=<operator key>`,
+  `CLOUD_FALLBACK_TO_MOCK=true`, `CONSOLE_ENABLED=true`.
+- Provider authenticates the key correctly, but the account reports
+  `insufficient_quota` / `FreeTierOnly` for all tested models — billing/free-tier must
+  be enabled in the Alibaba console for real cloud extraction.
+- Added opt-in `CLOUD_FALLBACK_TO_MOCK` so the app remains functional today: a cloud
+  failure degrades to the offline mock; `POST /v1/requests` returns 200 COMPLETED.
+  Without it, failures fail closed with 503 model_unavailable.
+- Gitleaks allowlists the gitignored local `.env` (tracked files remain scanned).
+- Live uvicorn now runs the normal `ai_security.api.app:app` command and reads `.env`.

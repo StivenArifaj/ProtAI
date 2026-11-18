@@ -51,3 +51,11 @@ no adapter; the cloud provider is selected only by `MODEL_PROVIDER=cloud`.
 - End-to-end against a local OpenAI-compatible fake endpoint: `MODEL_PROVIDER=cloud`
   produced `COMPLETED` for the supported request and `REQUIRES_CLARIFICATION` (no
   execution) for an out-of-scope request.
+
+## Opt-in fallback (2026-11-18)
+
+`CLOUD_FALLBACK_TO_MOCK=true` wraps the cloud extractor with
+`FallbackIntentExtractor`: on a typed `IntentExtractorUnavailable` (quota, outage,
+malformed response) it falls back to the deterministic offline mock. This is opt-in
+and advisory-only — the gateway and policy still enforce every action. Without it, a
+cloud failure yields `503 model_unavailable` and no execution (fail closed).
