@@ -1,5 +1,5 @@
 import { Command } from 'cmdk'
-import { Activity, FileSearch, KeyRound, LayoutDashboard, Settings, Shield, Wrench, BellRing } from 'lucide-react'
+import { Activity, FileSearch, KeyRound, LayoutDashboard, ListTree, Settings, Shield, Wrench, BellRing } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 
@@ -7,6 +7,7 @@ const NAV = [
   { label: 'Overview', to: '/', icon: LayoutDashboard, group: 'Navigate' },
   { label: 'Alerts', to: '/alerts', icon: BellRing, group: 'Navigate' },
   { label: 'Audit Explorer', to: '/audit', icon: FileSearch, group: 'Navigate' },
+  { label: 'Logs', to: '/logs', icon: ListTree, group: 'Navigate' },
   { label: 'Approvals', to: '/approvals', icon: KeyRound, group: 'Navigate' },
   { label: 'Tools & Connectors', to: '/tools', icon: Wrench, group: 'Navigate' },
   { label: 'Policy', to: '/policy', icon: Shield, group: 'Navigate' },

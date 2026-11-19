@@ -196,3 +196,33 @@ def test_built_spa_is_served(client: TestClient) -> None:
     assert response.status_code == 200
     assert "ProtAI Console" in response.text
     assert "/assets/" in response.text
+
+
+def test_log_endpoints_real_data(client: TestClient) -> None:
+    _login(client)
+    response = client.get("/admin/logs?limit=50")
+    assert response.status_code == 200
+    entries = response.json()
+    assert isinstance(entries, list)
+    assert all(set(entry) >= {"id", "service", "level", "message", "source"} for entry in entries)
+    # Logs must never carry secrets or raw payloads.
+    text = response.text.lower()
+    for forbidden in ("secret_b64", "bearer sk-", "approval_token"):
+        assert forbidden not in text
+    services = client.get("/admin/logs/services")
+    assert services.status_code == 200
+    assert isinstance(services.json(), list)
+
+
+def test_metrics_are_real_from_audit_chain(client: TestClient) -> None:
+    _login(client)
+    response = client.get("/admin/metrics")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["source"] == "audit_chain"
+    assert isinstance(body["window_events"], int)
+    assert isinstance(body["decisions"], list)
+    assert isinstance(body["event_types"], list)
+    assert isinstance(body["top_tools"], list)
+    assert isinstance(body["avg_risk_score"], (int, float))
+    assert isinstance(body["chain_verified"], bool)

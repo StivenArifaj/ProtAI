@@ -105,7 +105,7 @@ class AlertEmitter:
             outcome=None,
             side_effect_class=None,
             data_class=None,
-            risk_score=firing.count,
+            risk_score=min(firing.count, 100),  # audited field caps at 100
             risk_version=firing.rule_id[:32],  # audited field is capped at 32 chars
             risk_factor_codes=evidence,
             destination=None,

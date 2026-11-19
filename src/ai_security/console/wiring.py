@@ -12,6 +12,7 @@ from typing import Any, cast
 from fastapi import FastAPI
 
 from ai_security.console.auth import ConsoleRole, LocalAuthProvider, SessionStore, hash_password
+from ai_security.console.logs import LogReader
 from ai_security.console.routes import router as console_router
 from ai_security.console.service import ConsoleService
 from ai_security.settings import Settings
@@ -100,6 +101,10 @@ def mount_console(app: FastAPI, settings: Settings) -> None:
         session_factory=app.state.database.session_factory,
         app_state=app.state,
         checkpoint_sink=sink,
+    )
+    app.state.log_reader = LogReader(
+        app.state.database.session_factory,
+        runtime_log_path=settings.console_runtime_log_path or None,
     )
     app.include_router(console_router)
     app.state.console_mounted = True

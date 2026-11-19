@@ -144,3 +144,12 @@ def test_emitter_no_authority_fields() -> None:
     assert event.resource_ids == ()
     assert event.dlp is None
     assert event.input is None
+
+
+def test_emitter_caps_count_in_risk_score() -> None:
+    """Alert counts above 100 must not break the AuditEvent risk_score bound."""
+    recorder = RecordingAuditRecorder()
+    emitter = AlertEmitter(recorder, clock=lambda: FIXED_NOW)
+    emission = _run(emitter.emit(_firing(rule_id="big-cluster", count=156)))
+    assert emission.emitted is True
+    assert recorder.events[0].risk_score == 100

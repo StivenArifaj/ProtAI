@@ -1,4 +1,9 @@
 import type {
+  LogEntry,
+  LogServiceCount,
+  Metrics,
+} from './logTypes'
+import type {
   Alert,
   AlertRules,
   Approval,
@@ -116,6 +121,9 @@ export const api = {
   limiter: () => request<Limiter>('/limiter'),
   settings: () => request<Setting[]>('/settings'),
   reports: () => request<EvaluationReport[]>('/evaluation/reports'),
+  logs: (params: string) => request<LogEntry[]>(`/logs?${params}`),
+  logServices: () => request<LogServiceCount[]>('/logs/services'),
+  metrics: () => request<Metrics>('/metrics'),
   users: () => request<User[]>('/auth/users'),
   createUser: (body: { username: string; password: string; role: string }) =>
     request<WriteResult>('/auth/users', { method: 'POST', body: JSON.stringify(body) }),

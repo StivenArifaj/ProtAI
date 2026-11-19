@@ -26,6 +26,8 @@ from ai_security.console.auth import (
     require,
     verify_csrf,
 )
+from ai_security.console.logs import LogQuery, LogReader
+from ai_security.console.logs import LogReader as _LogReaderType
 from ai_security.console.schemas import (
     DecideBody,
     EnableBody,
@@ -446,6 +448,42 @@ async def evaluation_reports(
     user: ReadEvaluation,
 ) -> Any:
     return [item.model_dump(mode="json") for item in get_service(request).evaluations()]
+
+
+# -- log viewer ---------------------------------------------------------------------
+
+
+def get_log_reader(request: Request) -> LogReader:
+    reader = getattr(request.app.state, "log_reader", None)
+    if reader is None:
+        raise HTTPException(status_code=503, detail="console_unavailable")
+    return cast(_LogReaderType, reader)
+
+
+@router.get("/metrics")
+async def metrics(request: Request, user: ReadAudit) -> Any:
+    return (await get_service(request).metrics()).model_dump(mode="json")
+
+
+@router.get("/logs")
+async def logs(
+    request: Request,
+    user: ReadAudit,
+    limit: Annotated[int, Query(ge=1, le=1000)] = 200,
+    service: str = "",
+    level: str = "",
+    q: str = "",
+) -> Any:
+    entries, _ = await get_log_reader(request).read(
+        LogQuery(service=service[:64], level=level[:16], query=q[:256], limit=limit)
+    )
+    return [item.model_dump(mode="json") for item in entries]
+
+
+@router.get("/logs/services")
+async def log_services(request: Request, user: ReadAudit) -> Any:
+    counts = await get_log_reader(request).service_counts()
+    return [item.model_dump(mode="json") for item in counts]
 
 
 __all__ = ["router", "get_service"]

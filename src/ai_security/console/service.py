@@ -38,6 +38,8 @@ from ai_security.console.schemas import (
     HealthItem,
     HealthState,
     LimiterView,
+    MetricRow,
+    MetricsView,
     Overview,
     PolicyView,
     SettingView,
@@ -188,6 +190,13 @@ class ConsoleService:
         head_hash = str(head[1]) if head else "0" * 64
         policy = getattr(self._state, "policy_bundle", None)
         db_ok = await self._database_ok()
+        verification = await self.verify()
+        alert_config = getattr(self._state, "alert_config", None)
+        enabled_rules = (
+            len([rule for rule in alert_config.rules if rule.enabled]) if alert_config else 0
+        )
+        sessions = getattr(self._state, "console_sessions", None)
+        active_sessions = sessions.active_count() if sessions is not None else 0
         health = (
             HealthItem(
                 name="Database",
@@ -206,16 +215,24 @@ class ConsoleService:
             ),
             HealthItem(
                 name="Audit chain",
-                state=HealthState.healthy,
-                detail=f"{int(total or 0)} events, head {head_sequence}",
+                state=HealthState.healthy if verification.verified else HealthState.degraded,
+                detail=(
+                    f"{verification.event_count} verified events, head {head_sequence}; "
+                    f"{len(verification.failure_codes)} chain findings"
+                ),
             ),
             HealthItem(
                 name="Alert rules",
-                state=HealthState.healthy,
-                detail="deterministic rules available",
+                state=HealthState.healthy if enabled_rules else HealthState.degraded,
+                detail=(
+                    f"{enabled_rules} enabled rules "
+                    f"(config {alert_config.version if alert_config else 'unconfigured'})"
+                ),
             ),
             HealthItem(
-                name="Console sessions", state=HealthState.healthy, detail="local auth provider"
+                name="Console sessions",
+                state=HealthState.healthy,
+                detail=f"{active_sessions} active local sessions",
             ),
         )
         return Overview(
@@ -227,7 +244,7 @@ class ConsoleService:
             event_count=int(total or 0),
             alert_count=alerts,
             pending_approval_count=pending,
-            verified_event_count=int(total or 0),
+            verified_event_count=verification.event_count if verification.verified else 0,
             health=health,
             policy_version=policy.version if policy else "unknown",
             policy_hash=policy.combined_hash if policy else "0" * 64,
@@ -334,6 +351,61 @@ class ConsoleService:
         views = tuple(self._view(row) for row in rows)
         return AuditCorrelation(
             events=views, by_request={request_id: tuple(v.sequence_number for v in views)}
+        )
+
+    async def metrics(self) -> MetricsView:
+        """Compute real aggregate metrics from a bounded window of audit events."""
+        from collections import Counter
+
+        async with self._sessions() as session:
+            rows = list(
+                (
+                    await session.execute(
+                        select(StoredAuditEvent)
+                        .where(StoredAuditEvent.chain_id == V1_CHAIN_ID)
+                        .order_by(StoredAuditEvent.sequence_number.desc())
+                        .limit(10_000)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+        decisions: Counter[str] = Counter()
+        event_types: Counter[str] = Counter()
+        tools: Counter[str] = Counter()
+        risks: list[int] = []
+        alerts = 0
+        for row in rows:
+            payload = _parse_payload(row)
+            event_type = str(payload.get("event_type") or row.event_type or "EVENT")
+            decision = str(payload.get("decision") or "")
+            tool = str(payload.get("tool_id") or "")
+            event_types[event_type] += 1
+            if decision:
+                decisions[decision] += 1
+            if tool:
+                tools[tool] += 1
+            if event_type == "SECURITY_ALERT_RAISED":
+                alerts += 1
+            risk = payload.get("risk_score")
+            if isinstance(risk, int):
+                risks.append(risk)
+
+        def rows_for(counter: Counter[str], limit: int = 8) -> tuple[MetricRow, ...]:
+            return tuple(
+                MetricRow(name=name, count=count) for name, count in counter.most_common(limit)
+            )
+
+        count = len(rows)
+        verification = await self.verify()
+        return MetricsView(
+            window_events=count,
+            decisions=rows_for(decisions),
+            event_types=rows_for(event_types),
+            top_tools=rows_for(tools),
+            avg_risk_score=(sum(risks) / len(risks)) if risks else 0.0,
+            alerts_per_100_events=(alerts / count * 100) if count else 0.0,
+            chain_verified=verification.verified,
         )
 
     async def verify(self) -> VerificationView:

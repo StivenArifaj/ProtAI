@@ -800,3 +800,17 @@ table.data tbody tr {
     flex-wrap: wrap;
   }
 }
+
+/* Log viewer */
+.log-table td.log-message {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  max-width: 720px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.log-table tbody tr:hover td.log-message {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}

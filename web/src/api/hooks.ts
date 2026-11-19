@@ -37,6 +37,19 @@ export const useLimiter = () => useQuery({ queryKey: keys.limiter, queryFn: api.
 export const useSettings = () => useQuery({ queryKey: keys.settings, queryFn: api.settings })
 export const useReports = () => useQuery({ queryKey: keys.reports, queryFn: api.reports })
 export const useUsers = () => useQuery({ queryKey: keys.users, queryFn: api.users })
+export const useMetrics = () =>
+  useQuery({ queryKey: ['metrics'], queryFn: api.metrics, refetchInterval: 15_000 })
+
+export function useLogs(params: string, live: boolean) {
+  return useQuery({
+    queryKey: ['logs', params],
+    queryFn: () => api.logs(params),
+    refetchInterval: live ? 2000 : false,
+  })
+}
+
+export const useLogServices = () =>
+  useQuery({ queryKey: ['log-services'], queryFn: api.logServices, refetchInterval: 15_000 })
 export const useCheckpoints = () => useQuery({ queryKey: keys.checkpoints, queryFn: api.checkpoints })
 
 export function useInvalidate() {

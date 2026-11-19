@@ -346,6 +346,8 @@ class Settings(BaseSettings):
     alert_rules_path: str = Field(default="config/alerts.json", min_length=1)
     # Path to the built frontend bundle; served only when console_enabled is true.
     console_static_dir: str = Field(default="web/dist", min_length=1)
+    # Optional local runtime log file for the console log viewer (redacted on read).
+    console_runtime_log_path: str = Field(default="", max_length=2048)
 
     _host_auth_keys: dict[str, HostAuthKey] = PrivateAttr(default_factory=dict)
 

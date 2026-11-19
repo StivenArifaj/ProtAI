@@ -8,6 +8,7 @@ import { Approvals } from './features/Approvals'
 import { AuditExplorer } from './features/AuditExplorer'
 import { Evaluations } from './features/Evaluations'
 import { Login } from './features/Login'
+import { Logs } from './features/Logs'
 import { Overview } from './features/Overview'
 import { Policy } from './features/Policy'
 import { Settings } from './features/Settings'
@@ -27,6 +28,7 @@ function Authenticated() {
         <Route path="/" element={<Overview />} />
         <Route path="/alerts" element={<Alerts />} />
         <Route path="/audit" element={<AuditExplorer />} />
+        <Route path="/logs" element={<Logs />} />
         <Route path="/approvals" element={<Approvals />} />
         <Route path="/tools" element={<Tools />} />
         <Route path="/policy" element={<Policy />} />

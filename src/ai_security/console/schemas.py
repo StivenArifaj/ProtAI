@@ -222,6 +222,37 @@ class UserView(_Strict):
     tenant_id: str | None
 
 
+class LogEntry(_Strict):
+    id: str
+    occurred_at: datetime | None
+    service: str
+    level: str
+    message: str = Field(max_length=500)
+    source: Literal["audit", "runtime"]
+    sequence_number: int | None = None
+
+
+class LogServiceCount(_Strict):
+    service: str
+    count: int
+
+
+class MetricRow(_Strict):
+    name: str
+    count: int
+
+
+class MetricsView(_Strict):
+    window_events: int
+    decisions: tuple[MetricRow, ...]
+    event_types: tuple[MetricRow, ...]
+    top_tools: tuple[MetricRow, ...]
+    avg_risk_score: float
+    alerts_per_100_events: float
+    chain_verified: bool
+    source: Literal["audit_chain"] = "audit_chain"
+
+
 class WriteResult(_Strict):
     ok: bool
     message: str
